@@ -1,0 +1,3 @@
+/admin        /#admin   302
+/sitemap.xml  https://deethrwnmyezwsohmhzl.supabase.co/storage/v1/object/public/photos/sitemap.xml  200
+/property/*   /property.html  200
