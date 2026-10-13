@@ -154,11 +154,14 @@ async function loadAll() {
   normAreas(P); // one spelling per area, e.g. "WANGSA MAJU" and "Wangsa Maju" become "Wangsa Maju"
   return { P, S: { email: S.email || "", wa: S.wa || "", site: S.site || SITE, vo: S.vo, loan: S.loan } };
 }
-const H = (type, extra) => new Headers({ "content-type": type, "cache-control": "public, max-age=0, must-revalidate", "x-content-type-options": "nosniff", ...(extra || {}) });
+// Browsers always re-check; Netlify's CDN keeps a copy for 60 s and serves it instantly while refreshing in the background,
+// so pages (and EN/BM switching) load fast and the database is asked far less often. Edits show within about a minute.
+const CDN = "public, durable, max-age=60, stale-while-revalidate=86400";
+const H = (type, extra) => new Headers({ "content-type": type, "cache-control": "public, max-age=0, must-revalidate", "netlify-cdn-cache-control": CDN, "x-content-type-options": "nosniff", ...(extra || {}) });
 
 function notFound() {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Property not found | One Stop Centre</title><meta name="robots" content="noindex"><style>body{font-family:system-ui,-apple-system,sans-serif;background:#0c1f4a;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;text-align:center;padding:24px}a{color:#fff;background:#c8102e;padding:12px 20px;border-radius:999px;text-decoration:none;display:inline-block;margin-top:12px}</style></head><body><main><h1>This property is no longer listed</h1><p>It may have been sold out or renamed.</p><a href="/">See all properties</a></main></body></html>`;
-  return new Response(html, { status: 404, headers: H("text/html; charset=utf-8") });
+  return new Response(html, { status: 404, headers: H("text/html; charset=utf-8", { "netlify-cdn-cache-control": "public, max-age=30" }) });
 }
 
 export default async (request, context) => {
@@ -171,7 +174,7 @@ export default async (request, context) => {
   if (path === "/admin" || path === "/admin/") {
     // short, easy-to-remember login address: hands over to the dashboard on the homepage, never indexed
     const hop = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex, nofollow"><title>Admin | One Stop Centre</title><meta http-equiv="refresh" content="0;url=/#admin"><script>location.replace("/#admin")</script></head><body><a href="/#admin">Open admin</a></body></html>';
-    return new Response(hop, { status: 200, headers: H("text/html; charset=utf-8", { "x-robots-tag": "noindex, nofollow", "cache-control": "no-store" }) });
+    return new Response(hop, { status: 200, headers: H("text/html; charset=utf-8", { "x-robots-tag": "noindex, nofollow", "cache-control": "no-store", "netlify-cdn-cache-control": "no-store" }) });
   }
   const isHome = rest === "/";
   const isMap = path === "/sitemap.xml";
@@ -252,7 +255,8 @@ export default async (request, context) => {
   headers.set("content-type", "text/html; charset=utf-8");
   headers.delete("content-length");
   headers.set("cache-control", "public, max-age=0, must-revalidate");
+  headers.set("netlify-cdn-cache-control", CDN);
   return new Response(html, { status: 200, headers });
 };
 
-export const config = { path: ["/", "/index.html", "/property.html", "/admin", "/admin/", "/property/*", "/sitemap.xml", "/ms", "/ms/", "/ms/property/*"] };
+export const config = { cache: "manual", path: ["/", "/index.html", "/property.html", "/admin", "/admin/", "/property/*", "/sitemap.xml", "/ms", "/ms/", "/ms/property/*"] };
