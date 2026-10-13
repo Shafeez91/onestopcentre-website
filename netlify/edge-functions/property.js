@@ -116,6 +116,9 @@ async function sb(path) {
   if (!r.ok) throw new Error("db " + r.status);
   return r.json();
 }
+function normAreas(L){if(!Array.isArray(L))return;const tcw=w=>(w.length<=2||!/[AEIOU]/.test(w))?w:w.charAt(0)+w.slice(1).toLowerCase();const tc=v=>v.split(/(\s+|-|\/|\()/).map(w=>/^[A-Z0-9]+$/.test(w)?tcw(w):w).join('');const key=v=>v.replace(/\s+/g,' ').trim().toLowerCase();const pick={};
+ L.forEach(p=>{if(!p||typeof p.l!=='string')return;const v=p.l.replace(/\s+/g,' ').trim(),k=v.toLowerCase();if(!k)return;const mixed=v!==v.toUpperCase();if(!pick[k]||(mixed&&pick[k]===pick[k].toUpperCase()))pick[k]=v});
+ L.forEach(p=>{if(!p||typeof p.l!=='string')return;const k=key(p.l);if(!k)return;let v=pick[k];if(v===v.toUpperCase())v=tc(v);p.l=v})}
 async function loadAll() {
   const [rows, st] = await Promise.all([
     sb("projects?select=id,data&published=eq.true"),
@@ -126,6 +129,7 @@ async function loadAll() {
   ord.forEach((id, i) => { ix[id] = i; });
   rows.sort((a, b) => (a.id in ix ? ix[a.id] : 1e9) - (b.id in ix ? ix[b.id] : 1e9));
   const P = rows.map((r) => r.data).filter((p) => p && p.slug);
+  normAreas(P); // one spelling per area, e.g. "WANGSA MAJU" and "Wangsa Maju" become "Wangsa Maju"
   return { P, S: { email: S.email || "", wa: S.wa || "", site: S.site || SITE, vo: S.vo, loan: S.loan } };
 }
 const H = (type, extra) => new Headers({ "content-type": type, "cache-control": "public, max-age=0, must-revalidate", "x-content-type-options": "nosniff", ...(extra || {}) });
@@ -140,6 +144,11 @@ export default async (request, context) => {
   const path = url.pathname;
   const pm = path.match(/^\/property\/([^\/]+)\/?$/);
   if (path === "/index.html" || path === "/property.html") return Response.redirect(url.origin + "/", 301); // one address per page
+  if (path === "/admin" || path === "/admin/") {
+    // short, easy-to-remember login address: hands over to the dashboard on the homepage, never indexed
+    const hop = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex, nofollow"><title>Admin | One Stop Centre</title><meta http-equiv="refresh" content="0;url=/#admin"><script>location.replace("/#admin")</script></head><body><a href="/#admin">Open admin</a></body></html>';
+    return new Response(hop, { status: 200, headers: H("text/html; charset=utf-8", { "x-robots-tag": "noindex, nofollow", "cache-control": "no-store" }) });
+  }
   const isHome = path === "/";
   const isMap = path === "/sitemap.xml";
   if (!pm && !isHome && !isMap) return;
@@ -203,4 +212,4 @@ export default async (request, context) => {
   return new Response(html, { status: 200, headers });
 };
 
-export const config = { path: ["/", "/index.html", "/property.html", "/property/*", "/sitemap.xml"] };
+export const config = { path: ["/", "/index.html", "/property.html", "/admin", "/admin/", "/property/*", "/sitemap.xml"] };
