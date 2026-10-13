@@ -998,7 +998,7 @@ let lv=ss.get('adm_lv')||'list';
 function leadBoard(){const q=lq.trim().toLowerCase(),v=L.filter(l=>!q||[l.name,l.phone,l.email,l.project,l.message].some(x=>String(x||'').toLowerCase().includes(q)));
  return `<div class="ad-board">${LST.map(s=>{const col=v.filter(l=>l.status===s[0]);return `<section class="ad-col"><header><span class="lst ls-${s[0]}">${s[1]}</span><b>${col.length}</b></header>${col.map(l=>{const ph=waNum(l.phone);return `<div class="ad-lc"><b>${esc(l.name)}</b><small>${esc(l.project||'General enquiry')}</small><small>${ago(l.at)}</small>${l.message?`<p>${esc(l.message).slice(0,120)}</p>`:''}<div class="ad-lca">${ph?`<a class="ad-wa" href="https://wa.me/${ph}" target="_blank" rel="noopener" aria-label="WhatsApp">${ADI.wa}</a>`:''}${l.phone?`<a class="ad-btn sm" href="tel:${esc(l.phone)}">Call</a>`:''}<select class="lsel" data-a="st" data-id="${l.id}" aria-label="Move lead">${LST.map(x=>`<option value="${x[0]}"${x[0]===l.status?' selected':''}>${x[1]}</option>`).join('')}</select></div></div>`}).join('')||'<p class="ad-empty sm">Empty</p>'}</section>`}).join('')}</div>`}
 function draw(){
- if(tab==='projects'&&W){panel(adShell(edHtml(),true));edBind();adBind();return}
+ if(tab==='projects'&&W){panel(adShell(edHtml(),true));edBind();edPlus();adBind();return}
  panel(adShell(`<div id="tb">${tabHtml()}</div>`));
  wire();adBind();
 }
@@ -1246,11 +1246,42 @@ function edBody(){
  if(esec==='l')return `<h4>📍 Location</h4>`+TA('Address','address','Street, area, postcode')+F('Coordinates (lat, lng)','latlng','3.1390, 101.6869')+F('Google Maps link (optional)','mapUrl','https://maps.app.goo.gl/…')+TA('Nearby (transport, schools, malls)','nearby')+`<label>Map preview image (optional)</label><input type="file" accept="image/*" data-f="mapImg">${W.mapImg?`<div style="display:flex;gap:10px;align-items:center;margin-top:8px"><img class="th" src="${W.mapImg}" alt=""><button class="mini" data-clr="mapImg">Remove</button></div>`:''}<p class="note">Open Google Maps, screenshot the area with the pin, and upload it. Visitors tap it to open the live map.</p>`+`<button class="mini" id="e_test" style="margin-top:10px">Test in Google Maps ↗</button><p class="note">Visitors get "Open in Google Maps" and "Get directions" buttons. A live embedded map can't load on this hosting, so the preview image opens Google Maps.</p>`;
  const mb=((JSON.stringify(P).length+JSON.stringify(W).length)/1048576).toFixed(1);
  return `<h4>🖼 Pictures</h4><p class="note">First picture is the cover. Images are compressed automatically.</p><input type="file" id="e_files" accept="image/*" multiple><div class="gal">${W.gallery.map((u,i)=>`<div class="gi"><img src="${u}" alt="">${i===0?'<span class="cov">Cover</span>':''}<div>${i?`<button class="mini" data-cv="${i}">Cover</button>`:''}<button class="mini red" data-rg="${i}">✕</button></div></div>`).join('')}</div>
- <h4>▶ Videos</h4><p class="note">Paste a YouTube or Vimeo link. Visitors tap the video card to watch (it opens the YouTube app on phones). Add a cover image for a nicer card.</p>${W.videos.map((v,i)=>`<div class="trow"><select data-k="videos.${i}.cat">${VCATS.map(x=>`<option${(VCATS.includes(v.cat)?v.cat:'Other videos')===x?' selected':''}>${x}</option>`).join('')}</select><input data-k="videos.${i}.title" placeholder="Title" value="${esc(v.title)}"><input data-k="videos.${i}.url" placeholder="https://youtube.com/…" value="${esc(v.url)}"><label style="flex:1 1 100%;margin:4px 0 0">Cover image (optional)</label><input type="file" accept="image/*" data-f="videos.${i}.cover">${v.cover?`<img class="th" src="${v.cover}" alt=""><button class="mini" data-clr="videos.${i}.cover">Remove</button>`:''}<label style="flex:1 1 100%;margin:6px 0 0">Preview clip (optional, up to 3 MB). Plays automatically, muted; visitors can tap 🔇 to hear it.</label><input type="file" accept="video/*" data-vf="videos.${i}.clip">${v.clip?`<span class="note">Clip added (${Math.round(v.clip.length*.75/1024)} KB)</span><button class="mini" data-clr="videos.${i}.clip">Remove</button>`:''}<button class="mini red" data-x="videos.${i}">✕</button></div>`).join('')}<div class="chips"><button class="mini" data-addv="Site video">＋ Site video</button><button class="mini" data-addv="Show unit video">＋ Show unit video</button><button class="mini" data-addv="Other videos">＋ Other video</button></div>
- <p class="note" style="margin-top:16px">Page data ≈ ${mb} MB of 16 MB${mb>12?' — nearly full, use fewer or smaller pictures.':''}</p>`;
+ <h4>▶ Videos</h4><p class="note">Paste a YouTube or Vimeo link. Visitors tap the video card to watch (it opens the YouTube app on phones). Add a cover image for a nicer card.</p>${W.videos.map((v,i)=>`<div class="trow"><select data-k="videos.${i}.cat">${VCATS.map(x=>`<option${(VCATS.includes(v.cat)?v.cat:'Other videos')===x?' selected':''}>${x}</option>`).join('')}</select><input data-k="videos.${i}.title" placeholder="Title" value="${esc(v.title)}"><input data-k="videos.${i}.url" placeholder="https://youtube.com/…" value="${esc(v.url)}"><label style="flex:1 1 100%;margin:4px 0 0">Cover image (optional)</label><input type="file" accept="image/*" data-f="videos.${i}.cover">${v.cover?`<img class="th" src="${v.cover}" alt=""><button class="mini" data-clr="videos.${i}.cover">Remove</button>`:''}<label style="flex:1 1 100%;margin:6px 0 0">Preview clip (optional, up to 3 MB). Plays automatically, muted; visitors can tap 🔇 to hear it.</label><input type="file" accept="video/*" data-vf="videos.${i}.clip">${v.clip?`<span class="note">Clip added (${Math.round(v.clip.length*.75/1024)} KB)</span><button class="mini" data-clr="videos.${i}.clip">Remove</button>`:''}<button class="mini red" data-x="videos.${i}">✕</button></div>`).join('')}<div class="chips"><button class="mini" data-addv="Site video">＋ Site video</button><button class="mini" data-addv="Show unit video">＋ Show unit video</button><button class="mini" data-addv="Other videos">＋ Other video</button></div>`;
 }
-function edHtml(){const sec={d:'Details',v:'Development',l:'Location',n:'Transit & Nearby',m:'Media',t:'Layouts & Units'};
- return `<div class="dh"><h3>${wNew?'New project':esc(W.n||'Edit project')}</h3><button class="sec2" id="e_back">← Back</button></div><div class="tabs sm">${Object.entries(sec).map(([k,v])=>`<button class="${k===esec?'on':''}" data-s="${k}">${v}</button>`).join('')}</div><div id="e_body">${edBody()}</div><div class="sticky"><button class="pri" id="e_save">${wNew?'Add project':'Save changes'} & publish</button><p class="note" id="e_msg">Saving publishes to your website straight away.</p></div>`}
+/* ===== Project editor v2: live quality score, section progress, Google & WhatsApp previews, unsaved-changes guard ===== */
+const ESEC={d:'Details',v:'Development',l:'Location',n:'Transit & Nearby',m:'Media',t:'Layouts & Units'};
+const EMAP={'Cover photo':'m','Price':'t','Description':'d','Exact address':'l','Layouts & sizes':'t','Developer':'d','Tenure':'v','Completion year':'v','Facilities':'v','Nearby places':'n'};
+const ETIP={'Cover photo':'Add at least one photo','Price':'Add a layout with a price','Description':'Write 60+ characters, or add 3 highlights','Exact address':'Add the address or map link','Layouts & sizes':'Add a layout with its size','Developer':'Who is building it','Tenure':'Freehold or leasehold','Completion year':'Expected year','Facilities':'Tap the facilities it has','Nearby places':'Add transport, schools or malls'};
+let edSnap='';
+function edDirty(){try{return !!W&&JSON.stringify(W)!==edSnap}catch(e){return true}}
+function edHtml(){const sc=pScore(W);
+ return `<div class="ed2"><header class="ed-top"><button class="ad-btn sm" id="e_back" type="button">← Back</button><div class="ed-tt"><small>${wNew?'New project':'Editing project'}</small><h3 id="e_title">${esc(W.n||'Untitled project')}</h3></div>${!wNew&&W.slug?`<a class="ad-btn sm ed-view" href="${esc(adSite()+'property/'+W.slug+'/')}" target="_blank" rel="noopener">View page ↗</a>`:''}<span class="ed-ring" id="e_ring" title="Listing quality">${ring(sc.pct,48)}</span></header>
+ <div class="tabs sm ed-steps">${Object.entries(ESEC).map(([k,v])=>`<button type="button" class="${k===esec?'on':''}" data-s="${k}">${v}<i class="ed-ind" data-ind="${k}"></i></button>`).join('')}</div>
+ <div class="ed-grid"><div id="e_body">${edBody()}</div><aside class="ed-side" id="e_side">${edSide()}</aside></div>
+ <div class="sticky ed-save"><span class="ed-dirty" id="e_dirty"></span><button class="pri" id="e_save">${wNew?'Add project':'Save changes'} & publish</button><p class="note" id="e_msg">Saving publishes to your website straight away.</p></div></div>`}
+function edSide(){const sc=pScore(W),miss=new Set(sc.miss),col=sc.pct>=80?'#16a34a':sc.pct>=50?'#d97706':'#dc2626';
+ let t='',d='';try{t=window.__pTitle?__pTitle(W):(W.n||'');d=window.__pDesc?__pDesc(W):''}catch(e){t=W.n||''}
+ const slug=W.slug||(window.__kebab?__kebab([W.n,W.l].filter(Boolean).join(' ')):'')||'your-project',host=adSite().replace(/^https?:\/\//,'').replace(/\/$/,''),img=cover(W);
+ const next=sc.miss[0];
+ return `<section class="ed-card"><h4>Listing quality <b style="color:${col}">${sc.pct}%</b></h4><div class="ed-bar"><u style="width:${sc.pct}%;background:${col}"></u></div>
+ ${next?`<p class="ed-next">Next: <button type="button" data-go="${EMAP[next]}">${esc(ETIP[next])} →</button></p>`:'<p class="ed-next ok">🎉 Complete. This listing is ready for Google.</p>'}
+ <ul class="ed-check">${Object.keys(EMAP).map(k=>`<li class="${miss.has(k)?'no':'ok'}"><button type="button" data-go="${EMAP[k]}"><span>${miss.has(k)?'○':'✓'}</span>${k}<small>${ESEC[EMAP[k]]}</small></button></li>`).join('')}</ul></section>
+ <section class="ed-card"><h4>Google preview</h4><div class="ed-serp"><small>${esc(host)} › property › ${esc(slug)}</small><b>${esc(t||'Project name')}</b><p>${esc(d||'Add details and the description fills in automatically.')}</p></div><p class="ed-len"><span class="${t.length>65?'bad':''}">Title ${t.length}/60</span><span class="${d.length>160?'bad':''}">Description ${d.length}/160</span></p></section>
+ <section class="ed-card"><h4>WhatsApp share preview</h4><div class="ed-wa">${img?`<div class="ed-wa-img" style="background-image:url('${String(img).replace(/'/g,'%27')}')"></div>`:`<div class="ed-wa-img ed-wa-def"><span>One Stop Centre</span></div>`}<div class="ed-wa-t"><b>${esc(t||'Project name')}</b><small>${esc(host)}</small></div></div>${img?'':'<p class="note">Add a photo so shared links show this project, not the general card.</p>'}</section>`}
+function edLive(){if(!W||!$('e_side'))return;const sc=pScore(W);
+ $('e_side').innerHTML=edSide();$('e_ring').innerHTML=ring(sc.pct,48);$('e_title').textContent=W.n||'Untitled project';
+ const miss={};sc.miss.forEach(k=>{const s=EMAP[k];miss[s]=(miss[s]||0)+1});
+ document.querySelectorAll('[data-ind]').forEach(i=>{const n=miss[i.dataset.ind]||0;i.className='ed-ind '+(n?'warn':'ok');i.textContent=n?String(n):'✓';i.title=n?n+' to complete':'Complete'});
+ const dt=edDirty(),el=$('e_dirty');if(el){el.textContent=dt?'● Unsaved changes':(wNew?'':'✓ No unsaved changes');el.className='ed-dirty'+(dt?' on':'')}
+ document.querySelectorAll('#e_side [data-go]').forEach(b=>b.onclick=()=>{esec=b.dataset.go;edShow();edLive();const m=document.querySelector('.ad-main');if(m)m.scrollTop=0})}
+function edPlus(){const B=$('e_body');if(!B)return;let t=null;const q=()=>{clearTimeout(t);t=setTimeout(edLive,200)};
+ ['input','change','click'].forEach(ev=>B.addEventListener(ev,q));
+ if(window.MutationObserver)new MutationObserver(q).observe(B,{childList:true,subtree:true});
+ const bk=$('e_back'),ob=bk&&bk.onclick;if(bk)bk.onclick=()=>{if(edDirty()&&!confirm('You have unsaved changes. Leave without saving?'))return;edSnap='';ob&&ob()};
+ document.querySelectorAll('.ed-steps [data-s]').forEach(b=>{const o=b.onclick;b.onclick=()=>{o&&o();edLive();const m=document.querySelector('.ad-main');if(m)m.scrollTop=0}});
+ if(!window.__edGuard){window.__edGuard=1;addEventListener('beforeunload',e=>{if(W&&$('e_save')&&edDirty()){e.preventDefault();e.returnValue=''}})}
+ edLive()}
+{const _oe=openEditor;openEditor=function(id){edSnap='';const r=_oe.apply(this,arguments);try{edSnap=JSON.stringify(W);edLive()}catch(e){}return r}}
 function edShow(){const d=document.querySelector('.ad-main')||document.querySelector('.dash'),st=d?d.scrollTop:0;$('e_body').innerHTML=edBody();document.querySelectorAll('.tabs.sm button').forEach(b=>b.classList.toggle('on',b.dataset.s===esec));if(d)d.scrollTop=st}
 function brochHtml(){return `<h4>📄 Brochure (PDF)</h4><p class="note">Upload the developer's brochure (PDF, up to 25 MB). Visitors get a <b>Download brochure</b> button on this project once you tap Save. Upload a new file any time to replace it.</p>${W.brochure?`<p class="note">✅ <a href="${esc(W.brochure)}" target="_blank" rel="noopener">View current brochure</a> &nbsp;<button class="mini red" type="button" data-rmb="1">Remove</button></p>`:''}<input type="file" id="e_broch" accept="application/pdf,.pdf"><p class="note" id="e_bmsg"></p>`}
 function edBind(){
@@ -1942,7 +1973,7 @@ ${rel.length?`<h2>More properties in Klang Valley</h2><ul class="rel">${rel.map(
   btn.disabled=false;
  }
  try{if(window.__CMS)P.forEach(p=>{window.__SAVED[String(p.id)]=canon(p)})}catch(e){}
- window.seoBuildPack=buildPack;window.__propPage=propPage;window.__related=related;window.__stamp=stamp;window.__siteBase=siteBase;
+ window.seoBuildPack=buildPack;window.__propPage=propPage;window.__pTitle=pTitle;window.__pDesc=pDesc;window.__kebab=kebab;window.__related=related;window.__stamp=stamp;window.__siteBase=siteBase;
  window.__renderProp=function(slug){const p=P.find(x=>x.slug===slug);if(!p){document.documentElement.style.visibility='';const m=document.createElement('meta');m.name='robots';m.content='noindex';document.head.appendChild(m);history.replaceState(null,'','/');return}
   const base=siteBase()||(location.origin+'/');const seen=new Set(),imgs=[];[...(p.gallery||[]),p.img,...(p.types||[]).map(t=>t&&t.img)].forEach(u=>{if(u&&/^https?:/.test(u)&&!seen.has(u)){seen.add(u);imgs.push(u)}});
   const html=propPage(p,base,imgs,related(p));document.open();document.write(html);document.close()};
@@ -2148,4 +2179,38 @@ body:has(.panel.open) .apop,body:has(#bm) .apop,body:has(.lb2) .apop,body:has(.w
 .ad-list.wrap b{white-space:normal}
 </style>
 <style id="h1w">.hx h1.h1w{margin:0 0 14px;max-width:none;font:inherit;letter-spacing:normal}.hx h1.h1w .eyebrow{font-family:"Plus Jakarta Sans",system-ui,-apple-system,sans-serif;line-height:normal;font-style:normal;vertical-align:top}.hx h1.h1w .h1t{display:block;margin-top:20px;font:400 clamp(2.3rem,7.5vw,4.6rem)/1.04 var(--fh);letter-spacing:-.02em;max-width:16ch}</style>
+<style id="editor-v2">.ed2{max-width:1280px}
+.ed-top{position:sticky;top:calc(-24px - env(safe-area-inset-top,0px));z-index:6;display:flex;align-items:center;gap:14px;background:rgba(243,245,250,.94);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);margin:-24px -36px 0;padding:calc(16px + env(safe-area-inset-top,0px)) 36px 12px;border-bottom:1px solid #e3e8f1}
+.ed-tt{flex:1;min-width:0}.ed-tt small{color:#7a86a3;font-weight:800;font-size:.7rem;text-transform:uppercase;letter-spacing:.1em}
+.ed-tt h3{margin:2px 0 0;font:600 1.55rem/1.15 var(--fh,Georgia,serif);color:#0f1b33;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ed-ring{flex:none}
+.ad-main .ed-steps{display:flex;gap:6px;overflow-x:auto;padding:12px 0;margin:0 0 6px;top:62px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.ed-steps::-webkit-scrollbar{display:none}
+.ed-steps button{white-space:nowrap;display:inline-flex;align-items:center}
+.ed-ind{margin-left:7px;font-style:normal;font-size:.68rem;font-weight:800;min-width:18px;height:18px;padding:0 5px;border-radius:9px;display:inline-grid;place-items:center}
+.ed-ind.ok{background:#dcfce7;color:#15803d}.ed-ind.warn{background:#fef3c7;color:#b45309}
+.tabs.sm button.on .ed-ind{background:rgba(255,255,255,.28);color:#fff}
+.ed-grid{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:22px;align-items:start}
+.ed-side{position:sticky;top:124px;display:flex;flex-direction:column;gap:12px}
+.ed-card{background:#fff;border:1px solid #edf0f6;border-radius:18px;padding:14px 16px;box-shadow:0 1px 2px rgba(15,27,51,.04),0 8px 22px rgba(15,27,51,.05)}
+.ed-card h4{margin:0 0 10px;font:700 .92rem var(--fb,system-ui);color:#0f1b33;display:flex;justify-content:space-between;align-items:center}
+.ed-bar{height:8px;background:#eef1f7;border-radius:6px;overflow:hidden}.ed-bar u{display:block;height:100%;border-radius:6px;transition:width .3s}
+.ed-next{margin:10px 0 6px;font-size:.85rem;color:#5b6784}.ed-next button{background:none;border:0;padding:0;color:#c8102e;font:700 .85rem var(--fb,system-ui);cursor:pointer;text-align:left}.ed-next.ok{color:#15803d;font-weight:700}
+.ed-check{list-style:none;margin:6px 0 0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:2px 8px}
+.ed-check button{width:100%;display:flex;align-items:baseline;gap:6px;background:none;border:0;padding:5px 4px;border-radius:8px;font:600 .8rem var(--fb,system-ui);color:#0f1b33;cursor:pointer;text-align:left;flex-wrap:wrap}
+.ed-check button:hover{background:#f3f5fa}.ed-check small{flex-basis:100%;padding-left:18px;color:#94a0b8;font-weight:500;font-size:.7rem}
+.ed-check li.ok span{color:#16a34a}.ed-check li.no span{color:#d97706}.ed-check li.ok button{color:#5b6784}
+.ed-serp{border:1px solid #edf0f6;border-radius:12px;padding:12px;background:#fff}
+.ed-serp small{color:#4d5156;font:400 .75rem Arial,sans-serif;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ed-serp b{display:block;color:#1a0dab;font:400 1.05rem/1.3 Arial,sans-serif;margin:4px 0}.ed-serp p{margin:0;color:#4d5156;font:400 .82rem/1.45 Arial,sans-serif}
+.ed-len{display:flex;justify-content:space-between;margin:8px 0 0;font-size:.72rem;color:#7a86a3;font-weight:600}.ed-len .bad{color:#dc2626}
+.ed-wa{background:#e7f8ee;border-radius:12px;padding:6px;display:flex;flex-direction:column;gap:0;border:1px solid #cdeedb}
+.ed-wa-img{aspect-ratio:1.91/1;border-radius:8px 8px 0 0;background:#0c1f4a center/cover no-repeat}
+.ed-wa-def{display:grid;place-items:center;background:linear-gradient(135deg,#0c1f4a,#c8102e)}.ed-wa-def span{color:#fff;font:600 1.1rem var(--fh,Georgia,serif)}
+.ed-wa-t{background:#fff;border-radius:0 0 8px 8px;padding:8px 10px}.ed-wa-t b{display:block;font-size:.85rem;color:#111;line-height:1.3}.ed-wa-t small{color:#667;font-size:.72rem}
+.ed-save{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.ed-save .pri{flex:1;min-width:220px}.ed-save #e_msg{flex-basis:100%;margin:0}
+.ed-dirty{font-weight:800;font-size:.85rem;color:#15803d}.ed-dirty:empty{display:none}.ed-dirty.on{color:#b45309}
+@media(max-width:1100px){.ed-grid{grid-template-columns:1fr}.ed-side{position:static;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
+@media(max-width:900px){.ed-top{margin:-16px -16px 0;padding:calc(12px + env(safe-area-inset-top,0px)) 16px 10px;top:calc(-16px - env(safe-area-inset-top,0px))}.ed-tt h3{font-size:1.25rem}.ad-main .ed-steps{top:56px}.ed-view{display:none}}
+</style>
 </body></html>
