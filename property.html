@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en-MY" class="js" style=""><head><meta charset="utf8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><meta name="robots" content="index, follow, max-image-preview:large"><meta property="og:type" content="website"><meta property="og:site_name" content="One Stop Centre Property Lists"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><meta property="og:locale" content="en_MY"><title>One Stop Centre Property Lists</title></head><body>
+<html lang="en-MY" class="js" style=""><head><meta charset="utf8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><meta name="robots" content="index, follow, max-image-preview:large"><meta property="og:type" content="website"><meta property="og:site_name" content="One Stop Centre Property Lists"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><meta property="og:locale" content="en_MY"><style id="sw-css">html.sw-in *,html.sw-in *::before,html.sw-in *::after{animation-duration:0s!important;animation-delay:0s!important;transition:none!important}html[data-lang="ms"]:not(.i18n-on) body{opacity:0;animation:i18nshow 0s 1.2s forwards}@keyframes i18nshow{to{opacity:1}}</style><title>One Stop Centre Property Lists</title></head><body>
 
 <style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
 
@@ -723,7 +723,8 @@ body{background-color:#0a1a3a;background-image:radial-gradient(900px 520px at 10
  }
  async function load(){
   var el=document.getElementById('data'),d=JSON.parse(el.textContent);
-  if(el.getAttribute('data-fresh')==='1'){window.__CMS=true;run();return}
+  var adm=/admin/.test(location.hash);try{for(var i=0;i<localStorage.length;i++){if(/^sb-.*-auth-token$/.test(localStorage.key(i)))adm=true}}catch(e){}
+  if(el.getAttribute('data-fresh')==='1'&&!adm){window.__CMS=true;window.__PAGEDATA=true;run();return}
   if(window.SB){try{
    var to=new Promise(function(_,j){setTimeout(function(){j(new Error('timeout'))},7000)});
    var r=await Promise.race([Promise.all([window.SB.from('projects').select('id,data').eq('published',true),window.SB.from('settings').select('data').eq('id',1).maybeSingle()]),to]);
@@ -1357,7 +1358,7 @@ function openLB(list,i){if(!list||!list.length)return;let k=i||0;const lb=docume
  lb.onclick=e=>{if(e.target===lb)close()};document.addEventListener('keydown',key);draw();document.body.appendChild(lb)}
 function initUI(){
  const hd=$('hd'),onS=()=>hd.classList.toggle('sc',(window.scrollY||document.documentElement.scrollTop)>40);window.addEventListener('scroll',onS,{passive:true});onS();
- const red=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+ const red=window.__SWLANG||(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches);
  const st=[[P.length,'Projects'],[new Set(P.map(p=>p.d).filter(Boolean)).size,'Developers'],[new Set(P.map(p=>p.l)).size,'Areas']];
  $('stats').innerHTML=st.map(([n,l])=>`<div><b data-n="${n}">${red?n:0}</b><span>${l}</span></div>`).join('');
  if(!red)document.querySelectorAll('#stats b').forEach(b=>{const n=+b.dataset.n,t0=performance.now();const tick=t=>{const p=Math.min(1,(t-t0)/900);b.textContent=Math.round(n*(1-Math.pow(1-p,3)));if(p<1)requestAnimationFrame(tick)};requestAnimationFrame(tick)});
@@ -2281,8 +2282,13 @@ var LANG=(document.documentElement.getAttribute('data-lang')==='ms'||/^\/ms(\/|$
 window.__LANG=LANG;
 /* language switch in the header: English <-> Bahasa Melayu, keeps your place */
 function swHref(){var p=location.pathname,h=location.hash||'';var en=p.replace(/^\/ms(?=\/|$)/,'')||'/';return (LANG==='ms'?en:'/ms'+(en==='/'?'/':en))+h}
-function addSwitch(){var hn=document.querySelector('.hd .hn');if(!hn||document.getElementById('langsw'))return;var a=document.createElement('a');a.id='langsw';a.className='langsw';a.href=swHref();a.setAttribute('hreflang',LANG==='ms'?'en':'ms');a.setAttribute('lang',LANG==='ms'?'en':'ms');a.setAttribute('aria-label',LANG==='ms'?'Switch to English':'Tukar ke Bahasa Melayu');a.innerHTML='<span class="'+(LANG==='en'?'on':'')+'">EN</span><span class="'+(LANG==='ms'?'on':'')+'">BM</span>';a.addEventListener('click',function(){a.href=swHref();try{localStorage.setItem('osc_lang',LANG==='ms'?'en':'ms')}catch(e){}});var cta=hn.querySelector('.hcta');hn.insertBefore(a,cta||null);window.addEventListener('hashchange',function(){a.href=swHref()})}
+function addSwitch(){var hn=document.querySelector('.hd .hn');if(!hn||document.getElementById('langsw'))return;var a=document.createElement('a');a.id='langsw';a.className='langsw';a.href=swHref();a.setAttribute('hreflang',LANG==='ms'?'en':'ms');a.setAttribute('lang',LANG==='ms'?'en':'ms');a.setAttribute('aria-label',LANG==='ms'?'Switch to English':'Tukar ke Bahasa Melayu');a.innerHTML='<span class="'+(LANG==='en'?'on':'')+'">EN</span><span class="'+(LANG==='ms'?'on':'')+'">BM</span>';a.addEventListener('click',function(){a.href=swHref();try{localStorage.setItem('osc_lang',LANG==='ms'?'en':'ms');sessionStorage.setItem('osc_sw',JSON.stringify({y:Math.round(window.scrollY||0),t:Date.now()}))}catch(e){}});var cta=hn.querySelector('.hcta');hn.insertBefore(a,cta||null);window.addEventListener('hashchange',function(){a.href=swHref()})}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',addSwitch);else addSwitch();
+/* arriving from the language switch: skip the intro animations and return to the same spot on the page */
+(function(){var f=null;try{f=JSON.parse(sessionStorage.getItem('osc_sw')||'null');sessionStorage.removeItem('osc_sw')}catch(e){}
+ if(!f||Date.now()-f.t>15000)return;window.__SWLANG=true;var de=document.documentElement;de.classList.add('sw-in');
+ if('scrollRestoration' in history)history.scrollRestoration='manual';
+ var go=function(){if(f.y>0){try{window.scrollTo({top:f.y,left:0,behavior:'instant'})}catch(e){window.scrollTo(0,f.y)}}};window.addEventListener('load',function(){go();setTimeout(go,250);setTimeout(function(){de.classList.remove('sw-in')},900)});})();
 if(LANG!=='ms')return;
 var D={
 /* header, hero */
@@ -2375,10 +2381,11 @@ function doText(n){var v=n.nodeValue;if(!v||!/[A-Za-z]/.test(v))return;var p=n.p
  var lead=v.match(/^\s*/)[0],trail=v.match(/\s*$/)[0];n.nodeValue=lead+t+trail}
 function doEl(e){if(e.closest&&e.closest(SKIP))return;['placeholder','aria-label','title'].forEach(function(a){var v=e.getAttribute&&e.getAttribute(a);if(v&&/[A-Za-z]/.test(v)){var t=tr(v.trim());if(t!==v.trim())e.setAttribute(a,t)}})}
 function walk(root){if(root.nodeType===3){doText(root);return}if(root.nodeType!==1)return;if(root.closest&&root.closest(SKIP))return;doEl(root);root.querySelectorAll&&root.querySelectorAll('[placeholder],[aria-label],[title]').forEach(doEl);var w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),n;while(n=w.nextNode())doText(n)}
-function start(){walk(document.body);new MutationObserver(function(ms){ms.forEach(function(m){if(m.type==='characterData')doText(m.target);else m.addedNodes.forEach(walk)})}).observe(document.body,{childList:true,subtree:true,characterData:true})}
+function start(){walk(document.body);document.documentElement.classList.add('i18n-on');new MutationObserver(function(ms){ms.forEach(function(m){if(m.type==='characterData')doText(m.target);else m.addedNodes.forEach(walk)})}).observe(document.body,{childList:true,subtree:true,characterData:true})}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
 window.__trMS=tr;
 })();
 </script>
 <style id="langsw-css">.hd .hn a.langsw{display:inline-flex!important;align-items:center;gap:2px;padding:3px;border:1px solid rgba(255,255,255,.35);border-radius:999px;text-decoration:none;margin-right:6px}.langsw span{padding:5px 9px;border-radius:999px;font:800 .72rem var(--fb,system-ui);letter-spacing:.06em;color:#fff;opacity:.75}.langsw span.on{background:#fff;color:#0c1f4a;opacity:1}.hd.sc .langsw,.hd.solid .langsw{border-color:rgba(12,31,74,.25)}.hd .hn a.hcta{white-space:nowrap}.hd .brand b{white-space:nowrap}@media(max-width:520px){.hd .brand i{display:none!important}.hd .brand b{font-size:.98rem!important}.hd .brand .logo{width:34px!important;height:34px!important}.hd .hn a.langsw{margin-right:4px}.langsw span{padding:4px 7px;font-size:.66rem}.hd .hn a.hcta{padding:8px 12px!important;font-size:.8rem!important}}@media(max-width:374px){.hd .hn a.hcta{display:none!important}}</style>
+<script>window.addEventListener('hashchange',function(){if(window.__PAGEDATA&&/admin/.test(location.hash))location.reload()});</script>
 </body></html>
