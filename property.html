@@ -1169,7 +1169,7 @@ function openDetail(id){
  const card=u=>{const l=S.loan||{m:90,r:4.5,y:35},psf=numOf(u.maint)||numOf(p.maintPsf),rt=numOf(p.rate)||l.r,sz=numOf(u.size),mo=maintMonthly(u,p.maintPsf),ins=inst(u.price,p.rate),szt=u.size?(/^[\d.,\s]+$/.test(u.size)?u.size+' sqft':u.size):'';
   const specs=[['Size',szt],['Bedrooms',u.beds],['Bathrooms',u.baths],['Carparks',u.carparks||cp.bays]].filter(x=>x[1]!==''&&x[1]!=null);
   return `<div class="ucd">${u.img?`<img src="${u.img}" alt="">`:'<div class="noimg">Layout plan coming soon</div>'}<div class="uinfo"><h4>${esc(u.name||'Layout')}</h4><div class="specs">${specs.map(x=>`<div><span>${x[0]}</span><b>${esc(x[1])}</b></div>`).join('')}</div>${mo?`<p class="mfee">🧾 Maintenance fee <b>RM ${mo.toLocaleString()}/month</b><small>RM ${psf} psf × ${sz.toLocaleString()} sqft built-up</small></p>`:(psf?`<p class="mfee">🧾 Maintenance <b>RM ${psf} psf</b></p>`:'')}${(u.price||ins)?`<div class="uprice2">${u.price?`<div><span>Price from</span><b>${esc(u.price)}</b></div>`:''}${ins?`<div><span>Est. monthly instalment</span><b>RM ${ins.toLocaleString()}</b></div>`:''}</div>${ins?`<small class="mut">${mo?`Est. total monthly ≈ RM ${(ins+mo).toLocaleString()} incl. maintenance. `:''}Based on ${rt}% p.a., ${l.y} years. For illustration only.</small>`:''}`:''}</div></div>`};
- $('detail').innerHTML=`<div class="dbox"><button class="dx" id="dx">✕</button>
+ $('detail').innerHTML=`<div class="dbox"><div class="dtop"><button class="dt-b" id="dx" type="button" aria-label="Back to all properties"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span>Back</span></button><b class="dt-n">${esc(p.n)}</b><button class="dt-b dt-c" id="dt_sh" type="button" aria-label="Share ${esc(p.n)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 12v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg></button><button class="dt-b dt-c" id="dx2" type="button" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
  <div class="gmain" id="gm" style="background-image:${imgs[0]?`url(${imgs[0]})`:`linear-gradient(135deg,hsl(${hue(p)} 45% 35%),hsl(${hue(p)+16} 50% 55%))`}">${imgs.length>1?`<span class="gc" id="gc">1 / ${imgs.length}</span>`:''}</div>
  ${imgs.length>1?`<div class="gthumbs">${imgs.map((u,i)=>`<img src="${u}" data-i="${i}" alt="">`).join('')}</div>`:''}
  <div class="dbody"><h2>${esc(p.n)}</h2>${p.d?`<div class="ddev">Developed by <b>${esc(p.d)}</b></div>`:''}${hlOf(p).length?`<div class="dhl">${hlOf(p).map(x=>`<span>✓ ${esc(x)}</span>`).join('')}</div>`:''}
@@ -1189,9 +1189,10 @@ function openDetail(id){
  ${vids.length?`<h3 id="s-v">Videos</h3>${VCATS.map(c=>{const l=vids.filter(v=>(VCATS.includes(v.cat)?v.cat:'Other videos')===c);return l.length?`<div class="vgrp"><h4 class="sub">🎬 ${c}</h4>${l.map(v=>`<div class="vid"><a class="vph${v.clip?' hasclip':''}" href="${esc(v.url)}" target="_blank" rel="noopener"${v.cover?` style="background-image:url(${v.cover})"`:''}>${v.clip?`<video class="vclip" src="${v.clip}" muted loop playsinline preload="metadata"${v.cover?` poster="${v.cover}"`:''}></video>`:''}<span class="vplay">▶</span><span class="vt">${esc(v.title||c)}</span></a>${v.clip?`<button class="vsnd" type="button" aria-label="Turn sound on or off">🔇</button>`:''}</div>`).join('')}</div>`:''}).join('')}`:''}
  <div class="cta"><h3>Interested in ${esc(p.n)}?</h3><p>Get the latest price, unit availability and current offers from our team.</p><ul><li>Check available units & pricing</li><li>Arrange a site visit</li><li>Loan & payment guidance</li></ul><div class="btns"><button class="pri enqbtn">Enquire now</button>${p.brochure?`<a class="b2" href="${esc(p.brochure)}" target="_blank" rel="noopener">📄 Download brochure</a>`:''}${waH?`<a class="b1" href="${waH}" target="_blank" rel="noopener">WhatsApp us</a>`:''}${S.email?`<a class="b2" href="mailto:${esc(S.email)}?subject=${encodeURIComponent('Enquiry: '+p.n)}">Email</a>`:''}</div></div>
  </div>
- <div class="sbar"><button class="pri enqbtn" id="dq">Enquire now</button></div></div>`;
+ <div class="sbar"><div class="sb-info"><small>${esc(p.n)}${String(p.l||'').trim()?' · '+esc(p.l):''}</small><b>${numOf(priceFrom(p))?'From RM'+numOf(priceFrom(p)).toLocaleString('en-MY'):'Price on request'}</b></div><div class="sb-act">${waH?`<a class="sb-wa" href="${waH}" target="_blank" rel="noopener" aria-label="WhatsApp us about ${esc(p.n)}"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3.2C8.9 3.2 3.2 8.7 3.2 15.5c0 2.5.8 4.8 2.1 6.8L3.6 28.8l6.7-1.7c1.7.9 3.6 1.4 5.7 1.4 7.1 0 12.8-5.5 12.8-12.3S23.1 3.2 16 3.2z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/><path d="M11.6 9.7c.5-.1.9.1 1.1.5l1.2 2.7c.2.4.1.9-.2 1.2l-1 1c.8 1.6 2.1 2.9 3.6 3.7l1-1c.3-.3.8-.4 1.2-.2l2.7 1.2c.4.2.6.6.5 1.1l-.4 1.6c-.1.6-.6 1-1.2 1-5.4 0-9.8-4.4-9.8-9.8 0-.6.4-1.1 1-1.2z" fill="currentColor"/></svg><span>WhatsApp</span></a>`:''}<button class="pri enqbtn" id="dq">Enquire now</button></div></div></div>`;
  const d=$('detail');d.classList.add('open');d.scrollTop=0;
- $('dx').onclick=closeDetail;d.onclick=e=>{if(e.target===d)closeDetail()};
+ $('dx').onclick=closeDetail;$('dx2').onclick=closeDetail;$('dt_sh').onclick=()=>doShare(p);d.onclick=e=>{if(e.target===d)closeDetail()};
+ {const tb=d.querySelector('.dtop'),lim=()=>{const g=$('gm');return (g?g.offsetHeight:280)-70};tb.classList.remove('solid');d.onscroll=()=>tb.classList.toggle('solid',d.scrollTop>lim())}
  let gi=0;const setG=i=>{gi=(i+imgs.length)%imgs.length;if(imgs[gi])$('gm').style.backgroundImage=`url(${imgs[gi]})`;const c=$('gc');if(c)c.textContent=(gi+1)+' / '+imgs.length};
  d.querySelectorAll('.gthumbs img').forEach(im=>im.onclick=()=>setG(+im.dataset.i));
  $('gm').onclick=()=>{if(imgs.length)openLB(imgs,gi)};
@@ -2060,7 +2061,7 @@ body:has(.panel.open) .apop,body:has(#bm) .apop,body:has(.lb2) .apop,body:has(.w
  function fab(){return document.getElementById('fab')}
  function proj(){var f=fab(),lab=(f&&f.getAttribute('aria-label'))||'',pm=lab.match(/about (.+)$/);return pm?pm[1]:null}
  function key(p){return p?'osc_pop_p:'+p:'osc_pop_home'}
- function ready(){var f=fab();return f&&getComputedStyle(f).display!=='none'&&/wa\.me/.test(f.href)}
+ function ready(){var f=fab();return !!(f&&/wa\.me/.test(f.href))}
  function fill(p){a.href=fab().href;
   if(p){h.textContent='Interested in '+p+'? 👋';m.textContent="WhatsApp me for the latest price, available units and current offers. Happy to arrange a viewing too."}
   else{h.textContent='Hi, looking for a property? 👋';m.textContent="Send me a WhatsApp and I'll help you find the right home, with the latest prices, units and offers."}}
@@ -2219,4 +2220,33 @@ body:has(.panel.open) .apop,body:has(#bm) .apop,body:has(.lb2) .apop,body:has(.w
 </style>
 <style id="fab-off">.fab,.apop{transition:opacity .25s,transform .25s}body.fab-off .fab,body.fab-off .apop{opacity:0!important;pointer-events:none!important;transform:translateY(16px)!important}</style>
 <script>(function(){var t=[document.getElementById('contact'),document.querySelector('footer')].filter(Boolean);if(!t.length||!window.IntersectionObserver)return;var on=new Set();var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting)on.add(e.target);else on.delete(e.target)});document.body.classList.toggle('fab-off',on.size>0)},{threshold:0,rootMargin:'0px 0px -25% 0px'});t.forEach(function(x){io.observe(x)})})();</script>
+<style id="sbar-v2">
+.sbar{align-items:center;justify-content:space-between;gap:16px;padding:12px 24px calc(12px + env(safe-area-inset-bottom,0px))!important;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.sb-info{min-width:0;display:flex;flex-direction:column;line-height:1.2}
+.sb-info small{color:#5b6784;font:600 .78rem var(--fb,system-ui);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-info b{color:#c8102e;font:600 1.35rem var(--fh,Georgia,serif);white-space:nowrap}
+.sb-act{display:flex;gap:10px;align-items:center;flex:none}
+.sbar .sb-act .pri{flex:none;min-width:200px;padding:14px 28px;border-radius:14px}
+.sb-wa{display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff!important;text-decoration:none;border-radius:14px;padding:13px 20px;font:700 1rem var(--fb,system-ui);box-shadow:0 6px 16px rgba(37,211,102,.3);transition:transform .12s}
+.sb-wa:active{transform:scale(.97)}.sb-wa svg{width:22px;height:22px}
+body:has(#detail.open) .fab{display:none!important}
+body:has(#detail.open) .apop{bottom:calc(92px + env(safe-area-inset-bottom,0px))}
+@media(max-width:620px){.sbar{gap:10px;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px))!important}.sb-info small{display:none}.sb-info b{font-size:1.05rem}.sb-info b::before{content:"";}
+ .sbar .sb-act .pri{min-width:0;padding:13px 18px}.sb-wa{padding:12px;border-radius:12px}.sb-wa span{display:none}}
+@media(max-width:380px){.sb-info{display:none}.sb-act{flex:1}.sbar .sb-act .pri{flex:1}}
+</style>
+<style id="dtop-v2">
+.dtop{position:sticky;top:0;z-index:8;display:flex;align-items:center;gap:10px;height:64px;margin-bottom:-64px;padding:0 14px;box-sizing:border-box;transition:background .2s,box-shadow .2s;pointer-events:none}
+.dtop>*{pointer-events:auto}
+.dt-b{flex:none;height:42px;min-width:42px;border-radius:21px;border:0;background:#fff;color:#0f1b33;box-shadow:0 4px 14px rgba(3,10,30,.28);display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:0 16px 0 10px;font:700 .92rem var(--fb,system-ui);cursor:pointer;transition:transform .12s,background .2s,box-shadow .2s}
+.dt-b:active{transform:scale(.94)}
+.dt-b svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.dt-c{padding:0;width:42px}.dt-c svg{width:20px;height:20px}
+.dt-n{flex:1;min-width:0;font:600 1.15rem var(--fh,Georgia,serif);color:#0f1b33;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transform:translateY(4px);transition:opacity .2s,transform .2s}
+.dtop.solid{background:rgba(255,255,255,.96);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 1px 0 var(--line,#e3e8f1),0 6px 18px rgba(3,10,30,.06)}
+.dtop.solid .dt-n{opacity:1;transform:none}
+.dtop.solid .dt-b{background:#eef1f8;box-shadow:none}
+.dnav{top:64px!important;padding-right:16px!important}
+@media(max-width:520px){.dt-b span{display:none}.dt-b{padding:0;width:42px}.dtop{gap:8px;padding:0 10px}}
+</style>
 </body></html>
