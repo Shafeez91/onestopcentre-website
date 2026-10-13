@@ -742,6 +742,10 @@ body{background-color:#0a1a3a;background-image:radial-gradient(900px 520px at 10
 <script type="text/x-osc">
 const $=id=>document.getElementById(id);
 const D=JSON.parse($('data').textContent);
+function normAreas(L){if(!Array.isArray(L))return;const tcw=w=>(w.length<=2||!/[AEIOU]/.test(w))?w:w.charAt(0)+w.slice(1).toLowerCase();const tc=v=>v.split(/(\s+|-|\/|\()/).map(w=>/^[A-Z0-9]+$/.test(w)?tcw(w):w).join('');const key=v=>v.replace(/\s+/g,' ').trim().toLowerCase();const pick={};
+ L.forEach(p=>{if(!p||typeof p.l!=='string')return;const v=p.l.replace(/\s+/g,' ').trim(),k=v.toLowerCase();if(!k)return;const mixed=v!==v.toUpperCase();if(!pick[k]||(mixed&&pick[k]===pick[k].toUpperCase()))pick[k]=v});
+ L.forEach(p=>{if(!p||typeof p.l!=='string')return;const k=key(p.l);if(!k)return;let v=pick[k];if(v===v.toUpperCase())v=tc(v);p.l=v})}
+normAreas(D.projects);
 let P=D.projects,S={email:D.email||'',wa:D.wa||'',site:D.site||'',vo:D.vo||{on:false,lang:'en-GB',text:'',music:true,vol:40,audio:''},loan:D.loan||{m:90,r:4.5,y:35}},owner=false,db=null,art=null,busy=false,editId=null,L=[],unsub=null,tab='home';
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ss={get:k=>{try{return sessionStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},del:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
@@ -2213,4 +2217,6 @@ body:has(.panel.open) .apop,body:has(#bm) .apop,body:has(.lb2) .apop,body:has(.w
 @media(max-width:1100px){.ed-grid{grid-template-columns:1fr}.ed-side{position:static;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
 @media(max-width:900px){.ed-top{margin:-16px -16px 0;padding:calc(12px + env(safe-area-inset-top,0px)) 16px 10px;top:calc(-16px - env(safe-area-inset-top,0px))}.ed-tt h3{font-size:1.25rem}.ad-main .ed-steps{top:56px}.ed-view{display:none}}
 </style>
+<style id="fab-off">.fab,.apop{transition:opacity .25s,transform .25s}body.fab-off .fab,body.fab-off .apop{opacity:0!important;pointer-events:none!important;transform:translateY(16px)!important}</style>
+<script>(function(){var t=[document.getElementById('contact'),document.querySelector('footer')].filter(Boolean);if(!t.length||!window.IntersectionObserver)return;var on=new Set();var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting)on.add(e.target);else on.delete(e.target)});document.body.classList.toggle('fab-off',on.size>0)},{threshold:0,rootMargin:'0px 0px -25% 0px'});t.forEach(function(x){io.observe(x)})})();</script>
 </body></html>
