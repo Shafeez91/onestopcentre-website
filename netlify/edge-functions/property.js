@@ -33,27 +33,37 @@ function kit(P, S) {
  const nums=p=>[...(p.types||[]).map(t=>t.price),p.p].map(x=>+String(x||'').replace(/[^\d.]/g,'')).filter(n=>n>=10000);
  const priceTxt=p=>{const n=nums(p);if(!n.length)return clean(p.p)&&!/enquire/i.test(p.p)?clean(p.p):'';return 'from RM'+Math.min(...n).toLocaleString('en-MY')};
  const cover=p=>(p.gallery&&p.gallery.find(Boolean))||p.img||'';
- function pTitle(p){return clean(p.seoT)||(clean(p.n)+(clean(p.l)?' – '+clean(p.l):'')+' | One Stop Centre')}
+ const tc=v=>{v=clean(v);return v&&v===v.toUpperCase()&&/[A-Z]{3}/.test(v)?v.toLowerCase().replace(/(^|[\s\-\/])([a-z])/g,(m,a,b)=>a+b.toUpperCase()):v};
+ const cut=(s,n)=>{s=String(s).replace(/\s+/g,' ').trim();if(s.length<=n)return s;s=s.slice(0,n-1);return s.slice(0,Math.max(s.lastIndexOf(' '),n-25)).replace(/[\s,;:·–-]+$/,'')+'…'};
+ function pTitle(p){const own=clean(p.seoT);if(own)return /one stop centre/i.test(own)||(own+' | One Stop Centre').length>65?own:own+' | One Stop Centre';const pr=priceTxt(p);let t=clean(p.n)+(clean(p.l)?', '+tc(p.l):'');const a=pr?' | From '+pr.replace(/^from\s+/i,''):'';if((t+a).length<=60)t+=a;if((t+' | One Stop Centre').length<=65)t+=' | One Stop Centre';return t}
  function pDesc(p){
-  if(clean(p.seoD))return clean(p.seoD).replace(/\s+/g,' ').slice(0,300);
-  const bits=[clean(p.t)||clean(p.c)||'Property',clean(p.l)&&'in '+clean(p.l),clean(p.d)&&'by '+clean(p.d)].filter(Boolean).join(' ');
+  const own=clean(p.seoD).replace(/\s+/g,' ');if(own.length>=110)return cut(own,158);
+  const bits=[clean(p.t)||clean(p.c)||'Property',clean(p.l)&&'in '+tc(p.l),clean(p.d)&&'by '+clean(p.d)].filter(Boolean).join(' ');
   const more=[clean(p.s),clean(p.z),priceTxt(p),clean(p.tenure)].filter(Boolean).join(' · ');
   const hl=(p.hl||[]).map(clean).filter(Boolean).slice(0,3).join(', ');
-  return (clean(p.n)+': '+bits+'. '+more+(hl?'. '+hl:'')+'. Compare layouts, prices and maintenance fees.').replace(/\s+/g,' ').slice(0,300);
+  const auto=clean(p.n)+': '+bits+'. '+more+(hl?'. '+hl:'')+'. Compare layouts, prices and maintenance fees.';
+  return cut(own?own.replace(/[.\s]*$/,'.')+' '+auto:auto,158);
  }
- const siteDesc=()=>{const dv=new Set(P.map(p=>clean(p.d)).filter(Boolean)).size,ar=new Set(P.map(p=>clean(p.l)).filter(Boolean)).size,pl=(n,w)=>n+' '+w+(n===1?'':'s');return `Browse ${pl(P.length,'new launch and ready home')} in ${pl(ar,'area')} across Klang Valley from ${pl(dv,'developer')}. Compare layouts, sizes, maintenance fees and prices, then talk to us directly.`};
+ const siteDesc=()=>{const dv=new Set(P.map(p=>clean(p.d)).filter(Boolean)).size,ar=new Set(P.map(p=>clean(p.l)).filter(Boolean)).size,pl=(n,w)=>n+' '+w+(n===1?'':'s');return `Compare ${pl(P.length,'new launch & ready home')} in ${pl(ar,'area')} across Klang Valley from ${pl(dv,'developer')}. See layouts, sizes, prices and maintenance fees.`};
  /* Visible "All properties" directory: plain links every crawler can follow */
  function dirHtml(pack){
   const list=[...P].sort((a,b)=>clean(a.n).localeCompare(clean(b.n)));
   return `<h2>All properties</h2><p class="sub">Every project on One Stop Centre, A to Z.</p><ul class="seodir">`+list.map(p=>`<li><a href="${pack?'/property/'+p.slug+'/':'#p='+esc(p.id)}" data-pid="${esc(p.id)}">${ex(p.n)}</a><span>${[ex(p.l),ex(p.t||p.c),esc(priceTxt(p))].filter(Boolean).join(' · ')}</span></li>`).join('')+`</ul>`;
  }
  function listLd(base){
-  const g=[{"@type":"RealEstateAgent","name":"One Stop Centre Property Lists","description":siteDesc(),...(base?{"url":base}:{}),...(S.email?{"email":S.email}:{}),...(S.wa?{"telephone":'+'+S.wa.replace(/\D/g,'')}:{}),"areaServed":"Klang Valley, Malaysia"},
+  const g=[...(base?[{"@type":"WebSite","@id":base+'#website',"name":"One Stop Centre Property Lists","alternateName":"One Stop Centre","url":base,"inLanguage":"en-MY"}]:[]),{"@type":"RealEstateAgent",...(base?{"@id":base+'#agent',"logo":base+'icon-512.png',"image":base+'og-default.jpg'}:{}),"name":"One Stop Centre Property Lists","description":siteDesc(),...(base?{"url":base}:{}),...(S.email?{"email":S.email}:{}),...(S.wa?{"telephone":'+'+S.wa.replace(/\D/g,'')}:{}),"areaServed":"Klang Valley, Malaysia"},
    {"@type":"ItemList","name":"Property listings","numberOfItems":P.length,"itemListElement":P.map((p,i)=>({"@type":"ListItem","position":i+1,"name":clean(p.n),...(base?{"url":base+'property/'+p.slug+'/'}:{})}))}];
   return JSON.stringify({"@context":"https://schema.org","@graph":g}).replace(/</g,'\\u003c');
  }
 
  function pageCss(){return `:root{--ink:#0f1b33;--mute:#5b6784;--acc:#c8102e;--navy:#0c1f4a;--line:#dfe4ee;--bg:#f1f4fa}*{box-sizing:border-box}body{margin:0;font-family:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6}a{color:var(--acc)}header.top{background:linear-gradient(180deg,#060f26,#0c1f4a);color:#fff;padding:14px 5%;display:flex;justify-content:space-between;align-items:center;gap:12px}header.top a{color:#fff;text-decoration:none;font-weight:700}.wrap{max-width:980px;margin:0 auto;padding:22px 5% 60px}nav.bc{font-size:.85rem;color:var(--mute);margin-bottom:10px}nav.bc a{color:var(--mute)}h1{font-family:Fraunces,Georgia,serif;font-weight:600;font-size:clamp(1.8rem,5vw,2.6rem);line-height:1.15;margin:.2em 0}h2{font-family:Fraunces,Georgia,serif;font-weight:600;font-size:1.35rem;margin:1.8em 0 .5em}.lead{color:var(--mute);margin:0 0 14px}.pills{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.pills span{background:#fff;border:1px solid var(--line);border-radius:30px;padding:5px 12px;font-size:.85rem}.hl span{background:#fdecef;border-color:#f6c6ce;color:var(--acc);font-weight:600}.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin:16px 0}.gal img:first-child{grid-column:1/-1;aspect-ratio:16/9}.gal img{width:100%;max-width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:12px;display:block;background:#dde3ef}.price{font-size:1.5rem;font-weight:700;color:var(--navy)}.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px}.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:520px;background:#fff;border-radius:12px;overflow:hidden}th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:.92rem}th{background:#f6f8fc}dl{display:grid;grid-template-columns:minmax(120px,max-content) 1fr;gap:6px 16px;margin:0}dt{color:var(--mute)}dd{margin:0;font-weight:600}ul.cols{columns:2 220px;padding-left:1.1em}.cta{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0}.cta a{display:inline-block;padding:12px 20px;border-radius:30px;font-weight:700;text-decoration:none}.wa{background:#1fae5b;color:#fff}.alt{background:#fff;border:1px solid var(--line);color:var(--ink)}.lay img{max-width:100%;border-radius:10px}footer{text-align:center;color:var(--mute);font-size:.85rem;padding:30px 5%;border-top:1px solid var(--line)}.rel{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;padding:0;list-style:none}.rel li{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}.rel small{display:block;color:var(--mute)}`}
+ function autoAbout(p){const n=clean(p.n),ty=(clean(p.t)||clean(p.c)||'residential development').toLowerCase(),art=/^[aeiou]/.test(ty)?'an':'a',out=[];
+  out.push(n+' is '+art+' '+ty+' '+(clean(p.l)?'in '+tc(p.l)+', Klang Valley':'in the Klang Valley')+(clean(p.d)?', developed by '+clean(p.d):'')+'.');
+  const st=clean(p.s).toLowerCase(),yr=clean(p.year);const sp=/new launch/.test(st)?'a new launch':/under construction/.test(st)?'currently under construction':/upcoming/.test(st)?'an upcoming project':/complete|ready/.test(st)?'completed and ready to move in':st?'currently '+st:'';
+  if(sp)out.push('It is '+sp+(yr&&!/complete|ready/.test(st)?', with expected completion in '+yr:'')+'.');else if(yr)out.push('Expected completion is '+yr+'.');
+  const pr=priceTxt(p);if(pr)out.push('Prices start '+pr.replace(/^from/i,'from')+(clean(p.tenure)?' and the tenure is '+clean(p.tenure).toLowerCase():'')+'.');else if(clean(p.tenure))out.push('The tenure is '+clean(p.tenure).toLowerCase()+'.');
+  const T=(p.types||[]).filter(t=>t&&t.name);if(T.length)out.push('There '+(T.length>1?'are '+T.length+' layout types':'is 1 layout type')+' to choose from'+(clean(p.z)?', with built-up sizes of '+clean(p.z)+' sqft':'')+'.');
+  out.push('Contact One Stop Centre on WhatsApp for the latest availability, floor plans and offers.');return out.join(' ')}
  function propPage(p,base,imgs,rel){
   const url=base+'property/'+p.slug+'/',title=pTitle(p),desc=pDesc(p);
   const absImg=imgs.map(i=>/^https?:/.test(i)?i:url+i);
@@ -68,21 +78,21 @@ function kit(P, S) {
     ...(n.length?{"offers":{"@type":"AggregateOffer","priceCurrency":"MYR","lowPrice":Math.min(...n),"highPrice":Math.max(...n),"offerCount":Math.max(1,T.length),"availability":"https://schema.org/InStock","url":url}}:{}),
     "about":{"@type":/landed|link|terrace|semi|bungalow|storey/i.test(p.t)?"SingleFamilyResidence":"ApartmentComplex","name":clean(p.n),"address":{"@type":"PostalAddress",...(clean(p.address)?{"streetAddress":clean(p.address)}:{}),"addressLocality":clean(p.l),"addressRegion":"Klang Valley","addressCountry":"MY"},...(+p.b?{"numberOfBedrooms":+p.b}:{}),...((p.facilities||[]).length?{"amenityFeature":p.facilities.filter(Boolean).map(f=>({"@type":"LocationFeatureSpecification","name":clean(f),"value":true}))}:{}),...(clean(p.mapUrl)?{"hasMap":clean(p.mapUrl)}:{})},
     ...(clean(p.d)?{"provider":{"@type":"Organization","name":clean(p.d)}}:{})},
-   {"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"All properties","item":base},...(clean(p.l)?[{"@type":"ListItem","position":2,"name":clean(p.l),"item":base+'#loc='+encodeURIComponent(clean(p.l))}]:[]),{"@type":"ListItem","position":clean(p.l)?3:2,"name":clean(p.n),"item":url}]}]};
+   {"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"All properties","item":base},{"@type":"ListItem","position":2,"name":clean(p.n),"item":url}]}]};
   return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<html lang="en-MY"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${esc(title)}</title><meta name="description" content="${esc(desc)}"><meta name="robots" content="index, follow, max-image-preview:large"><link rel="canonical" href="${esc(url)}">
-<meta property="og:type" content="website"><meta property="og:site_name" content="One Stop Centre Property Lists"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:url" content="${esc(url)}">${absImg[0]?`<meta property="og:image" content="${esc(absImg[0])}"><meta name="twitter:card" content="summary_large_image">`:''}
+<meta property="og:type" content="website"><meta property="og:site_name" content="One Stop Centre Property Lists"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:url" content="${esc(url)}"><meta property="og:locale" content="en_MY">${absImg[0]?`<meta property="og:image" content="${esc(absImg[0])}"><meta property="og:image:alt" content="${esc(clean(p.n))}${clean(p.l)?', '+esc(tc(p.l)):''}"><meta name="twitter:card" content="summary_large_image">`:''}<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#0a1a3a"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
 <script type="application/ld+json">${JSON.stringify(ld).replace(/</g,'\\u003c')}<\/script><style>${pageCss()}</style></head>
-<body><header class="top"><a href="../../">◆ One Stop Centre</a>${wa?`<a href="${esc(wa)}" rel="noopener">Enquire</a>`:''}</header>
-<main class="wrap"><nav class="bc" aria-label="Breadcrumb"><a href="../../">All properties</a>${clean(p.l)?' › '+ex(p.l):''} › ${ex(p.n)}</nav>
+<body><header class="top"><a href="/">◆ One Stop Centre</a>${wa?`<a href="${esc(wa)}" rel="noopener">Enquire</a>`:''}</header>
+<main class="wrap"><nav class="bc" aria-label="Breadcrumb"><a href="/">All properties</a>${clean(p.l)?' › '+ex(p.l):''} › ${ex(p.n)}</nav>
 <article><h1>${ex(p.n)}</h1><p class="lead">${[ex(p.t||p.c),clean(p.l)&&'in '+ex(p.l),clean(p.d)&&'by '+ex(p.d)].filter(Boolean).join(' ')}${clean(p.s)?' · '+ex(p.s):''}</p>
 ${priceTxt(p)?`<p class="price">${esc(priceTxt(p))}</p>`:''}
 ${(p.hl||[]).filter(x=>clean(x)).length?`<div class="pills hl">${p.hl.filter(x=>clean(x)).map(x=>`<span>${ex(x)}</span>`).join('')}</div>`:''}
 ${imgs.length?`<div class="gal">${imgs.map((s,i)=>`<img src="${esc(s)}" alt="${ex(p.n)}${clean(p.l)?', '+ex(p.l):''} – photo ${i+1}" loading="${i?'lazy':'eager'}" decoding="async">`).join('')}</div>`:''}
-<div class="cta">${wa?`<a class="wa" href="${esc(wa)}" rel="noopener">WhatsApp us about ${ex(p.n)}</a>`:''}${/^https?:/.test(p.brochure||'')?`<a class="alt" href="${esc(p.brochure)}" rel="noopener" target="_blank">📄 Download brochure (PDF)</a>`:''}<a class="alt" href="../../#p=${esc(p.id)}">Compare, loan check &amp; full details</a></div>
-${clean(p.desc)?`<h2>About ${ex(p.n)}</h2><p>${ex(p.desc).replace(/\n+/g,'</p><p>')}</p>`:''}
+<div class="cta">${wa?`<a class="wa" href="${esc(wa)}" rel="noopener">WhatsApp us about ${ex(p.n)}</a>`:''}${/^https?:/.test(p.brochure||'')?`<a class="alt" href="${esc(p.brochure)}" rel="noopener" target="_blank">📄 Download brochure (PDF)</a>`:''}<a class="alt" href="/#p=${esc(p.id)}">Compare, loan check &amp; full details</a></div>
+<h2>About ${ex(p.n)}</h2>${clean(p.desc)?`<p>${ex(p.desc).replace(/\n+/g,'</p><p>')}</p>`:`<p>${esc(autoAbout(p))}</p>`}
 <h2>Key facts</h2><div class="card"><dl>${facts.map(f=>`<dt>${f[0]}</dt><dd>${ex(f[1])}</dd>`).join('')}</dl></div>
 ${T.length?`<h2>Layouts &amp; prices</h2><div class="tw"><table><thead><tr><th>Type</th><th>Size (sqft)</th><th>Beds</th><th>Baths</th><th>Car parks</th><th>Price</th></tr></thead><tbody>${T.map(t=>`<tr><td>${ex(t.name)}</td><td>${ex(t.size)}</td><td>${ex(t.beds)}</td><td>${ex(t.baths)}</td><td>${ex(t.carparks)}</td><td>${ex(t.price)}</td></tr>`).join('')}</tbody></table></div>`:''}
 ${(p.towers||[]).filter(t=>t&&t.name).length?`<h2>Towers</h2><ul>${p.towers.filter(t=>t&&t.name).map(t=>`<li>${ex(t.name)}${clean(t.floors)?' – '+ex(t.floors)+' floors':''}${clean(t.units)?', '+ex(t.units)+' units':''}</li>`).join('')}</ul>`:''}
@@ -93,8 +103,8 @@ ${concl?`<h2>Our take</h2><p>${ex(concl).replace(/\n+/g,'</p><p>')}</p>`:''}
 ${(p.videos||[]).filter(v=>v&&/^https?:/.test(v.url||'')).length?`<h2>Videos</h2><ul>${p.videos.filter(v=>v&&/^https?:/.test(v.url||'')).map(v=>`<li><a href="${esc(v.url)}" rel="noopener">${ex(v.title||v.cat||'Video')}</a></li>`).join('')}</ul>`:''}
 ${clean(p.mapUrl)&&/^https?:/.test(p.mapUrl)?`<p><a href="${esc(clean(p.mapUrl))}" rel="noopener">Open location in Google Maps</a></p>`:''}
 </article>
-${rel.length?`<h2>More properties${clean(p.l)?' near '+ex(p.l):''}</h2><ul class="rel">${rel.map(r=>`<li><a href="../${r.slug}/">${ex(r.n)}</a><small>${[ex(r.l),esc(priceTxt(r))].filter(Boolean).join(' · ')}</small></li>`).join('')}</ul>`:''}
-</main><footer>© ${new Date().getFullYear()} One Stop Centre Property Lists · Prices and availability are indicative; please confirm with us. · <a href="../../">All properties</a></footer></body></html>`;
+${rel.length?`<h2>More properties in Klang Valley</h2><ul class="rel">${rel.map(r=>`<li><a href="/property/${r.slug}/">${ex(r.n)}</a><small>${[ex(r.l),esc(priceTxt(r))].filter(Boolean).join(' · ')}</small></li>`).join('')}</ul>`:''}
+</main><footer>© ${new Date().getFullYear()} One Stop Centre Property Lists · Prices and availability are indicative; please confirm with us. · <a href="/">All properties</a></footer></body></html>`;
  }
  function related(p){const same=P.filter(x=>x!==p&&clean(x.l).toLowerCase()===clean(p.l).toLowerCase());const others=P.filter(x=>x!==p&&!same.includes(x)&&clean(x.d)===clean(p.d));return [...same,...others].slice(0,6)}
 
@@ -129,7 +139,8 @@ export default async (request, context) => {
   const url = new URL(request.url);
   const path = url.pathname;
   const pm = path.match(/^\/property\/([^\/]+)\/?$/);
-  const isHome = path === "/" || path === "/index.html";
+  if (path === "/index.html" || path === "/property.html") return Response.redirect(url.origin + "/", 301); // one address per page
+  const isHome = path === "/";
   const isMap = path === "/sitemap.xml";
   if (!pm && !isHome && !isMap) return;
 
@@ -139,9 +150,15 @@ export default async (request, context) => {
   const K = kit(D.P, D.S);
 
   if (isMap) {
-    const t = new Date().toISOString().slice(0, 10);
-    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>' + SITE + "</loc><lastmod>" + t + "</lastmod></url>\n" +
-      D.P.map((p) => "  <url><loc>" + K.esc(SITE + "property/" + p.slug + "/") + "</loc><lastmod>" + (/^\d{4}-\d\d-\d\d$/.test(p.mod || "") ? p.mod : t) + "</lastmod></url>").join("\n") + "\n</urlset>\n";
+    // lastmod only when we truly know the date a listing last changed (set on every save)
+    const ok = (d) => /^\d{4}-\d\d-\d\d$/.test(d || "");
+    const lm = (d) => (ok(d) ? "<lastmod>" + d + "</lastmod>" : "");
+    const newest = D.P.map((p) => p.mod).filter(ok).sort().pop();
+    // every published property gets its own entry, with up to 10 of its photos for Google Images
+    const imgsOf = (p) => { const seen = new Set(), o = []; [...(p.gallery || []), p.img, ...(p.types || []).map((t) => t && t.img)].forEach((u) => { if (typeof u === "string" && /^https:\/\//.test(u) && !seen.has(u)) { seen.add(u); o.push(u); } }); return o.slice(0, 10); };
+    const xe = (x) => String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n  <url><loc>' + SITE + "</loc>" + lm(newest) + "</url>\n" +
+      D.P.map((p) => "  <url><loc>" + xe(SITE + "property/" + p.slug + "/") + "</loc>" + lm(p.mod) + imgsOf(p).map((u) => "<image:image><image:loc>" + xe(u) + "</image:loc></image:image>").join("") + "</url>").join("\n") + "\n</urlset>\n";
     return new Response(xml, { headers: H("application/xml; charset=utf-8") });
   }
 
@@ -155,13 +172,8 @@ export default async (request, context) => {
       if (typeof u === "string" && /^https:\/\//.test(u) && !seen.has(u)) { seen.add(u); imgs.push(u); }
     });
     let html = K.propPage(p, SITE, imgs, K.related(p));
-    const priceShort = K.priceTxt(p);
-    const ogTitle = K.clean(p.n) + (K.clean(p.l) ? " – " + K.clean(p.l) : "") + (priceShort ? " | " + priceShort.replace(/^from /, "From ") : "");
-    const ot = K.esc(ogTitle);
-    html = html.replace(/(<meta property="og:title" content=")[^"]*(")/, (m, a, b) => a + ot + b)
-               .replace(/(<meta name="twitter:title" content=")[^"]*(")/, (m, a, b) => a + ot + b);
     if (!/property="og:image"/.test(html)) {
-      html = html.replace("</head>", () => `<meta property="og:image" content="${OG_DEFAULT}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:image" content="${OG_DEFAULT}"></head>`);
+      html = html.replace("</head>", () => `<meta property="og:image" content="${OG_DEFAULT}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:image" content="${OG_DEFAULT}"><meta name="twitter:card" content="summary_large_image"></head>`);
     }
     return new Response(html, { headers: H("text/html; charset=utf-8") });
   }
@@ -191,4 +203,4 @@ export default async (request, context) => {
   return new Response(html, { status: 200, headers });
 };
 
-export const config = { path: ["/", "/index.html", "/property/*", "/sitemap.xml"] };
+export const config = { path: ["/", "/index.html", "/property.html", "/property/*", "/sitemap.xml"] };
