@@ -1765,7 +1765,7 @@ function bmReset(){BM.min='';BM.max='';BM.loc='';const s=$('bm_loc');if(s)s.valu
 function openBudget(){closeBudget();const locs=[...new Set(P.map(p=>String(p.l||'').trim()).filter(Boolean))].sort();
  const m=document.createElement('div');m.className='bm';m.id='bm';m.setAttribute('role','dialog');m.setAttribute('aria-modal','true');m.setAttribute('aria-label','Find by budget');
  m.innerHTML=`<div class="bm-box">
- <div class="bm-top"><div class="bm-t"><div><span class="bm-kick">Budget finder</span><h3>What can you afford?</h3><p>Set your price range. We'll show every project with at least one layout that fits.</p></div><button class="bm-x" id="bm_x" type="button" aria-label="Close">✕</button></div><div class="bm-big" id="bm_big" aria-live="polite"></div></div>
+ <div class="bm-top"><div class="bm-t"><div><span class="bm-kick">Budget finder</span><h3>What is your budget range?</h3><p>Set your price range. We'll show every project with at least one layout that fits.</p></div><button class="bm-x" id="bm_x" type="button" aria-label="Close">✕</button></div><div class="bm-big" id="bm_big" aria-live="polite"></div></div>
  <div class="bm-ctl">
   <div class="bm-sl"><div class="bm-trk"></div><div class="bm-fill" id="bm_fill"></div><input type="range" id="bm_ra" min="0" max="${BMX}" step="${BMS}" aria-label="Minimum budget"><input type="range" id="bm_rb" min="0" max="${BMX}" step="${BMS}" aria-label="Maximum budget"></div>
   <div class="bm-scale"><span>RM0</span><span>RM500k</span><span>RM1M</span><span>RM1.5M</span><span>RM2M+</span></div>
@@ -2343,8 +2343,8 @@ var D={
 'Your commitments already use up the allowed DSR. Paying down debts or adding a joint applicant can help.':'Komitmen anda sudah mencapai had DSR. Mengurangkan hutang atau menambah pemohon bersama boleh membantu.',
 '💡 No listed project fits within this estimate yet. Talk to us about other options.':'💡 Belum ada projek yang sesuai dengan anggaran ini. Bincang pilihan lain dengan kami.','💡 Best fit:':'💡 Paling sesuai:','💡 Closest:':'💡 Paling hampir:','Approved':'Diluluskan',
 /* budget finder */
-'Budget finder':'Pencari bajet','What can you afford?':'Berapa yang anda mampu?','Set your price range. We\'ll show every project with at least one layout that fits.':'Tetapkan julat harga anda. Kami akan tunjukkan setiap projek yang mempunyai sekurang-kurangnya satu pelan yang sesuai.',
-'Min budget':'Bajet min','Max budget':'Bajet maks','Minimum budget':'Bajet minimum','Maximum budget':'Bajet maksimum','No min':'Tiada min','No max':'Tiada maks','Below 300k':'Bawah 300k','Above 1.2M':'Atas 1.2J','Cheapest from':'Termurah dari','Any budget':'Sebarang bajet','Any price':'Sebarang harga','projects':'projek','project':'projek',
+'Budget finder':'Pencari bajet','What can you afford?':'Berapa yang anda mampu?','What is your budget range?':'Apakah julat bajet anda?','Set your price range. We\'ll show every project with at least one layout that fits.':'Tetapkan julat harga anda. Kami akan tunjukkan setiap projek yang mempunyai sekurang-kurangnya satu pelan yang sesuai.',
+'Min budget':'Bajet min','Max budget':'Bajet maks','Minimum budget':'Bajet minimum','Maximum budget':'Bajet maksimum','No min':'Min','No max':'Maks','Below 300k':'Bawah 300k','Above 1.2M':'Atas 1.2J','Cheapest from':'Termurah dari','Any budget':'Sebarang bajet','Any price':'Sebarang harga','projects':'projek','project':'projek',
 'No projects in this range':'Tiada projek dalam julat ini','Try widening your budget or choosing All locations.':'Cuba luaskan bajet anda atau pilih Semua lokasi.','Clear budget':'Kosongkan bajet','Budget range':'Julat bajet','WhatsApp these results':'WhatsApp keputusan ini','No eligible property matches these filters.':'Tiada hartanah layak sepadan dengan penapis ini.',
 /* how it works, contact, footer */
 'From browsing to viewing, in three simple steps.':'Daripada melayari hingga melawat, dalam tiga langkah mudah.','Browse & filter':'Layari & tapis','Compare the real numbers':'Bandingkan angka sebenar',
@@ -2396,4 +2396,29 @@ window.__trMS=tr;
 <script>window.addEventListener('hashchange',function(){if(window.__PAGEDATA&&/admin/.test(location.hash))location.reload()});</script>
 <style id="dm-lock">html:has(.dm.open),html:has(.dm.open) body{overflow:hidden}.dm{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}</style>
 <script>(function(){var vv=window.visualViewport;if(!vv)return;var t=null;vv.addEventListener('resize',function(){clearTimeout(t);t=setTimeout(function(){var a=document.activeElement;if(a&&/INPUT|SELECT|TEXTAREA/.test(a.tagName)&&a.closest('.dm.open')){try{a.scrollIntoView({block:'center',behavior:'instant'})}catch(e){a.scrollIntoView()}}},120)})})();</script>
+<style id="bm-mobile">@media(max-width:600px){
+.bm{padding-top:0}
+.bm-box{height:100dvh;max-height:100dvh;border-radius:0}
+.bm-top{padding:calc(10px + env(safe-area-inset-top,0px)) 16px 10px}.bm-top::before,.bm-kick,.bm-t p,.bm-big{display:none!important}
+.bm-t{align-items:center}.bm-t h3{font-size:1.22rem}.bm-x{width:34px;height:34px}
+.bm-ctl{padding:8px 14px 10px}
+.bm-sl{height:30px;margin:0 4px 0}.bm-scale{margin:0 2px 6px;font-size:.6rem}
+.bm-g{grid-template-columns:1fr 1fr 1.15fr;gap:7px}.bm-g .w{grid-column:auto}
+.bm-fd{gap:3px}.bm-fd label{font-size:.55rem;letter-spacing:.1em}
+.bm-in{height:40px;border-radius:12px}.bm-in span{padding:0 2px 0 9px;font-size:.72rem}.bm-g .w .bm-in span{display:none}
+.bm-in input{font-size:.9rem!important;padding:0 8px 0 3px}.bm-in select{padding:0 6px 0 9px;font-size:.82rem}
+.bm-q{margin:8px -14px 0;padding:2px 14px}.bm-q button{padding:7px 12px;font-size:.72rem}
+.bm-bd{padding:10px 14px 6px}.bm-cnt{margin-bottom:8px}
+.bm-bd{container-type:size;padding:10px 14px 0}
+.bm-cnt{height:34px;margin-bottom:8px}
+.bm-r{box-sizing:border-box;height:calc((100cqh - 66px) / 3 - 9px);min-height:74px;max-height:150px;margin-bottom:9px;padding:8px 12px 8px 8px;gap:12px;align-items:stretch;border-radius:18px;box-shadow:0 2px 10px rgba(15,27,51,.06)}
+.bm-th{width:auto;height:100%;aspect-ratio:1/1;max-width:120px;border-radius:13px}
+.bm-th i{left:6px;bottom:6px}
+.bm-i{display:flex;flex-direction:column;justify-content:center;gap:1px}
+.bm-i small{font-size:.6rem}.bm-i b{font-size:1.12rem;margin-top:1px}.bm-i>span{font-size:.74rem}.bm-fit{margin-top:7px}
+.bm-p{justify-content:center}.bm-p b{font-size:.98rem}.bm-p em{font-size:.66rem}
+.bm-res-end{height:14px}
+@container (max-height:360px){.bm-i>span{display:none}.bm-i b{font-size:1.02rem}.bm-fit{margin-top:5px}.bm-r{padding:6px 10px 6px 6px}}
+.bm-ft{padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px))}.bm-ft button{height:44px}
+}</style>
 </body></html>
