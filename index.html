@@ -768,9 +768,15 @@ const favs={get(){try{return JSON.parse(localStorage.getItem('osc_fav')||'[]')}c
 let onlySaved=false;
 const slug=s=>String(s||'').replace(/\W/g,'').toLowerCase();
 function fillLocs(){const cur=$('loc').value;$('loc').innerHTML='<option value="">All locations</option>'+[...new Set(P.map(p=>p.l))].sort().map(l=>`<option>${esc(l)}</option>`).join('');$('loc').value=cur;const dc=$('dev').value;$('dev').innerHTML='<option value="">All developers</option>'+[...new Set(P.map(p=>p.d).filter(Boolean))].sort().map(l=>`<option>${esc(l)}</option>`).join('');$('dev').value=dc;$('q_project').innerHTML='<option value="">General enquiry</option>'+P.map(p=>`<option>${esc(p.n)}</option>`).join('')}
+let BF=null;
+function bfOk(p){if(!BF)return true;if(BF.loc&&String(p.l||'').trim().toLowerCase()!==BF.loc.toLowerCase())return false;return bmPrices(p).some(v=>(!BF.min||v>=BF.min)&&(!BF.max||v<=BF.max))}
+function bfApply(){const mn=numOf(BM.min),mx=numOf(BM.max),lc=String(BM.loc||'').trim();BF=(mn||mx||lc)?{min:mn,max:mx,loc:lc,label:((mn||mx)?bmRangeLabel():'')+(lc?((mn||mx)?' · ':'')+lc:'')}:null;closeBudget();render();const g=$('grid');if(g){const y=g.getBoundingClientRect().top+window.scrollY-120;try{window.scrollTo({top:y,behavior:'smooth'})}catch(e){window.scrollTo(0,y)}}}
+function bfChip(){const g=$('grid');if(!g)return;let c=$('bfchip');if(!c){c=document.createElement('div');c.id='bfchip';g.parentNode.insertBefore(c,g)}
+ c.innerHTML=BF?`<span class="bfc"><span>💰 Budget: <b>${esc(BF.label)}</b></span><button type="button" id="bf_e">Change</button><button type="button" id="bf_x" aria-label="Clear budget filter">✕</button></span>`:'';
+ if(BF){const cs=getComputedStyle(g);c.style.paddingLeft=cs.paddingLeft;c.style.paddingRight=cs.paddingRight;c.style.marginLeft=cs.marginLeft;c.style.maxWidth=cs.maxWidth;$('bf_x').onclick=()=>{BF=null;render()};$('bf_e').onclick=()=>openBudget()}}
 function filtered(){
  const k=($('kw').value||'').trim().toLowerCase(),fv=favs.get(),sv=$('sort').value;
- let f=P.filter(p=>(!k||(p.n+' '+p.l+' '+(p.d||'')+' '+(p.t||'')).toLowerCase().includes(k))&&typeMatch(p,$('type').value)&&(!$('loc').value||p.l==$('loc').value)&&(!$('dev').value||p.d==$('dev').value)&&(!$('furn').value||p.furn==$('furn').value)&&(!$('ten').value||p.tenure==$('ten').value)&&(!$('status').value||p.s==$('status').value)&&(!+$('bed').value||maxBeds(p)>=+$('bed').value)&&(!onlySaved||fv.includes(p.id))&&(!onlyTod||nearOK(p).tod==='Yes'));
+ let f=P.filter(p=>bfOk(p)&&(!k||(p.n+' '+p.l+' '+(p.d||'')+' '+(p.t||'')).toLowerCase().includes(k))&&typeMatch(p,$('type').value)&&(!$('loc').value||p.l==$('loc').value)&&(!$('dev').value||p.d==$('dev').value)&&(!$('furn').value||p.furn==$('furn').value)&&(!$('ten').value||p.tenure==$('ten').value)&&(!$('status').value||p.s==$('status').value)&&(!+$('bed').value||maxBeds(p)>=+$('bed').value)&&(!onlySaved||fv.includes(p.id))&&(!onlyTod||nearOK(p).tod==='Yes'));
  if(sv==='pl'||sv==='ph'){const pr=p=>numOf(priceFrom(p))||(sv==='pl'?1e12:0);f=[...f].sort((a,b)=>sv==='pl'?pr(a)-pr(b):pr(b)-pr(a))}else if(sv==='az')f=[...f].sort((a,b)=>a.n.localeCompare(b.n));
  return f}
 function card(p,i){const c=cover(p),g=(p.gallery||[]).length,bd=maxBeds(p),sz=sizeRange(p),pf=priceFrom(p),fv=favs.get().includes(p.id);
@@ -782,9 +788,9 @@ function card(p,i){const c=cover(p),g=(p.gallery||[]).length,bd=maxBeds(p),sz=si
  <div class="pc-foot"><div><small>From</small><b>${esc(pf||'Enquire')}</b></div><button class="pc-q enq" data-n="${esc(p.n)}">Enquire</button></div></div></article>`}
 const tog=(id,v)=>{$(id).value=$(id).value===v?'':v};
 function catMatch(c,v){if(!v)return true;c=c||'';if(v==='Residential')return c.startsWith('Residential')||c==='Serviced Apartment'||c.startsWith('SOHO');if(v==='Commercial')return c.startsWith('Commercial')||c==='Retail / Mall Lot'||c==='Office';return c===v}
-function resetAll(){['kw','type','loc','status','dev','ten','furn'].forEach(i=>$(i).value='');$('bed').value='0';onlySaved=false;onlyTod=false}
+function resetAll(){BF=null;['kw','type','loc','status','dev','ten','furn'].forEach(i=>$(i).value='');$('bed').value='0';onlySaved=false;onlyTod=false}
 function chipDefs(){const sv=id=>$(id).value,n=favs.get().filter(id=>P.some(p=>p.id===id)).length;return[
- {l:'All',on:()=>!sv('status')&&!sv('ten')&&!sv('furn')&&!sv('type')&&!sv('loc')&&!sv('dev')&&!(+sv('bed'))&&!sv('kw')&&!onlySaved&&!onlyTod,set:resetAll},
+ {l:'All',on:()=>!BF&&!sv('status')&&!sv('ten')&&!sv('furn')&&!sv('type')&&!sv('loc')&&!sv('dev')&&!(+sv('bed'))&&!sv('kw')&&!onlySaved&&!onlyTod,set:resetAll},
  {l:'New Launch',on:()=>sv('status')==='New Launch',set:()=>tog('status','New Launch')},
  {l:'Under Construction',on:()=>sv('status')==='Under Construction',set:()=>tog('status','Under Construction')},
  {l:'Freehold',on:()=>sv('ten')==='Freehold',set:()=>tog('ten','Freehold')},
@@ -795,7 +801,7 @@ function renderChips(){const d=chipDefs();$('chips').innerHTML=d.map((c,i)=>`<bu
 function render(){
  const qp=$('q_project').value;fillLocs();$('q_project').value=qp;
  const f=filtered();
- $('count').textContent=f.length===P.length?`${P.length} properties`:`${f.length} of ${P.length} properties`;
+ $('count').textContent=f.length===P.length?`${P.length} properties`:`${f.length} of ${P.length} properties`;bfChip();
  $('grid').innerHTML=f.length?f.map(card).join(''):`<div class="em2"><b>No properties match your search</b>Try removing a filter or two.<br><button class="btn" id="em_rs">Reset filters</button></div>`;
  const n=['status','dev','ten','furn'].filter(i=>$(i).value).length+(+$('bed').value?1:0);$('mf').textContent='More filters'+(n?` (${n})`:'')+($('more').classList.contains('open')?' ▴':' ▾');
  renderChips();
@@ -1836,7 +1842,7 @@ function openBudget(){closeBudget();const locs=[...new Set(P.map(p=>String(p.l||
  $('bm_ra').oninput=sl;$('bm_rb').oninput=sl;
  $('bm_loc').onchange=e=>{BM.loc=e.target.value;bmList()};$('bm_sort').onchange=e=>{BM.sort=e.target.value;bmList()};
  $('bm_q').onclick=e=>{const b=e.target.closest('button');if(!b)return;const q=BMQ[+b.dataset.i],on=b.classList.contains('on');BM.min=on||!q[1]?'':String(q[1]);BM.max=on||!q[2]?'':String(q[2]);bmSyncInputs();bmSlider();bmList()};
- $('bm_x').onclick=closeBudget;$('bm_ok').onclick=closeBudget;$('bm_rs').onclick=bmReset;m.addEventListener('click',e=>{if(e.target===m)closeBudget()});
+ $('bm_x').onclick=closeBudget;$('bm_ok').onclick=bfApply;$('bm_rs').onclick=bmReset;m.addEventListener('click',e=>{if(e.target===m)closeBudget()});
  $('bm_res').onclick=e=>{const r=e.target.closest('.bm-r');if(!r)return;closeBudget();openDetail(r.dataset.id)};
  bmList();setTimeout(()=>{try{$('bm_max').focus({preventScroll:true})}catch(_){}},50)}
 function closeBudget(){const m=document.getElementById('bm');if(m){m.remove();document.body.style.overflow=''}}
@@ -2397,7 +2403,7 @@ var D={
 /* budget finder */
 'Budget finder':'Pencari bajet','What can you afford?':'Berapa yang anda mampu?','What is your budget range?':'Apakah julat bajet anda?','Set your price range. We\'ll show every project with at least one layout that fits.':'Tetapkan julat harga anda. Kami akan tunjukkan setiap projek yang mempunyai sekurang-kurangnya satu pelan yang sesuai.',
 'Min budget':'Bajet min','Max budget':'Bajet maks','Minimum budget':'Bajet minimum','Maximum budget':'Bajet maksimum','No min':'Min','No max':'Maks','Below 300k':'Bawah 300k','Above 1.2M':'Atas 1.2J','Cheapest from':'Termurah dari','Any budget':'Sebarang bajet','Any price':'Sebarang harga','projects':'projek','project':'projek',
-'No projects in this range':'Tiada projek dalam julat ini','Try widening your budget or choosing All locations.':'Cuba luaskan bajet anda atau pilih Semua lokasi.','Clear budget':'Kosongkan bajet','Budget range':'Julat bajet','WhatsApp these results':'WhatsApp keputusan ini','No eligible property matches these filters.':'Tiada hartanah layak sepadan dengan penapis ini.',
+'No projects in this range':'Tiada projek dalam julat ini','Try widening your budget or choosing All locations.':'Cuba luaskan bajet anda atau pilih Semua lokasi.','Clear budget':'Kosongkan bajet','Change':'Tukar','Clear budget filter':'Kosongkan penapis bajet','💰 Budget:':'💰 Bajet:','Budget:':'Bajet:','Budget range':'Julat bajet','WhatsApp these results':'WhatsApp keputusan ini','No eligible property matches these filters.':'Tiada hartanah layak sepadan dengan penapis ini.',
 /* how it works, contact, footer */
 'From browsing to viewing, in three simple steps.':'Daripada melayari hingga melawat, dalam tiga langkah mudah.','Browse & filter':'Layari & tapis','Compare the real numbers':'Bandingkan angka sebenar',
 'Open any project to see layouts, sizes, bedrooms, maintenance fee and an estimated monthly instalment.':'Buka mana-mana projek untuk melihat pelan, saiz, bilik tidur, yuran penyelenggaraan dan anggaran ansuran bulanan.',
@@ -2419,7 +2425,7 @@ var D={
 };
 var R=[
 [/^(\d+) of (\d+) properties$/,'$1 daripada $2 hartanah'],[/^(\d+) propert(?:y|ies)$/,'$1 hartanah'],[/^(\d+) projects?$/,'$1 projek'],[/^(\d+) layouts?$/,'$1 pelan'],
-[/^from RM\s?(.+)$/i,'dari RM$1'],[/^up to RM(.+)$/,'sehingga RM$1'],[/^Up to (\d+)$/,'Sehingga $1'],[/^Up to (\d+) beds?$/,'Sehingga $1 bilik'],[/^Est\. (\d{4})$/,'Siap $1'],
+[/^from RM\s?(.+)$/i,'dari RM$1'],[/^up to RM(.+)$/,'sehingga RM$1'],[/^Up to (RM.+)$/,'Sehingga $1'],[/^(RM[\d.,]+[kM]?) and above$/,'$1 dan ke atas'],[/^Up to (\d+)$/,'Sehingga $1'],[/^Up to (\d+) beds?$/,'Sehingga $1 bilik'],[/^Est\. (\d{4})$/,'Siap $1'],
 [/^Show (\d+) match(?:es)?$/,'Tunjuk $1 padanan'],[/^Interested in (.+)\?( 👋)?$/,'Berminat dengan $1?$2'],[/^Share (.+)$/,'Kongsi $1'],[/^WhatsApp us about (.+)$/,'WhatsApp kami tentang $1'],[/^Map of (.+)$/,'Peta $1'],
 [/^(\d+) of (\d+) layouts in budget$/,'$1 daripada $2 pelan dalam bajet'],[/^(\d+)\/(\d+) fit$/,'$1/$2 sesuai'],[/^(\d+) selected$/,'$1 dipilih'],[/^(\d+) years$/,'$1 tahun'],[/^Saved \((\d+)\)$/,'Disimpan ($1)'],[/^Compare \((\d+)\)$/,'Banding ($1)'],
 [/^Based on ([\d.]+)% p\.a\., (\d+) years\. For illustration only\.$/,'Berdasarkan $1% setahun, $2 tahun. Untuk ilustrasi sahaja.'],[/^Down payment (RM.+)$/,'Bayaran pendahuluan $1'],[/^Total interest (RM.+)$/,'Jumlah faedah $1'],
@@ -2508,4 +2514,9 @@ window.__trMS=tr;
 .sx-acts{display:flex;gap:8px;flex-wrap:wrap}.sx-mute{background:#fafbfd}
 .ad-main{padding-bottom:0!important}.ad-main::after{content:"";display:block;height:32px}.sx-save{background:#f3f5fa;margin:0 -4px;padding:10px 4px}
 </style>
+<style id="bf-css">#bfchip:empty{display:none}#bfchip{margin:0 0 16px}
+.bfc{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#0f1b33;border-radius:999px;padding:6px 6px 6px 16px;font:600 .9rem var(--fb,system-ui);box-shadow:0 6px 18px rgba(0,0,0,.25);max-width:100%}
+.bfc>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bfc b{color:#c8102e}
+.bfc button{border:0;cursor:pointer;font:700 .8rem var(--fb,system-ui);border-radius:999px;flex:none}
+#bf_e{background:#eef1f8;color:#0f1b33;padding:8px 12px}#bf_x{width:30px;height:30px;background:#c8102e;color:#fff}</style>
 </body></html>
