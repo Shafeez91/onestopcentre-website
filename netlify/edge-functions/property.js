@@ -4,7 +4,7 @@
 const SB_URL = "https://deethrwnmyezwsohmhzl.supabase.co";
 const SB_KEY = "sb_publishable_gaiT2UF6vtI42BbYH1egKg_T_yLT83g";
 const SITE = "https://onestopcentreproperty.com/";
-const OG_DEFAULT = SITE + "og-default.jpg";
+const OG_DEFAULT = SITE + "og-default.jpg?v=2", OG_MS = SITE + "og-default-ms.jpg?v=2";
 
 function kit(P, S, LANG) {
   const window = {};
@@ -263,6 +263,8 @@ export default async (request, context) => {
                .replace(/(<link rel="canonical" href=")[^"]*(")/, (m, a, b) => a + SITE + "ms/" + b)
                .replace(/(<meta property="og:url" content=")[^"]*(")/, (m, a, b) => a + SITE + "ms/" + b)
                .replace(/(<meta property="og:locale" content=")[^"]*(")/, (m, a, b) => a + "ms_MY" + b)
+               .replace(/(<meta property="og:image" content=")[^"]*(")/, (m, a, b) => a + OG_MS + b)
+               .replace(/(<meta name="twitter:image" content=")[^"]*(")/, (m, a, b) => a + OG_MS + b)
                .replace(/<span class="eyebrow">Klang Valley · New launches &amp; ready homes<\/span><span class="h1t">Find the home that fits <em>your life\.<\/em><\/span>/, '<span class="eyebrow">Lembah Klang · Projek baharu &amp; rumah siap</span><span class="h1t">Cari rumah yang sesuai dengan <em>gaya hidup anda.</em></span>');
   }
   if (!PROP) html = html.replace("</head>", () => ALT + "</head>");
