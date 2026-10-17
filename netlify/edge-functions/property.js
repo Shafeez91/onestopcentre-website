@@ -140,6 +140,9 @@ function ptype(p){const t=String(p.t||'').trim(),c=String(p.c||'').trim();if(PT_
 function normTypes(L){const fixed=[];if(!Array.isArray(L))return fixed;L.forEach(p=>{if(!p)return;const nt=ptype(p);if(nt&&(p.t!==nt||p.c!==ptGroup(nt))){p.t=nt;p.c=ptGroup(nt);fixed.push(String(p.id))}});return fixed}
 function typeMatch(p,v){if(!v)return true;if(v.startsWith('g:'))return ptGroup(p.t)===v.slice(2)||p.c===v.slice(2);return p.t===v}
 
+// search engines and link-preview robots (WhatsApp, Facebook, Telegram…) get the fast, text-first project page
+const BOTS = /bot|crawl|spider|slurp|facebookexternalhit|facebot|whatsapp|telegram|twitter|linkedin|discord|slack|skype|pinterest|embedly|quora|vkshare|google|bing|yandex|baidu|duckduck|applebot|petal|semrush|ahrefs|lighthouse|headless|preview|validator|curl|wget|python|node-fetch|axios/i;
+const isBot = (req) => { const ua = req.headers.get("user-agent") || ""; return !ua || BOTS.test(ua); };
 async function loadAll() {
   const [rows, st] = await Promise.all([
     sb("projects?select=id,data&published=eq.true"),
@@ -177,6 +180,7 @@ export default async (request, context) => {
     return new Response(hop, { status: 200, headers: H("text/html; charset=utf-8", { "x-robots-tag": "noindex, nofollow", "cache-control": "no-store", "netlify-cdn-cache-control": "no-store" }) });
   }
   const isHome = rest === "/";
+  let PROP = null;
   const isMap = path === "/sitemap.xml";
   if (ms && rest === "/sitemap.xml") return Response.redirect(url.origin + "/sitemap.xml", 301);
   if (!pm && !isHome && !isMap) return;
@@ -216,13 +220,24 @@ export default async (request, context) => {
     if (!/property="og:image"/.test(html)) {
       html = html.replace("</head>", () => `<meta property="og:image" content="${OG_DEFAULT}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:image" content="${OG_DEFAULT}"><meta name="twitter:card" content="summary_large_image"></head>`);
     }
-    return new Response(html, { headers: H("text/html; charset=utf-8") });
+    // the copy for people and the copy for crawlers differ, so the CDN must not mix them up
+    if (isBot(request)) return new Response(html, { headers: H("text/html; charset=utf-8", { "netlify-cdn-cache-control": "no-store", "vary": "User-Agent" }) });
+    PROP = { p, html };
   }
 
-  // Homepage: inject the latest data, counts, A–Z links and structured data into the page itself
+  // Homepage (and, for people, project pages): inject the latest data, counts, A–Z links and structured data
   const res = await context.next();
   if (res.status !== 200) return res;
   let html = await res.text();
+  if (pm && PROP) {
+    // people get the full website with this project open; head tags (title, preview, Google data) are the project's own
+    const TAGS = /<title>[\s\S]*?<\/title>|<meta name="description"[^>]*>|<meta name="robots"[^>]*>|<link rel="canonical"[^>]*>|<link rel="alternate"[^>]*>|<meta property="og:[^"]*"[^>]*>|<meta name="twitter:[^"]*"[^>]*>|<script type="application\/ld\+json"[^>]*>[\s\S]*?<\/script>/g;
+    const ph = PROP.html, pHead = ph.slice(0, ph.indexOf("</head>")), keep = (pHead.match(TAGS) || []).join("");
+    const he = html.indexOf("</head>");
+    html = html.slice(0, he).replace(TAGS, "") + keep + html.slice(he);
+    const lang = (ph.match(/<html lang="([^"]+)"/) || [])[1] || "en-MY";
+    html = html.replace(/<html lang="[^"]*"/, '<html lang="' + lang + '"' + (ms ? ' data-lang="ms"' : ""));
+  }
   const data = JSON.stringify({ email: D.S.email, wa: D.S.wa, site: D.S.site, vo: D.S.vo, loan: D.S.loan, projects: D.P }).replace(/</g, "\\u003c");
   html = html.replace(/<script id="data" type="application\/json">[\s\S]*?<\/script>/, () => '<script id="data" type="application/json" data-fresh="1">' + data + "</script>");
   const devs = new Set(D.P.map((p) => p.d).filter(Boolean)).size, areas = new Set(D.P.map((p) => p.l)).size;
@@ -234,12 +249,12 @@ export default async (request, context) => {
     if (s > 0 && e > s) html = html.slice(0, s) + K.dirHtml(true) + html.slice(e);
   }
   const desc = K.esc(K.siteDesc());
-  html = html.replace(/(<meta name="description" content=")[^"]*(")/, (m, a, b) => a + desc + b)
+  if (!PROP) html = html.replace(/(<meta name="description" content=")[^"]*(")/, (m, a, b) => a + desc + b)
              .replace(/(<meta property="og:description" content=")[^"]*(")/, (m, a, b) => a + desc + b)
              .replace(/(<meta name="twitter:description" content=")[^"]*(")/, (m, a, b) => a + desc + b)
              .replace(/(<script type="application\/ld\+json" id="seo-ld">)[\s\S]*?(<\/script>)/, (m, x, y) => x + K.listLd(SITE).replace(/</g, "\\u003c") + y);
   const ALT = `<link rel="alternate" hreflang="en-MY" href="${SITE}"><link rel="alternate" hreflang="ms-MY" href="${SITE}ms/"><link rel="alternate" hreflang="x-default" href="${SITE}">`;
-  if (ms) {
+  if (ms && !PROP) {
     const t = "Rumah Baharu &amp; Siap di Lembah Klang | One Stop Centre";
     html = html.replace(/<html lang="[^"]*"/, '<html lang="ms-MY" data-lang="ms"')
                .replace(/<title>[^<]*<\/title>/, "<title>" + t + "</title>")
@@ -250,12 +265,13 @@ export default async (request, context) => {
                .replace(/(<meta property="og:locale" content=")[^"]*(")/, (m, a, b) => a + "ms_MY" + b)
                .replace(/<span class="eyebrow">Klang Valley · New launches &amp; ready homes<\/span><span class="h1t">Find the home that fits <em>your life\.<\/em><\/span>/, '<span class="eyebrow">Lembah Klang · Projek baharu &amp; rumah siap</span><span class="h1t">Cari rumah yang sesuai dengan <em>gaya hidup anda.</em></span>');
   }
-  html = html.replace("</head>", () => ALT + "</head>");
+  if (!PROP) html = html.replace("</head>", () => ALT + "</head>");
   const headers = new Headers(res.headers);
   headers.set("content-type", "text/html; charset=utf-8");
   headers.delete("content-length");
   headers.set("cache-control", "public, max-age=0, must-revalidate");
-  headers.set("netlify-cdn-cache-control", CDN);
+  headers.set("netlify-cdn-cache-control", PROP ? "no-store" : CDN);
+  if (PROP) headers.set("vary", "User-Agent");
   return new Response(html, { status: 200, headers });
 };
 
