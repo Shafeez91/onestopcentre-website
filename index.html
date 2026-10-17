@@ -719,7 +719,7 @@ body{background-color:#0a1a3a;background-image:radial-gradient(900px 520px at 10
  if(window.__SLUG)document.documentElement.style.visibility='hidden';
  function run(){
   document.querySelectorAll('script[type="text/x-osc"]').forEach(function(o){var n=document.createElement('script');n.textContent=o.textContent;if(o.id)n.id=o.id;o.parentNode.replaceChild(n,o)});
-  if(window.__SLUG){try{window.__renderProp(window.__SLUG)}catch(e){document.documentElement.style.visibility=''}}
+  if(window.__SLUG){try{var pp=(typeof P!=='undefined')&&P.find(function(x){return x.slug===window.__SLUG});if(pp){window.__FROMLINK=true;openDetail(pp.id);document.documentElement.style.visibility=''}else if(window.__renderProp){window.__renderProp(window.__SLUG)}else{document.documentElement.style.visibility=''}}catch(e){document.documentElement.style.visibility=''}}
  }
  async function load(){
   var el=document.getElementById('data'),d=JSON.parse(el.textContent);
@@ -1189,7 +1189,7 @@ function mapLink(p,dir){const q=p.latlng||p.address||((p.n||'')+' '+(p.l||''));
  return safeUrl(p.mapUrl)||'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q)}
 function shrinkTo(file,max,q){return new Promise(res=>{const r=new FileReader();r.onload=()=>{const i=new Image();i.onload=()=>{const k=Math.min(1,max/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=Math.round(i.width*k);c.height=Math.round(i.height*k);c.getContext('2d').drawImage(i,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',q))};i.onerror=()=>res('');i.src=r.result};r.readAsDataURL(file)})}
 function setFab(p){const f=$('fab'),dig=String(S.wa||'').replace(/\D/g,'');if(!f||!dig)return;f.href='https://wa.me/'+dig+'?text='+encodeURIComponent(LANG==='ms'?(p?'Hai, saya berminat dengan '+p.n+'.':'Hai, saya ingin bertanya tentang senarai hartanah anda.'):(p?'Hi, I am interested in '+p.n+'.':'Hi, I would like to enquire about your property listings.'));f.setAttribute('aria-label',p?'WhatsApp us about '+p.n:'Chat on WhatsApp');f.title=f.getAttribute('aria-label')}
-function closeDetail(){$('detail').classList.remove('open');$('detail').innerHTML='';setFab(null);window.__OPENP=null;if(/^#p=/.test(location.hash||''))try{history.replaceState(null,'',location.pathname+location.search)}catch(e){}}
+function closeDetail(){$('detail').classList.remove('open');$('detail').innerHTML='';setFab(null);window.__OPENP=null;try{if(/\/property\//.test(location.pathname))history.replaceState(null,'',(LANG==='ms'?'/ms/':'/')+location.search);else if(/^#p=/.test(location.hash||''))history.replaceState(null,'',location.pathname+location.search)}catch(e){}}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDetail()});
 const numOf=v=>{const m=String(v??'').replace(/,/g,'').match(/\d+(\.\d+)?/);return m?parseFloat(m[0]):0};
 const maintMonthly=(t,psf)=>{const a=numOf(t.size),r=numOf(t.maint)||numOf(psf);return a&&r?Math.round(a*r):0};
@@ -1994,7 +1994,7 @@ render();initUI();
     ...(clean(p.d)?{"provider":{"@type":"Organization","name":clean(p.d)}}:{})},
    {"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":T_('All properties','Semua hartanah'),"item":home},{"@type":"ListItem","position":2,"name":clean(p.n),"item":url}]}]};
   return `<!DOCTYPE html>
-<html lang="${T_('en-MY','ms-MY')}"><head><meta charset="utf-8"><meta name="osc-build" content="2026-10-15 v13"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<html lang="${T_('en-MY','ms-MY')}"><head><meta charset="utf-8"><meta name="osc-build" content="2026-10-17 v14"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${esc(title)}</title><meta name="description" content="${esc(desc)}"><meta name="robots" content="index, follow, max-image-preview:large"><link rel="canonical" href="${esc(url)}"><link rel="alternate" hreflang="en-MY" href="${esc(enU)}"><link rel="alternate" hreflang="ms-MY" href="${esc(msU)}"><link rel="alternate" hreflang="x-default" href="${esc(enU)}">
 <meta property="og:type" content="website"><meta property="og:site_name" content="One Stop Centre Property Lists"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:url" content="${esc(url)}"><meta property="og:locale" content="${T_('en_MY','ms_MY')}"><meta property="og:locale:alternate" content="${T_('ms_MY','en_MY')}">${absImg[0]?`<meta property="og:image" content="${esc(absImg[0])}"><meta property="og:image:alt" content="${esc(clean(p.n))}${clean(p.l)?', '+esc(tc(p.l)):''}"><meta name="twitter:card" content="summary_large_image">`:''}<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#0a1a3a"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">

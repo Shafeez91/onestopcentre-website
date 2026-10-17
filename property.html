@@ -719,7 +719,7 @@ body{background-color:#0a1a3a;background-image:radial-gradient(900px 520px at 10
  if(window.__SLUG)document.documentElement.style.visibility='hidden';
  function run(){
   document.querySelectorAll('script[type="text/x-osc"]').forEach(function(o){var n=document.createElement('script');n.textContent=o.textContent;if(o.id)n.id=o.id;o.parentNode.replaceChild(n,o)});
-  if(window.__SLUG){try{window.__renderProp(window.__SLUG)}catch(e){document.documentElement.style.visibility=''}}
+  if(window.__SLUG){try{var pp=(typeof P!=='undefined')&&P.find(function(x){return x.slug===window.__SLUG});if(pp){window.__FROMLINK=true;openDetail(pp.id);document.documentElement.style.visibility=''}else if(window.__renderProp){window.__renderProp(window.__SLUG)}else{document.documentElement.style.visibility=''}}catch(e){document.documentElement.style.visibility=''}}
  }
  async function load(){
   var el=document.getElementById('data'),d=JSON.parse(el.textContent);
@@ -1189,7 +1189,7 @@ function mapLink(p,dir){const q=p.latlng||p.address||((p.n||'')+' '+(p.l||''));
  return safeUrl(p.mapUrl)||'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q)}
 function shrinkTo(file,max,q){return new Promise(res=>{const r=new FileReader();r.onload=()=>{const i=new Image();i.onload=()=>{const k=Math.min(1,max/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=Math.round(i.width*k);c.height=Math.round(i.height*k);c.getContext('2d').drawImage(i,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',q))};i.onerror=()=>res('');i.src=r.result};r.readAsDataURL(file)})}
 function setFab(p){const f=$('fab'),dig=String(S.wa||'').replace(/\D/g,'');if(!f||!dig)return;f.href='https://wa.me/'+dig+'?text='+encodeURIComponent(LANG==='ms'?(p?'Hai, saya berminat dengan '+p.n+'.':'Hai, saya ingin bertanya tentang senarai hartanah anda.'):(p?'Hi, I am interested in '+p.n+'.':'Hi, I would like to enquire about your property listings.'));f.setAttribute('aria-label',p?'WhatsApp us about '+p.n:'Chat on WhatsApp');f.title=f.getAttribute('aria-label')}
-function closeDetail(){$('detail').classList.remove('open');$('detail').innerHTML='';setFab(null);window.__OPENP=null;if(/^#p=/.test(location.hash||''))try{history.replaceState(null,'',location.pathname+location.search)}catch(e){}}
+function closeDetail(){$('detail').classList.remove('open');$('detail').innerHTML='';setFab(null);window.__OPENP=null;try{if(/\/property\//.test(location.pathname))history.replaceState(null,'',(LANG==='ms'?'/ms/':'/')+location.search);else if(/^#p=/.test(location.hash||''))history.replaceState(null,'',location.pathname+location.search)}catch(e){}}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDetail()});
 const numOf=v=>{const m=String(v??'').replace(/,/g,'').match(/\d+(\.\d+)?/);return m?parseFloat(m[0]):0};
 const maintMonthly=(t,psf)=>{const a=numOf(t.size),r=numOf(t.maint)||numOf(psf);return a&&r?Math.round(a*r):0};
