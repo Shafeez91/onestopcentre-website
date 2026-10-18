@@ -669,8 +669,8 @@ body{background-color:#0a1a3a;background-image:radial-gradient(900px 520px at 10
 
 <section class="sec rv in" id="calc"><h2>Loan calculator</h2><p class="sub">Estimate your monthly instalment for any project. For illustration only.</p><div id="calc0"><div class="cx" data-rt="3.7" data-proj=""><div class="cx-l">
  <div class="f" style="margin-bottom:16px"><label>Choose a project (optional)</label><select class="c_pick"><option value="">Enter price manually</option></select></div>
- <div class="crow"><div class="f"><label>Property price</label><div class="inp"><span>RM</span><input class="c_pr" inputmode="numeric" value="" placeholder="500000"></div></div>
- <div class="f"><label>Age</label><div class="inp"><input class="c_age" inputmode="numeric" value="30"><span class="sfx">years old</span></div></div></div>
+ <div class="crow"><div class="f"><label>Property price</label><div class="inp"><span>RM</span><input class="c_pr" inputmode="numeric" value="" placeholder="e.g. 500,000"></div></div>
+ <div class="f"><label>Age</label><div class="inp"><input class="c_age" inputmode="numeric" maxlength="2" value="30"><span class="sfx">years</span></div></div></div>
  <div class="sl"><div class="slh"><label>Estimated loan</label><b class="c_lv">100%</b></div><input type="range" class="c_ls" min="50" max="100" step="1" value="100" style="--p: 100%;"></div>
  <div class="sl"><div class="slh"><label>Loan tenure</label><b class="c_tv">35 years</b></div><input type="range" class="c_ts" min="5" max="35" step="1" value="35" style="--p: 100%;"><p class="hint c_th">Up to 35 years at age 30, so the loan ends by age 65.</p></div>
  <p class="rate">Interest rate: <b>3.7% p.a.</b></p></div>
@@ -1459,8 +1459,8 @@ function calcHtml(id,choices,price,rate,proj){
  const l=S.loan||{m:90,r:4.5,y:35},rt=numOf(rate)||l.r,pick=choices.length&&choices[0].kind==='project';
  return `<div class="cx" data-rt="${rt}" data-proj="${esc(proj||'')}"><div class="cx-l">
  ${choices.length?`<div class="f" style="margin-bottom:16px"><label>Choose a ${choices[0].kind||'project'} (optional)</label><select class="c_pick"><option value="">Enter price manually</option>${choices.map((c,i)=>`<option value="${i}">${esc(c.l)} – ${esc(c.p||'')}</option>`).join('')}</select></div>`:''}
- <div class="crow"><div class="f"><label>Property price</label><div class="inp"><span>RM</span><input class="c_pr" inputmode="numeric" value="${price||''}" placeholder="500000"></div></div>
- <div class="f"><label>Age</label><div class="inp"><input class="c_age" inputmode="numeric" value="30"><span class="sfx">years old</span></div></div></div>
+ <div class="crow"><div class="f"><label>Property price</label><div class="inp"><span>RM</span><input class="c_pr" inputmode="numeric" value="${numOf(price)?numOf(price).toLocaleString('en-MY'):''}" placeholder="e.g. 500,000"></div></div>
+ <div class="f"><label>Age</label><div class="inp"><input class="c_age" inputmode="numeric" maxlength="2" value="30"><span class="sfx">years</span></div></div></div>
  <div class="sl"><div class="slh"><label>Estimated loan</label><b class="c_lv">–</b></div><input type="range" class="c_ls" min="50" max="100" step="1" value="${l.m}"></div>
  <div class="sl"><div class="slh"><label>Loan tenure</label><b class="c_tv">–</b></div><input type="range" class="c_ts" min="5" max="35" step="1" value="${l.y}"><p class="hint c_th"></p></div>
  <p class="rate">Interest rate: <b>${rt}% p.a.</b></p></div>
@@ -1517,7 +1517,7 @@ function calcBind(root,choices){
   q('.c_ex').textContent=pr?`Down payment ${rm(pr-loan)} · Total interest ${rm(pay*n-loan)}`:'Enter a price to see your estimate.';
   [ls,ts].forEach(s=>s.style.setProperty('--p',((s.value-s.min)/((s.max-s.min)||1)*100)+'%'));if(q('.e_res'))elig()};
  root.querySelectorAll('input').forEach(i=>i.addEventListener('input',run));
- if(pk)pk.addEventListener('change',()=>{const c=choices[+pk.value];if(c){q('.c_pr').value=numOf(c.p)||'';if(pk&&choices[0].kind==='project')name=c.l}else if(choices[0].kind==='project')name='';run()});
+ if(pk)pk.addEventListener('change',()=>{const c=choices[+pk.value];if(c){q('.c_pr').value=numOf(c.p)?numOf(c.p).toLocaleString('en-MY'):'';if(pk&&choices[0].kind==='project')name=c.l}else if(choices[0].kind==='project')name='';run()});
  q('.c_ask').onclick=()=>{const pr=numOf(q('.c_pr').value),age=q('.c_age').value||'30',pct=q('.c_ls').value,yrs=q('.c_ts').value,mo=q('.c_mo').textContent;
   const t=`Financing enquiry${name?' for '+name:''}: property price ${pr?rm(pr):'n/a'}, age ${age}, loan ${pct}%, tenure ${yrs} years, estimated ${mo!=='–'?'RM '+mo+'/month':'instalment n/a'}.`;
   if(typeof closeDetail==='function')closeDetail();
@@ -1999,7 +1999,7 @@ render();initUI();
     ...(clean(p.d)?{"provider":{"@type":"Organization","name":clean(p.d)}}:{})},
    {"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":T_('All properties','Semua hartanah'),"item":home},{"@type":"ListItem","position":2,"name":clean(p.n),"item":url}]}]};
   return `<!DOCTYPE html>
-<html lang="${T_('en-MY','ms-MY')}"><head><meta charset="utf-8"><meta name="osc-build" content="2026-10-18 v17"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<html lang="${T_('en-MY','ms-MY')}"><head><meta charset="utf-8"><meta name="osc-build" content="2026-10-18 v18"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${esc(title)}</title><meta name="description" content="${esc(desc)}"><meta name="robots" content="index, follow, max-image-preview:large"><link rel="canonical" href="${esc(url)}"><link rel="alternate" hreflang="en-MY" href="${esc(enU)}"><link rel="alternate" hreflang="ms-MY" href="${esc(msU)}"><link rel="alternate" hreflang="x-default" href="${esc(enU)}">
 <meta property="og:type" content="website"><meta property="og:site_name" content="One Stop Centre Property Lists"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:url" content="${esc(url)}"><meta property="og:locale" content="${T_('en_MY','ms_MY')}"><meta property="og:locale:alternate" content="${T_('ms_MY','en_MY')}">${absImg[0]?`<meta property="og:image" content="${esc(ogImg)}"><meta property="og:image:alt" content="${esc(clean(p.n))}${clean(p.l)?', '+esc(tc(p.l)):''}"><meta name="twitter:card" content="summary_large_image">`:''}<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#0a1a3a"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
@@ -2392,7 +2392,7 @@ var D={
 'Air-conditioners':'Penghawa dingin','Wardrobe':'Almari pakaian','Kitchen cabinet':'Kabinet dapur','Hob & hood':'Hob & hud','Refrigerator':'Peti sejuk','Washing machine':'Mesin basuh','Water heater':'Pemanas air',
 /* loan calculator & eligibility */
 'Loan calculator':'Kalkulator pinjaman','Estimate your monthly instalment for any project. For illustration only.':'Anggarkan ansuran bulanan untuk mana-mana projek. Untuk ilustrasi sahaja.','Choose a project (optional)':'Pilih projek (pilihan)','Choose a layout (optional)':'Pilih pelan (pilihan)','Enter price manually':'Masukkan harga sendiri',
-'Property price':'Harga hartanah','Age':'Umur','years old':'tahun','Estimated loan':'Anggaran pinjaman','Loan tenure':'Tempoh pinjaman','Interest rate:':'Kadar faedah:','Ask about financing':'Tanya tentang pembiayaan',
+'Property price':'Harga hartanah','Age':'Umur','years old':'tahun','years':'tahun','e.g. 500,000':'cth. 500,000','Estimated loan':'Anggaran pinjaman','Loan tenure':'Tempoh pinjaman','Interest rate:':'Kadar faedah:','Ask about financing':'Tanya tentang pembiayaan',
 'Based on the rate shown. This is an estimate only, not a loan offer.':'Berdasarkan kadar yang ditunjukkan. Ini anggaran sahaja, bukan tawaran pinjaman.','Enter a price to see your estimate.':'Masukkan harga untuk melihat anggaran anda.',
 'Check my loan eligibility':'Semak kelayakan pinjaman saya','See your max housing loan and which projects you may qualify for':'Lihat pinjaman perumahan maksimum anda dan projek yang mungkin layak','See your max housing loan and which layout you may qualify for':'Lihat pinjaman perumahan maksimum anda dan pelan yang mungkin layak',
 'Net monthly income (take-home)':'Pendapatan bersih bulanan (gaji bawa pulang)','Monthly commitments':'Komitmen bulanan','Help me add up my commitments':'Bantu saya kira komitmen','Car loan instalment':'Ansuran pinjaman kereta','Credit card outstanding balance (total)':'Baki tertunggak kad kredit (jumlah)','PTPTN, personal & other loans':'PTPTN, pinjaman peribadi & lain-lain',
@@ -2540,4 +2540,8 @@ window.__trMS=tr;
 .bfc>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bfc b{color:#c8102e}
 .bfc button{border:0;cursor:pointer;font:700 .8rem var(--fb,system-ui);border-radius:999px;flex:none}
 #bf_e{background:#eef1f8;color:#0f1b33;padding:8px 12px}#bf_x{width:30px;height:30px;background:#c8102e;color:#fff}</style>
+<style id="calc-fit">.inp .sfx{padding:0 10px!important;font-size:.8rem}.inp input.c_age{min-width:2.6ch;text-align:center;padding:0 4px!important}.inp input{padding:0 4px 0 2px!important}.crow{grid-template-columns:minmax(0,1.45fr) minmax(0,1fr)}
+@media(max-width:440px){.crow{grid-template-columns:minmax(0,1fr);gap:12px}.cx .crow>.f+.f{max-width:190px}.inp span{padding:0 8px}.inp input,.inp input:focus{font-size:1.02rem!important}}
+@media(max-width:600px){.bm-g .bm-in span{display:none!important}.bm-in input{padding:0 8px!important;font-size:.88rem!important}}</style>
+<script>document.addEventListener('input',function(e){var t=e.target;if(!t.classList||!t.classList.contains('c_pr'))return;var d=t.value.replace(/[^\d]/g,'').slice(0,10),f=d?(+d).toLocaleString('en-MY'):'';if(f!==t.value){t.value=f;try{t.setSelectionRange(f.length,f.length)}catch(_){}t.dispatchEvent(new Event('input',{bubbles:true}))}},true);</script>
 </body></html>
