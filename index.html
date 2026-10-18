@@ -743,7 +743,7 @@ body{background-color:#0a1a3a;background-image:radial-gradient(900px 520px at 10
 <script type="text/x-osc">
 const $=id=>document.getElementById(id);
 const furnLabel=v=>v==='Yes'?'Furnished':v==='No'?'Unfurnished':(v||'');
-const LANG=window.__LANG||((/^\/ms(\/|$)/.test(location.pathname))?'ms':'en'),LPX=LANG==='ms'?'ms/':'';
+let LANG=window.__LANG||((/^\/ms(\/|$)/.test(location.pathname))?'ms':'en'),LPX=LANG==='ms'?'ms/':'';window.__setMainLang=l=>{LANG=l;LPX=l==='ms'?'ms/':''};
 const D=JSON.parse($('data').textContent);
 function normAreas(L){if(!Array.isArray(L))return;const tcw=w=>(w.length<=2||!/[AEIOU]/.test(w))?w:w.charAt(0)+w.slice(1).toLowerCase();const tc=v=>v.split(/(\s+|-|\/|\()/).map(w=>/^[A-Z0-9]+$/.test(w)?tcw(w):w).join('');const key=v=>v.replace(/\s+/g,' ').trim().toLowerCase();const pick={};
  L.forEach(p=>{if(!p||typeof p.l!=='string')return;const v=p.l.replace(/\s+/g,' ').trim(),k=v.toLowerCase();if(!k)return;const mixed=v!==v.toUpperCase();if(!pick[k]||(mixed&&pick[k]===pick[k].toUpperCase()))pick[k]=v});
@@ -1884,7 +1884,7 @@ render();initUI();
 <script type="text/x-osc" id="seo-kit">
 /* ===== SEO kit: per-property URLs, meta, structured data, static SEO website pack ===== */
 (function(){
- const LANG=(document.documentElement.getAttribute('data-lang')==='ms'||/^\/ms(\/|$)/.test(location.pathname))?'ms':'en';
+ let LANG=(document.documentElement.getAttribute('data-lang')==='ms'||/^\/ms(\/|$)/.test(location.pathname))?'ms':'en';
  const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
  const today=()=>new Date().toISOString().slice(0,10);
  const clean=v=>{v=String(v??'').trim();return /^(none|null|undefined)$/i.test(v)?'':v};
@@ -1910,7 +1910,7 @@ render();initUI();
  const cover=p=>(p.gallery&&p.gallery.find(Boolean))||p.img||'';
  const tc=v=>{v=clean(v);return v&&v===v.toUpperCase()&&/[A-Z]{3}/.test(v)?v.toLowerCase().replace(/(^|[\s\-\/])([a-z])/g,(m,a,b)=>a+b.toUpperCase()):v};
  const cut=(s,n)=>{s=String(s).replace(/\s+/g,' ').trim();if(s.length<=n)return s;s=s.slice(0,n-1);return s.slice(0,Math.max(s.lastIndexOf(' '),n-25)).replace(/[\s,;:·–-]+$/,'')+'…'};
- const MS=LANG==='ms',LP=MS?'ms/':'';
+ let MS=LANG==='ms',LP=MS?'ms/':'';
  const MSV={'Condominium':'Kondominium','Serviced Apartment':'Pangsapuri Servis','Apartment':'Pangsapuri','Terrace House':'Rumah Teres','Semi-D House':'Rumah Berkembar','Bungalow':'Banglo','Townhouse':'Rumah Bandar','Affordable Housing':'Rumah Mampu Milik','Residential Land':'Tanah Kediaman','Commercial Land':'Tanah Komersial','Agricultural Land':'Tanah Pertanian','Industrial Land':'Tanah Perindustrian','Shop / Shoplot':'Kedai / Lot Kedai','Office':'Pejabat','Retail Space':'Ruang Runcit','Factory / Warehouse':'Kilang / Gudang','Residential':'Kediaman','Land':'Tanah','Commercial':'Komersial','Industrial':'Perindustrian','New Launch':'Pelancaran Baharu','Under Construction':'Dalam Pembinaan','Upcoming':'Akan Datang','Completed':'Siap','Sold Out':'Habis Dijual','Freehold':'Pegangan Bebas','Leasehold':'Pajakan','Malay Reserve':'Rizab Melayu','Furnished':'Berperabot','Partially Furnished':'Separa Berperabot','Unfurnished':'Tanpa Perabot','Yes':'Ya','No':'Tidak','Swimming pool':'Kolam renang','Gymnasium':'Gimnasium','Playground':'Taman permainan','Multipurpose hall':'Dewan serbaguna','BBQ area':'Kawasan BBQ','Jogging track':'Trek joging','Co-working space':'Ruang kerja bersama','Tennis court':'Gelanggang tenis','Badminton court':'Gelanggang badminton','Function room':'Bilik fungsi','Kids pool':'Kolam kanak-kanak','Reading room':'Bilik bacaan','Yoga deck':'Dek yoga','Pet-friendly area':'Kawasan mesra haiwan','24-hour security':'Keselamatan 24 jam','Retail podium':'Podium runcit','EV charging':'Pengecasan EV','Air-conditioners':'Penghawa dingin','Wardrobe':'Almari pakaian','Kitchen cabinet':'Kabinet dapur','Hob & hood':'Hob & hud','Refrigerator':'Peti sejuk','Washing machine':'Mesin basuh','Water heater':'Pemanas air'};
  const tv=v=>{v=clean(v);return MS&&MSV[v]||v};
  function pTitle(p){const own=clean(p.seoT);if(own)return /one stop centre/i.test(own)||(own+' | One Stop Centre').length>65?own:own+' | One Stop Centre';const pr=priceTxt(p);let t=clean(p.n)+(clean(p.l)?', '+tc(p.l):'');const a=pr?(MS?' | Dari ':' | From ')+pr.replace(/^(from|dari)\s+/i,''):'';if((t+a).length<=60)t+=a;if((t+' | One Stop Centre').length<=65)t+=' | One Stop Centre';return t}
@@ -1941,7 +1941,8 @@ render();initUI();
   meta('property','og:type','website');meta('property','og:site_name','One Stop Centre Property Lists');meta('property','og:locale',MS?'ms_MY':'en_MY');meta('property','og:title',title);meta('property','og:description',desc);meta('property','og:url',url||'');meta('property','og:image',img||'');meta('name','twitter:card','summary_large_image');
   let c=h.querySelector('link[rel="canonical"]');if(url){if(!c){c=doc.createElement('link');c.rel='canonical';h.appendChild(c)}c.href=url}else if(c)c.remove();
  }
- const HOME_T=MS?'Rumah Baharu & Siap di Lembah Klang | One Stop Centre':'New Launch & Ready Homes in Klang Valley | One Stop Centre';
+ let HOME_T=MS?'Rumah Baharu & Siap di Lembah Klang | One Stop Centre':'New Launch & Ready Homes in Klang Valley | One Stop Centre';
+ window.__setKitLang=l=>{LANG=l;MS=l==='ms';LP=MS?'ms/':'';HOME_T=MS?'Rumah Baharu & Siap di Lembah Klang | One Stop Centre':'New Launch & Ready Homes in Klang Valley | One Stop Centre'};
  /* Called by save(): bake fresh SEO into the published page every time a property is added or edited */
  window.seoPrep=function(c,pack){
   stamp();const base=siteBase(),h=c.querySelector('head');
@@ -1953,6 +1954,7 @@ render();initUI();
  /* Live page: same meta now, and per-property title/description while a property is open */
  const live={querySelector:s=>document.querySelector(s),createElement:t=>document.createElement(t)};
  const OGI=()=>(siteBase()||location.origin+'/')+'og-default.jpg';
+ window.__liveHome=()=>liveHome();
  function liveHome(){headSet(live,'',HOME_T,siteDesc(),OGI(),siteBase()?siteBase()+LP:'');let ld=$('seo-ld');if(!ld){ld=document.createElement('script');ld.type='application/ld+json';ld.id='seo-ld';document.head.appendChild(ld)}stamp();ld.textContent=listLd(siteBase())}
  const isPack=()=>!!($('alldir')&&$('alldir').dataset.pack==='1');
  try{stamp();if($('alldir'))$('alldir').innerHTML=dirHtml(isPack());liveHome()}catch(e){}
@@ -1994,7 +1996,7 @@ render();initUI();
     ...(clean(p.d)?{"provider":{"@type":"Organization","name":clean(p.d)}}:{})},
    {"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":T_('All properties','Semua hartanah'),"item":home},{"@type":"ListItem","position":2,"name":clean(p.n),"item":url}]}]};
   return `<!DOCTYPE html>
-<html lang="${T_('en-MY','ms-MY')}"><head><meta charset="utf-8"><meta name="osc-build" content="2026-10-17 v15"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<html lang="${T_('en-MY','ms-MY')}"><head><meta charset="utf-8"><meta name="osc-build" content="2026-10-17 v16"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${esc(title)}</title><meta name="description" content="${esc(desc)}"><meta name="robots" content="index, follow, max-image-preview:large"><link rel="canonical" href="${esc(url)}"><link rel="alternate" hreflang="en-MY" href="${esc(enU)}"><link rel="alternate" hreflang="ms-MY" href="${esc(msU)}"><link rel="alternate" hreflang="x-default" href="${esc(enU)}">
 <meta property="og:type" content="website"><meta property="og:site_name" content="One Stop Centre Property Lists"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:url" content="${esc(url)}"><meta property="og:locale" content="${T_('en_MY','ms_MY')}"><meta property="og:locale:alternate" content="${T_('ms_MY','en_MY')}">${absImg[0]?`<meta property="og:image" content="${esc(absImg[0])}"><meta property="og:image:alt" content="${esc(clean(p.n))}${clean(p.l)?', '+esc(tc(p.l)):''}"><meta name="twitter:card" content="summary_large_image">`:''}<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#0a1a3a"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
@@ -2340,7 +2342,7 @@ var LANG=(document.documentElement.getAttribute('data-lang')==='ms'||/^\/ms(\/|$
 window.__LANG=LANG;
 /* language switch in the header: English <-> Bahasa Melayu, keeps your place */
 function swHref(){var p=location.pathname,h=location.hash||'';if(/^#p=/.test(h))h='';var op=document.querySelector('#detail.open')&&window.__OPENP;if(op)h='#p='+op;var en=p.replace(/^\/ms(?=\/|$)/,'')||'/';return (LANG==='ms'?en:'/ms'+(en==='/'?'/':en))+h}
-function addSwitch(){var hn=document.querySelector('.hd .hn');if(!hn||document.getElementById('langsw'))return;var a=document.createElement('a');a.id='langsw';a.className='langsw';a.href=swHref();a.setAttribute('hreflang',LANG==='ms'?'en':'ms');a.setAttribute('lang',LANG==='ms'?'en':'ms');a.setAttribute('aria-label',LANG==='ms'?'Switch to English':'Tukar ke Bahasa Melayu');a.innerHTML='<span class="'+(LANG==='en'?'on':'')+'">EN</span><span class="'+(LANG==='ms'?'on':'')+'">BM</span>';a.addEventListener('click',function(){a.href=swHref();try{localStorage.setItem('osc_lang',LANG==='ms'?'en':'ms');sessionStorage.setItem('osc_sw',JSON.stringify({y:Math.round(window.scrollY||0),t:Date.now()}))}catch(e){}});var cta=hn.querySelector('.hcta');hn.insertBefore(a,cta||null);window.addEventListener('hashchange',function(){a.href=swHref()})}
+function addSwitch(){var hn=document.querySelector('.hd .hn');if(!hn||document.getElementById('langsw'))return;var a=document.createElement('a');a.id='langsw';a.className='langsw';a.href=swHref();a.setAttribute('hreflang',LANG==='ms'?'en':'ms');a.setAttribute('lang',LANG==='ms'?'en':'ms');a.setAttribute('aria-label',LANG==='ms'?'Switch to English':'Tukar ke Bahasa Melayu');a.innerHTML='<span class="'+(LANG==='en'?'on':'')+'">EN</span><span class="'+(LANG==='ms'?'on':'')+'">BM</span>';a.addEventListener('click',function(ev){var to=LANG==='ms'?'en':'ms';try{localStorage.setItem('osc_lang',to)}catch(e){}if(window.__setLang&&!ev.metaKey&&!ev.ctrlKey){ev.preventDefault();window.__setLang(to,true)}else{a.href=swHref();try{sessionStorage.setItem('osc_sw',JSON.stringify({y:Math.round(window.scrollY||0),t:Date.now()}))}catch(e){}}});var cta=hn.querySelector('.hcta');hn.insertBefore(a,cta||null);window.addEventListener('hashchange',function(){a.href=swHref()});window.__swPaint=function(){a.href=swHref();a.setAttribute('hreflang',LANG==='ms'?'en':'ms');a.setAttribute('lang',LANG==='ms'?'en':'ms');a.setAttribute('aria-label',LANG==='ms'?'Switch to English':'Tukar ke Bahasa Melayu');a.children[0].className=LANG==='en'?'on':'';a.children[1].className=LANG==='ms'?'on':''}}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',addSwitch);else addSwitch();
 /* arriving from the language switch: skip the intro, return to the same spot straight away (no jump from the top) */
 (function(){var f=null;try{f=JSON.parse(sessionStorage.getItem('osc_sw')||'null');sessionStorage.removeItem('osc_sw')}catch(e){}
@@ -2351,7 +2353,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
  function finish(){if(done)return;done=true;to();requestAnimationFrame(function(){to();de.classList.remove('sw-wait');setTimeout(function(){de.classList.remove('sw-in')},700)})}
  var ready=false,loaded=false;window.addEventListener('load',function(){loaded=true;if(ready)finish()});
  (function tick(){if(done)return;var h=document.documentElement.scrollHeight;if(y>0&&h>=y+innerHeight){to();if(!ready){ready=true;setTimeout(finish,600)}if(loaded){finish();return}}if(y<=0||Date.now()-t0>1600){finish();return}requestAnimationFrame(tick)})();})();
-if(LANG!=='ms')return;
+var ACTIVE=LANG==='ms',ORIG=new Map(),ATTR=[];
 var D={
 /* header, hero */
 'Properties':'Hartanah','Calculator':'Kalkulator','How it works':'Caranya','Enquire':'Tanya','Property Lists':'Senarai Hartanah','One Stop Centre Property Lists':'One Stop Centre Senarai Hartanah',
@@ -2440,12 +2442,28 @@ function tr(s){if(D.hasOwnProperty(s))return D[s];for(var i=0;i<R.length;i++){if
  var mt=s.match(/^(.+?)(\.)?( © .+)$/);if(mt){var a=tr(mt[1]+(mt[2]||'')),b=tr(mt[3].trim());if(a!==mt[1]+(mt[2]||'')||b!==mt[3].trim())return a+' '+b}
  return s}
 var SKIP='#pn,script,style,#data,noscript,textarea,[contenteditable],.ad,[data-noi18n]';
-function doText(n){var v=n.nodeValue;if(!v||!/[A-Za-z]/.test(v))return;var p=n.parentElement;if(!p||p.closest(SKIP))return;var core=v.replace(/\s+/g,' ').trim();var t=tr(core);if(t===core)return;
+function doText(n){if(!ACTIVE)return;var v=n.nodeValue;if(!v||!/[A-Za-z]/.test(v))return;var p=n.parentElement;if(!p||p.closest(SKIP))return;var core=v.replace(/\s+/g,' ').trim();var t=tr(core);if(t===core)return;
  if(p.tagName==='OPTION'&&!p.hasAttribute('value'))p.setAttribute('value',p.textContent);
- var lead=v.match(/^\s*/)[0],trail=v.match(/\s*$/)[0];n.nodeValue=lead+t+trail}
-function doEl(e){if(e.closest&&e.closest(SKIP))return;['placeholder','aria-label','title'].forEach(function(a){var v=e.getAttribute&&e.getAttribute(a);if(v&&/[A-Za-z]/.test(v)){var t=tr(v.trim());if(t!==v.trim())e.setAttribute(a,t)}})}
+ var lead=v.match(/^\s*/)[0],trail=v.match(/\s*$/)[0];if(!ORIG.has(n))ORIG.set(n,v);n.nodeValue=lead+t+trail}
+function doEl(e){if(!ACTIVE||(e.closest&&e.closest(SKIP)))return;['placeholder','aria-label','title'].forEach(function(a){var v=e.getAttribute&&e.getAttribute(a);if(v&&/[A-Za-z]/.test(v)){var t=tr(v.trim());if(t!==v.trim()){ATTR.push([e,a,v]);e.setAttribute(a,t)}}})}
 function walk(root){if(root.nodeType===3){doText(root);return}if(root.nodeType!==1)return;if(root.closest&&root.closest(SKIP))return;doEl(root);root.querySelectorAll&&root.querySelectorAll('[placeholder],[aria-label],[title]').forEach(doEl);var w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),n;while(n=w.nextNode())doText(n)}
-function start(){walk(document.body);document.documentElement.classList.add('i18n-on');new MutationObserver(function(ms){ms.forEach(function(m){if(m.type==='characterData')doText(m.target);else m.addedNodes.forEach(walk)})}).observe(document.body,{childList:true,subtree:true,characterData:true})}
+function start(){if(ACTIVE)walk(document.body);document.documentElement.classList.add('i18n-on');new MutationObserver(function(ms){if(!ACTIVE)return;ms.forEach(function(m){if(m.type==='characterData')doText(m.target);else m.addedNodes.forEach(walk)})}).observe(document.body,{childList:true,subtree:true,characterData:true})}
+/* Malay -> English for text the server wrote in Malay (hero, counters) */
+var REV={};Object.keys(D).forEach(function(k){if(!REV.hasOwnProperty(D[k]))REV[D[k]]=k});
+function back(root){var w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),n;while(n=w.nextNode()){var p=n.parentElement;if(!p||p.closest(SKIP))continue;var v=n.nodeValue,c=v.replace(/\s+/g,' ').trim();if(c&&REV.hasOwnProperty(c))n.nodeValue=v.match(/^\s*/)[0]+REV[c]+v.match(/\s*$/)[0]}}
+/* instant switch: no page reload; the address still changes so links and Google stay right */
+window.__setLang=function(to,push){if(to===LANG)return;var href=swHref();var de=document.documentElement;
+ /* keep what you're looking at in the same spot even though Malay text is longer */
+ var anc=null,at=0;try{var cand=document.elementsFromPoint(innerWidth/2,Math.min(innerHeight*.35,260));for(var i=0;i<cand.length;i++){var c=cand[i].closest('.pc,section,[id]');if(c&&c!==document.body&&!c.closest('.hd,#detail,.sbar,.fab')){anc=c;break}}var gi=-1;if(anc&&anc.classList.contains('pc')){gi=[].indexOf.call(document.querySelectorAll('#grid .pc'),anc)}if(anc)at=anc.getBoundingClientRect().top}catch(e){}
+ if(to==='ms'){ACTIVE=true;LANG='ms';walk(document.body)}
+ else{ACTIVE=false;LANG='en';ORIG.forEach(function(v,n){n.nodeValue=v});ORIG.clear();ATTR.forEach(function(x){x[0].setAttribute(x[1],x[2])});ATTR=[];back(document.body)}
+ window.__LANG=LANG;de.lang=LANG==='ms'?'ms-MY':'en-MY';if(LANG==='ms')de.setAttribute('data-lang','ms');else de.removeAttribute('data-lang');
+ if(push)try{history.pushState({lang:LANG},'',href)}catch(e){}
+ try{window.__setMainLang&&window.__setMainLang(LANG)}catch(e){}try{window.__setKitLang&&window.__setKitLang(LANG)}catch(e){}
+ try{var d=document.getElementById('detail');if(d&&d.classList.contains('open')&&window.__OPENP&&window.openDetail){var st=d.scrollTop;window.openDetail(window.__OPENP);d.scrollTop=st}else{window.render&&window.render();window.setFab&&window.setFab(null);window.__liveHome&&window.__liveHome()}}catch(e){}
+ window.__swPaint&&window.__swPaint();
+ try{if(anc&&!document.contains(anc)&&gi>=0)anc=document.querySelectorAll('#grid .pc')[gi]||null;if(anc&&document.contains(anc)){var dy=anc.getBoundingClientRect().top-at;if(Math.abs(dy)>1)window.scrollBy({top:dy,left:0,behavior:'instant'})}}catch(e){}};
+window.addEventListener('popstate',function(){var want=/^\/ms(\/|$)/.test(location.pathname)?'ms':'en';if(want!==LANG)window.__setLang(want,false)});
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
 window.__trMS=tr;
 })();
