@@ -1999,7 +1999,7 @@ render();initUI();
     ...(clean(p.d)?{"provider":{"@type":"Organization","name":clean(p.d)}}:{})},
    {"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":T_('All properties','Semua hartanah'),"item":home},{"@type":"ListItem","position":2,"name":clean(p.n),"item":url}]}]};
   return `<!DOCTYPE html>
-<html lang="${T_('en-MY','ms-MY')}"><head><meta charset="utf-8"><meta name="osc-build" content="2026-10-18 v18"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<html lang="${T_('en-MY','ms-MY')}"><head><meta charset="utf-8"><meta name="osc-build" content="2026-10-18 v19"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${esc(title)}</title><meta name="description" content="${esc(desc)}"><meta name="robots" content="index, follow, max-image-preview:large"><link rel="canonical" href="${esc(url)}"><link rel="alternate" hreflang="en-MY" href="${esc(enU)}"><link rel="alternate" hreflang="ms-MY" href="${esc(msU)}"><link rel="alternate" hreflang="x-default" href="${esc(enU)}">
 <meta property="og:type" content="website"><meta property="og:site_name" content="One Stop Centre Property Lists"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:url" content="${esc(url)}"><meta property="og:locale" content="${T_('en_MY','ms_MY')}"><meta property="og:locale:alternate" content="${T_('ms_MY','en_MY')}">${absImg[0]?`<meta property="og:image" content="${esc(ogImg)}"><meta property="og:image:alt" content="${esc(clean(p.n))}${clean(p.l)?', '+esc(tc(p.l)):''}"><meta name="twitter:card" content="summary_large_image">`:''}<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#0a1a3a"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
@@ -2544,4 +2544,25 @@ window.__trMS=tr;
 @media(max-width:440px){.crow{grid-template-columns:minmax(0,1fr);gap:12px}.cx .crow>.f+.f{max-width:190px}.inp span{padding:0 8px}.inp input,.inp input:focus{font-size:1.02rem!important}}
 @media(max-width:600px){.bm-g .bm-in span{display:none!important}.bm-in input{padding:0 8px!important;font-size:.88rem!important}}</style>
 <script>document.addEventListener('input',function(e){var t=e.target;if(!t.classList||!t.classList.contains('c_pr'))return;var d=t.value.replace(/[^\d]/g,'').slice(0,10),f=d?(+d).toLocaleString('en-MY'):'';if(f!==t.value){t.value=f;try{t.setSelectionRange(f.length,f.length)}catch(_){}t.dispatchEvent(new Event('input',{bubbles:true}))}},true);</script>
+<style id="detail-wide">
+@media(min-width:760px){
+ .dm{background:var(--card)}
+ .dbox{max-width:none;min-height:100%}
+ .dtop{background:var(--card);box-shadow:0 1px 0 var(--line),0 8px 22px rgba(15,27,51,.06);margin-bottom:0!important;height:68px;padding:0 max(20px,calc((100% - 1240px)/2 + 20px))!important}
+ .dtop .dt-n{opacity:1;transform:none;font-size:1.3rem}
+ .dtop .dt-b{background:#eef1f8;box-shadow:none}
+ .gmain{width:calc(100% - 48px);max-width:1240px;margin:20px auto 0;border-radius:26px;height:min(58vw,66vh,700px);box-shadow:0 22px 50px rgba(15,27,51,.18);overflow:hidden}
+ .gmain .gc{right:16px;bottom:16px}
+ .gthumbs{width:calc(100% - 48px);max-width:1240px;margin:16px auto 0;padding:2px 2px 8px;gap:14px}
+ .gthumbs img{height:100px;width:156px;border-radius:16px;border:3px solid transparent;opacity:.82;transition:opacity .15s,border-color .15s,transform .15s}
+ .gthumbs img:hover{opacity:1;transform:translateY(-2px)}
+ .gthumbs img.on,.gthumbs:not(.picked) img:first-child{border-color:#c8102e;opacity:1}
+ .dnav{top:68px!important;padding-left:max(20px,calc((100% - 1240px)/2 + 20px))!important;padding-right:max(20px,calc((100% - 1240px)/2 + 20px))!important}
+ .dbody{max-width:1240px;margin:0 auto!important;padding-left:24px!important;padding-right:24px!important;box-sizing:border-box}
+ .dbody>h2{font-size:clamp(2rem,3.4vw,2.8rem)}
+ .sbar{padding-left:max(20px,calc((100% - 1240px)/2 + 24px));padding-right:max(100px,calc((100% - 1240px)/2 + 24px))}
+}
+@media(min-width:1100px){.gthumbs img{height:110px;width:172px}}
+</style>
+<script>document.addEventListener('click',function(e){var t=e.target.closest&&e.target.closest('.gthumbs img');if(!t)return;var g=t.parentNode;g.classList.add('picked');g.querySelectorAll('img').forEach(function(x){x.classList.toggle('on',x===t)})});</script>
 </body></html>
