@@ -5,6 +5,8 @@ const SB_URL = "https://deethrwnmyezwsohmhzl.supabase.co";
 const SB_KEY = "sb_publishable_gaiT2UF6vtI42BbYH1egKg_T_yLT83g";
 const SITE = "https://onestopcentreproperty.com/";
 const OG_DEFAULT = SITE + "og-default.jpg?v=2", OG_MS = SITE + "og-default-ms.jpg?v=2";
+// Retired property addresses → the listing that replaced them (permanent 301, keeps shared links and Google ranking)
+const MOVED = { "m-mira-wangsa-maju": "m-mira-wangsa-maju-2" };
 
 function kit(P, S, LANG) {
   const window = {};
@@ -87,7 +89,7 @@ function kit(P, S, LANG) {
   const concl=p.concl&&clean(p.concl.text);
   const ld={"@context":"https://schema.org","@graph":[
    {"@type":"RealEstateListing","@id":url+'#listing',"url":url,"name":clean(p.n),"description":desc,"inLanguage":T_('en-MY','ms-MY'),...(absImg.length?{"image":absImg}:{}),...(p.mod?{"dateModified":p.mod}:{}),
-    ...(n.length?{"offers":{"@type":"AggregateOffer","priceCurrency":"MYR","lowPrice":Math.min(...n),"highPrice":Math.max(...n),"offerCount":Math.max(1,T.length),"availability":"https://schema.org/InStock","url":url}}:{}),
+    ...(n.length?{"offers":{"@type":"AggregateOffer","priceCurrency":"MYR","lowPrice":Math.min(...n),"highPrice":Math.max(...n),"offerCount":Math.max(1,T.length),"availability":"https://schema.org/"+(/sold out/i.test(clean(p.s))?"SoldOut":/upcoming/i.test(clean(p.s))?"PreOrder":"InStock"),"url":url}}:{}),
     "about":{"@type":/landed|link|terrace|semi|bungalow|storey|town/i.test(p.t)?"SingleFamilyResidence":"ApartmentComplex","name":clean(p.n),"address":{"@type":"PostalAddress",...(clean(p.address)?{"streetAddress":clean(p.address)}:{}),"addressLocality":clean(p.l),"addressRegion":"Klang Valley","addressCountry":"MY"},...(+p.b?{"numberOfBedrooms":+p.b}:{}),...((p.facilities||[]).length?{"amenityFeature":p.facilities.filter(Boolean).map(f=>({"@type":"LocationFeatureSpecification","name":clean(f),"value":true}))}:{}),...(clean(p.mapUrl)?{"hasMap":clean(p.mapUrl)}:{})},
     ...(clean(p.d)?{"provider":{"@type":"Organization","name":clean(p.d)}}:{})},
    {"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":T_('All properties','Semua hartanah'),"item":home},{"@type":"ListItem","position":2,"name":clean(p.n),"item":url}]}]};
@@ -211,6 +213,7 @@ export default async (request, context) => {
   if (pm) {
     const slug = decodeURIComponent(pm[1]);
     const p = D.P.find((x) => x.slug === slug);
+    if (!p && MOVED[slug] && D.P.some((x) => x.slug === MOVED[slug])) return Response.redirect(url.origin + (ms ? "/ms" : "") + "/property/" + MOVED[slug] + "/", 301);
     if (!p) return notFound();
     if (!path.endsWith("/")) return Response.redirect(url.origin + path + "/", 301);
     const seen = new Set(), imgs = [];
