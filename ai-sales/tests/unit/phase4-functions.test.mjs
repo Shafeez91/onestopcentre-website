@@ -238,5 +238,17 @@ test("WhatsApp connection check: a wrong or empty account ID is replaced by the 
   route(/\/1110000001\/phone_numbers/, () => Response.json({ data: [] }));
   const res = await setup(post("/api/sales/whatsapp/setup", { action: "check" }, auth));
   assert.equal(res.status, 404);
-  assert.deepEqual((await res.json()).candidates, ["1110000001"]);
+  const nf = await res.json();
+  assert.deepEqual(nf.candidates, ["1110000001"]);
+  assert.match(nf.error, /phone number ID PN1 was not found/);
+  assert.match(nf.error, /WhatsApp accounts the token can reach: 1110000001 → no numbers/);
+  // the reason names the token's permissions and what Meta said about each account
+  routes = [];
+  route(/debug_token/, () => Response.json({ data: { scopes: ["whatsapp_business_messaging"], granular_scopes: [{ scope: "whatsapp_business_messaging", target_ids: ["3330000003"] }] } }));
+  route(/\/3330000003\/phone_numbers/, () => Response.json({ error: { code: 100, message: "Unsupported get request." } }, { status: 400 }));
+  route(/\/9990000009\/phone_numbers/, () => Response.json({ error: { code: 100, message: "Unsupported get request." } }, { status: 400 }));
+  const e2 = (await (await setup(post("/api/sales/whatsapp/setup", { action: "check", waba_id: "9990000009" }, auth))).json());
+  assert.match(e2.error, /ID 9990000009: Unsupported get request\. \(400, code 100\)/);
+  assert.match(e2.error, /token permissions: whatsapp_business_messaging/);
+  assert.match(e2.error, /3330000003 → Unsupported get request/);
 });

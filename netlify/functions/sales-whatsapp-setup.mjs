@@ -10,16 +10,37 @@ import { waConfig, graph } from "../../ai-sales/lib/whatsapp.mjs";
 const attempt = async (fn) => { try { return { ok: true, data: await fn() }; } catch (e) { return { ok: false, error: e.message }; } };
 const holdsPhone = (res, phoneNumberId) => res.ok && (res.data?.data || []).some((n) => String(n.id) === String(phoneNumberId));
 
-/** The WhatsApp Business Account ids the token was granted, and the one that holds the phone number (or null). */
+/**
+ * The WhatsApp Business Account ids the token was granted, and the one that holds the phone number (or null).
+ * `tried` and `scopes` explain a failed search on the Integrations page (ids and permission names only, no secrets).
+ */
 async function findWaba(cfg) {
   const dbg = await attempt(() => graph(cfg, "GET", `debug_token?input_token=${encodeURIComponent(cfg.token)}`));
-  if (!dbg.ok) return { waba: null, candidates: [], error: dbg.error };
-  const candidates = [...new Set((dbg.data?.data?.granular_scopes || []).filter((s) => /^whatsapp_business_/.test(s.scope || ""))
+  if (!dbg.ok) return { waba: null, candidates: [], tried: [], scopes: null, error: dbg.error };
+  const granted = dbg.data?.data?.granular_scopes || [];
+  const candidates = [...new Set(granted.filter((s) => /^whatsapp_business_/.test(s.scope || ""))
     .flatMap((s) => s.target_ids || []).map(String))];
+  const tried = [];
   for (const id of candidates) {
-    if (holdsPhone(await attempt(() => graph(cfg, "GET", `${id}/phone_numbers?fields=id`)), cfg.phoneNumberId)) return { waba: id, candidates };
+    const res = await attempt(() => graph(cfg, "GET", `${id}/phone_numbers?fields=id,display_phone_number`));
+    if (holdsPhone(res, cfg.phoneNumberId)) return { waba: id, candidates, tried };
+    tried.push({ id, numbers: res.ok ? (res.data?.data || []).map((n) => `${n.display_phone_number || "?"} (${n.id})`) : null, error: res.ok ? null : res.error });
   }
-  return { waba: null, candidates };
+  return { waba: null, candidates, tried, scopes: (dbg.data?.data?.scopes || granted.map((s) => s.scope)).filter(Boolean) };
+}
+
+/** Plain-language reason the account was not found, listing what the token can see. */
+function notFoundReason(cfg, entered, first, d) {
+  const parts = [];
+  if (entered && first && !first.ok) parts.push(`ID ${entered}: ${first.error}`);
+  else if (entered && first) parts.push(`ID ${entered} does not hold phone number ID ${cfg.phoneNumberId}`);
+  if (d.error) parts.push(`token check failed: ${d.error}`);
+  else {
+    if (d.scopes) parts.push(`token permissions: ${d.scopes.join(", ") || "none"}`);
+    parts.push(d.tried.length ? "WhatsApp accounts the token can reach: " + d.tried.map((t) => `${t.id} → ${t.error || (t.numbers.length ? t.numbers.join(", ") : "no numbers")}`).join("; ")
+      : "the token is not linked to any WhatsApp account (generate it with whatsapp_business_management after assigning the account to the system user)");
+  }
+  return `The WhatsApp account holding phone number ID ${cfg.phoneNumberId} was not found with this access token. ` + parts.join(". ") + ".";
 }
 
 export default async (req) => {
@@ -41,8 +62,12 @@ export default async (req) => {
     detected = await findWaba(cfg);
     if (detected.waba) waba = detected.waba;
   }
-  if (!waba) return json({ error: "The WhatsApp Business Account could not be found with this access token" + (detected?.error ? ": " + detected.error : ". Check that the system user has the WhatsApp account assigned (Business settings → System users → Assign assets)."),
-    candidates: detected?.candidates || [] }, 404);
+  // not found: explain why, unless the token could not even be inspected and an ID was entered (then the full check reports it)
+  if (detected && !detected.waba && !(detected.error && entered)) {
+    const error = notFoundReason(cfg, entered, first, detected);
+    console.log("whatsapp setup:", error);
+    return json({ error, candidates: detected.candidates, tried: detected.tried }, 404);
+  }
 
   let linked = null;
   if (body?.action === "subscribe") {

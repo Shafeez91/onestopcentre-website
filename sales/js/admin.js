@@ -256,7 +256,9 @@ export async function integrations(el) {
   const wf = $("#wac", el), out = $("#wacr", el); // captured now: the page is built off-screen, then moved into view
   if (wf) {
     const run = (btn, action) => act(btn, async () => {
-      const r = await api("/api/sales/whatsapp/setup", { method: "POST", body: JSON.stringify({ action, waba_id: wf.waba_id.value.trim() }) });
+      let r;
+      try { r = await api("/api/sales/whatsapp/setup", { method: "POST", body: JSON.stringify({ action, waba_id: wf.waba_id.value.trim() }) }); }
+      catch (e) { out.innerHTML = `<div class="card error"><b>WhatsApp is not connected yet.</b><p>${esc(e.message)}</p></div>`; throw e; } // kept on the page: the details are needed to fix it
       if (r.waba_id) wf.waba_id.value = r.waba_id;
       out.innerHTML = waResult(r);
       const link = $("#walink", out);
