@@ -3,3 +3,7 @@
 /ms/property/*  /property.html  200
 /ms/*  /index.html  200
 /property/*   /property.html  200
+
+# AI Sales module: source code, tests and docs are not public
+/ai-sales/*            /404.html  404!
+/netlify/functions/*   /404.html  404!
