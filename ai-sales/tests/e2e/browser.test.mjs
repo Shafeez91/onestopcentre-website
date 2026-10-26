@@ -133,6 +133,10 @@ async function newPage(viewport, { signedIn = true, mutate = null } = {}) {
     { id: "s1", start: "2030-01-05T02:00:00.000Z", end: "2030-01-05T03:00:00.000Z", label_en: "Sat, 5 Jan, 10:00 am", label_ms: "Sab, 5 Jan, 10:00 PG" },
     { id: "s2", start: "2030-01-07T06:00:00.000Z", end: "2030-01-07T07:00:00.000Z", label_en: "Mon, 7 Jan, 2:00 pm", label_ms: "Isn, 7 Jan, 2:00 PTG" }] }) }));
   await page.route("**/api/sales/appointments/confirm", (r) => { writes.push({ confirm: JSON.parse(r.request().postData() || "{}") }); r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, calendar: true, buyer_notified: true, note: null }) }); });
+  await page.route("**/api/sales/whatsapp/setup", (r) => { const b = JSON.parse(r.request().postData() || "{}"); writes.push({ setup: b });
+    const linked = b.action === "subscribe";
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ healthy: linked, waba_id: b.waba_id, phone: { display_phone_number: "+60 18-763 6796", verified_name: "Hafizan Hanis", status: "CONNECTED" }, phone_in_account: true,
+      subscribed_apps: linked ? [{ id: "1", name: "OneStopCentre Sales" }] : [], ...(linked ? { linked: { ok: true } } : {}) }) }); });
   await page.route("**/api/sales/health", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ server_enabled: false, database: "ok", configured: { llm_anthropic: false }, checked_at: NOW }) }));
   if (signedIn) {
     await page.addInitScript((s) => localStorage.setItem("sb-deethrwnmyezwsohmhzl-auth-token", JSON.stringify(s)), { access_token: "tok", token_type: "bearer", expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: "r", user: { id: "u1", email: "owner@test.local", aud: "authenticated" } });
@@ -391,6 +395,23 @@ test("appointments: confirm a pending request using a free calendar slot and not
     await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /added to Google Calendar/.test(t.textContent)));
     const c = writes.find((w) => w.confirm).confirm;
     assert.deepEqual([c.appointment_id, c.start_at, c.notify_buyer, c.duration_minutes], ["A1", "2030-01-07T06:00:00.000Z", true, 60]);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("integrations: WhatsApp connection check finds the unlinked account and links it", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    await page.goto(base + "/sales/#/integrations");
+    await page.waitForSelector("#wac");
+    await page.fill("#wac input[name=waba_id]", "850701657747469");
+    await page.click("#wac button");
+    await page.waitForSelector("#walink");
+    assert.match(await page.textContent("#wacr"), /not fully connected[\s\S]*\+60 18-763 6796[\s\S]*Account linked to an app\s*No/);
+    await page.click("#walink");
+    await page.waitForFunction(() => /WhatsApp is connected\./.test(document.querySelector("#wacr").textContent));
+    assert.deepEqual(writes.filter((w) => w.setup).map((w) => w.setup.action), ["check", "subscribe"]);
+    assert.match(await page.textContent("#wacr"), /OneStopCentre Sales/);
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
