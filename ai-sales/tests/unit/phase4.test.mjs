@@ -413,3 +413,14 @@ test("buyer reminder about 24 hours before a confirmed appointment: sent once in
   assert.equal(d.wa.sent.length, 0);
   assert.match(db.t.ai_appointments[0].reminders[0].reason, /appointment_reminder/);
 });
+
+test("retention clean-up runs once a day at 03:00 Malaysia time, and not from the webhook", async () => {
+  const purged = [];
+  const at = (iso) => { const db = memdb(world({ ai_jobs: [] }), { ai_purge_expired: () => { purged.push(iso); return { notifications_deleted: 0 }; } }); return { ...deps(db), now: () => new Date(iso) }; };
+  await runWorker(at("2026-10-27T19:00:30Z")); // 03:00 MYT
+  await runWorker(at("2026-10-27T19:02:00Z"));
+  await runWorker(at("2026-10-27T03:00:00Z"));
+  assert.deepEqual(purged, ["2026-10-27T19:00:30Z"]);
+  await runWorker(at("2026-10-27T19:00:30Z"), { reminders: false }); // webhook-triggered runs skip it
+  assert.equal(purged.length, 1);
+});
