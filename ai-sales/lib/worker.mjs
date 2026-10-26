@@ -281,5 +281,10 @@ export async function runWorker(deps, { maxJobs = 10, followUps = true, reminder
   if (reminders && f.whatsapp_outbound && deps.wa) {
     try { out.reminders = await processReminders(deps, settings); } catch (e) { out.errors.push(String(e?.message || e)); }
   }
+  // retention (privacy policy §6): once a day at 03:00 Malaysia time — the scheduled run at minute 0 or 1
+  const t = deps.now();
+  if (reminders && t.getUTCHours() === 19 && t.getUTCMinutes() < 2) {
+    try { out.purged = await db.rpc("ai_purge_expired", {}); } catch (e) { out.errors.push("purge: " + (e?.message || e)); }
+  }
   return out;
 }
