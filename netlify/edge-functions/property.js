@@ -4,7 +4,7 @@
 const SB_URL = "https://deethrwnmyezwsohmhzl.supabase.co";
 const SB_KEY = "sb_publishable_gaiT2UF6vtI42BbYH1egKg_T_yLT83g";
 const SITE = "https://onestopcentreproperty.com/";
-const OG_DEFAULT = SITE + "og-default.jpg?v=3", OG_MS = SITE + "og-default-ms.jpg?v=3";
+const OG_DEFAULT = SITE + "og-home-2026.jpg", OG_MS = SITE + "og-home-2026-ms.jpg";
 // Retired property addresses → the listing that replaced them (permanent 301, keeps shared links and Google ranking)
 const MOVED = { "m-mira-wangsa-maju": "m-mira-wangsa-maju-2" };
 
@@ -50,14 +50,14 @@ function kit(P, S, LANG) {
   const auto=clean(p.n)+': '+bits+'. '+more+(hl?'. '+hl:'')+(MS?'. Bandingkan pelan, harga dan yuran penyelenggaraan.':'. Compare layouts, prices and maintenance fees.');
   return cut(own?own.replace(/[.\s]*$/,'.')+' '+auto:auto,158);
  }
- const siteDesc=()=>{const dv=new Set(P.map(p=>clean(p.d)).filter(Boolean)).size,ar=new Set(P.map(p=>clean(p.l)).filter(Boolean)).size,pl=(n,w)=>n+' '+w+(n===1?'':'s');return MS?`Bandingkan ${P.length} rumah baharu & siap di ${ar} kawasan sekitar Lembah Klang daripada ${dv} pemaju. Lihat pelan, saiz, harga dan yuran penyelenggaraan.`:`Compare ${pl(P.length,'new launch & ready home')} in ${pl(ar,'area')} across Klang Valley from ${pl(dv,'developer')}. See layouts, sizes, prices and maintenance fees.`};
+ const siteDesc=()=>MS?'Bandingkan rumah baharu dan siap di seluruh Lembah Klang. Terokai pelan, harga, saiz, yuran penyelenggaraan dan pemaju dipercayai di satu tempat.':'Compare new launch and ready homes across Klang Valley. Explore property layouts, prices, sizes, maintenance fees and trusted developers in one place.';
  /* Visible "All properties" directory: plain links every crawler can follow */
  function dirHtml(pack){
   const list=[...P].sort((a,b)=>clean(a.n).localeCompare(clean(b.n)));
   return `<h2>${MS?'Semua hartanah':'All properties'}</h2><p class="sub">${MS?'Semua projek di One Stop Centre, A hingga Z.':'Every project on One Stop Centre, A to Z.'}</p><ul class="seodir">`+list.map(p=>`<li><a href="${pack?'/'+LP+'property/'+p.slug+'/':'#p='+esc(p.id)}" data-pid="${esc(p.id)}">${ex(p.n)}</a><span>${[ex(p.l),esc(tv(p.t)||tv(p.c)),esc(priceTxt(p))].filter(Boolean).join(' · ')}</span></li>`).join('')+`</ul>`;
  }
  function listLd(base){
-  const g=[...(base?[{"@type":"WebSite","@id":base+'#website',"name":"One Stop Centre Property Lists","alternateName":"One Stop Centre","url":base+LP,"inLanguage":MS?"ms-MY":"en-MY"}]:[]),{"@type":"RealEstateAgent",...(base?{"@id":base+'#agent',"logo":base+'icon-512.png',"image":base+'og-default.jpg'}:{}),"name":"One Stop Centre Property Lists","description":siteDesc(),...(base?{"url":base}:{}),...(S.email?{"email":S.email}:{}),...(S.wa?{"telephone":'+'+S.wa.replace(/\D/g,'')}:{}),"areaServed":"Klang Valley, Malaysia"},
+  const g=[...(base?[{"@type":"WebSite","@id":base+'#website',"name":"One Stop Centre Property Lists","alternateName":"One Stop Centre","url":base+LP,"inLanguage":MS?"ms-MY":"en-MY"}]:[]),{"@type":"RealEstateAgent",...(base?{"@id":base+'#agent',"logo":base+'icon-512.png',"image":base+'og-home-2026.jpg'}:{}),"name":"One Stop Centre Property Lists","description":siteDesc(),...(base?{"url":base}:{}),...(S.email?{"email":S.email}:{}),...(S.wa?{"telephone":'+'+S.wa.replace(/\D/g,'')}:{}),"areaServed":"Klang Valley, Malaysia"},
    {"@type":"ItemList","name":"Property listings","numberOfItems":P.length,"itemListElement":P.map((p,i)=>({"@type":"ListItem","position":i+1,"name":clean(p.n),...(base?{"url":base+LP+'property/'+p.slug+'/'}:{})}))}];
   return JSON.stringify({"@context":"https://schema.org","@graph":g}).replace(/</g,'\\u003c');
  }
@@ -259,7 +259,7 @@ export default async (request, context) => {
              .replace(/(<script type="application\/ld\+json" id="seo-ld">)[\s\S]*?(<\/script>)/, (m, x, y) => x + K.listLd(SITE).replace(/</g, "\\u003c") + y);
   const ALT = `<link rel="alternate" hreflang="en-MY" href="${SITE}"><link rel="alternate" hreflang="ms-MY" href="${SITE}ms/"><link rel="alternate" hreflang="x-default" href="${SITE}">`;
   if (ms && !PROP) {
-    const t = "Rumah Baharu &amp; Siap di Lembah Klang | One Stop Centre";
+    const t = "OneStopCentreProperty.com | Rumah Baharu &amp; Siap di Lembah Klang";
     html = html.replace(/<html lang="[^"]*"/, '<html lang="ms-MY" data-lang="ms"')
                .replace(/<title>[^<]*<\/title>/, "<title>" + t + "</title>")
                .replace(/(<meta property="og:title" content=")[^"]*(")/, (m, a, b) => a + t + b)
@@ -267,7 +267,7 @@ export default async (request, context) => {
                .replace(/(<link rel="canonical" href=")[^"]*(")/, (m, a, b) => a + SITE + "ms/" + b)
                .replace(/(<meta property="og:url" content=")[^"]*(")/, (m, a, b) => a + SITE + "ms/" + b)
                .replace(/(<meta property="og:locale" content=")[^"]*(")/, (m, a, b) => a + "ms_MY" + b)
-               .replace(/(<meta property="og:image" content=")[^"]*(")/, (m, a, b) => a + OG_MS + b)
+               .replace(/(<meta property="og:image" content=")[^"]*(")/, (m, a, b) => a + OG_MS + b).replace(/(<meta property="og:image:secure_url" content=")[^"]*(")/, (m, a, b) => a + OG_MS + b).replace(/(<meta property="og:image:alt" content=")[^"]*(")/, (m, a, b) => a + "OneStopCentreProperty.com – Cari rumah seterusnya di Lembah Klang" + b).replace(/(<meta name="twitter:image:alt" content=")[^"]*(")/, (m, a, b) => a + "OneStopCentreProperty.com – Cari rumah seterusnya di Lembah Klang" + b)
                .replace(/(<meta name="twitter:image" content=")[^"]*(")/, (m, a, b) => a + OG_MS + b)
                .replace(/<span class="eyebrow">Klang Valley · New launches &amp; ready homes<\/span><span class="h1t">Find the home that fits <em>your life\.<\/em><\/span>/, '<span class="eyebrow">Lembah Klang · Projek baharu &amp; rumah siap</span><span class="h1t">Cari rumah yang sesuai dengan <em>gaya hidup anda.</em></span>');
   }
