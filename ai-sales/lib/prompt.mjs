@@ -41,11 +41,12 @@ export const REPLY_SCHEMA = {
       },
     },
     appointment_request: {
-      type: "object", additionalProperties: false, required: ["wanted", "kind", "preferred_text", "project_id"],
+      type: "object", additionalProperties: false, required: ["wanted", "kind", "preferred_text", "project_id", "slot_id"],
       properties: {
         wanted: bool,
         kind: enumOf("", "showroom_visit", "property_viewing", "phone_call", "video_call", "financing_discussion"),
         preferred_text: str, project_id: str,
+        slot_id: { ...str, description: "id of the available_slots entry the buyer clearly chose, otherwise \"\"." },
       },
     },
     handover: {
@@ -71,7 +72,7 @@ export function normalizeReply(d) {
   };
 }
 
-export function buildSystemPrompt(settings = {}, objections = []) {
+export function buildSystemPrompt(settings = {}, objections = [], { calendar = false } = {}) {
   const p = settings.persona || {}, ai = settings.ai || {}, c = settings.compliance || {};
   const manglish = p.allow_manglish !== false;
   return `You are ${p.name || "OSC Property Assistant"}, the AI property assistant of One Stop Centre (onestopcentreproperty.com), a Malaysian real estate agency selling new-launch and completed homes in the Klang Valley. You talk to buyers on WhatsApp on behalf of the agency's human property advisors.
@@ -103,7 +104,10 @@ Recommendations and objections
 ${objections.map((o) => `  • ${o.key}${o.escalate ? " [escalate to a human]" : ""}: e.g. ${(o.examples || []).map((x) => `"${x}"`).join(", ")} — ${o.guidance_en}`).join("\n") || "  (none configured)"}
 
 Appointments
-- You can collect a preferred day and time for a showroom visit, viewing, phone/video call or financing discussion (appointment_request). Calendar booking is not connected yet, so never say an appointment is booked or confirmed: say an advisor will confirm the slot.
+${calendar
+    ? `- available_slots in the context are free times checked on the agency calendar just now. When a buyer wants a showroom visit, viewing or call, offer two or three of them that suit what they said (use the slot labels).
+- When the buyer clearly picks one of those slots, set appointment_request.wanted = true and slot_id to that slot's id. Never say the appointment is booked or confirmed yourself: say you are booking it now and a confirmation message will follow. Never offer or accept a time that is not in available_slots; for other times, note their preference in preferred_text and say an advisor will confirm.`
+    : "- You can collect a preferred day and time for a showroom visit, viewing, phone/video call or financing discussion (appointment_request). Calendar booking is not connected, so never say an appointment is booked or confirmed: say an advisor will confirm the slot."}
 
 Hand over to a human (handover.needed = true) when:
 - the buyer asks for a person; is ready to book, pay or sign; asks for a special price, extra discount or negotiation; asks legal, tax or contract (SPA) questions; complains or is upset; needs a professional financing assessment; the context is missing or conflicting on what they asked; you are not confident; or anything sensitive or unusual comes up.
@@ -139,12 +143,13 @@ export function renderContext(ctx) {
     })),
     active_promotions: ctx.promotions.map((x) => ({ key: `promo:${x.id}`, project_id: x.project_id || "all", title: x.title, details: x.details, conditions: x.conditions, valid_to: x.valid_to, label: "VERIFIED" })),
     knowledge: ctx.knowledge.map((k) => ({ key: `kb:${k.id}`, kind: k.kind, project_id: k.project_id, title: k.title, content: k.content, label: "VERIFIED" })),
+    ...(ctx.slots ? { available_slots: ctx.slots.map((x) => ({ id: x.id, label: ctx.buyer?.preferred_language === "en" ? x.label_en : x.label_ms, label_en: x.label_en, status: "FREE (VERIFIED)" })) } : {}),
   };
   return `<verified_context>\n${JSON.stringify(payload)}\n</verified_context>`;
 }
 
 /** Converts stored history into alternating user/assistant turns and appends context + the new message. */
-export function buildMessages(history, contextText, message, validationFeedback) {
+export function buildMessages(history, contextText, message, validationFeedback, { task = null } = {}) {
   const turns = [];
   for (const h of history || []) {
     const role = h.role === "assistant" ? "assistant" : "user";
@@ -154,7 +159,9 @@ export function buildMessages(history, contextText, message, validationFeedback)
     else turns.push({ role, content: text });
   }
   if (turns.length && turns[0].role === "assistant") turns.unshift({ role: "user", content: "(conversation started by the agency)" });
-  const last = [contextText, `<buyer_message>\n${message}\n</buyer_message>`];
+  const last = [contextText, task
+    ? `<follow_up_task>\nThe buyer has not written since your last message. Write one short, friendly WhatsApp follow-up for this step: ${task}\nDo not repeat earlier messages, do not pressure, and keep to verified facts. Leave appointment_request.wanted false and handover.needed false unless the conversation clearly needs a person.\n</follow_up_task>`
+    : `<buyer_message>\n${message}\n</buyer_message>`];
   if (validationFeedback) last.push(`<rejected_draft_feedback>\nYour previous draft was rejected by the business-rule checker:\n${validationFeedback}\nWrite a new reply that fixes every point. If the information is not verified, say an advisor will confirm it instead of stating it.\n</rejected_draft_feedback>`);
   const content = last.join("\n\n");
   if (turns.length && turns[turns.length - 1].role === "user") turns[turns.length - 1].content += "\n\n" + content;

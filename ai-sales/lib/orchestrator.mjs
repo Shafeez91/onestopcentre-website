@@ -64,7 +64,8 @@ export async function respond(p) {
   const model = settings.ai?.model || DEFAULT_MODEL;
   const effort = settings.ai?.effort || "low";
   const threshold = Number(settings.ai?.confidence_threshold ?? 0.7);
-  const system = buildSystemPrompt(settings, ctx.objections);
+  ctx.slots = p.calendar ? (p.slots || []) : null; // free calendar slots, only when calendar booking is on
+  const system = buildSystemPrompt(settings, ctx.objections, { calendar: !!p.calendar });
   const contextText = renderContext(ctx);
 
   // 3) daily cost cap: reserve one AI reply before calling the model (fail closed if usage can't be checked)
@@ -135,9 +136,12 @@ export async function respond(p) {
   }, settings.scoring);
   if (changed.length || ctx.lead) actions.push({ type: "update_qualification", qualification, changed, score: scored.score, temperature: scored.temperature, rationale: scored.rationale });
   if (prefId && ctx.projects.some((x) => x.id === prefId)) actions.push({ type: "add_interest", project_id: prefId });
-  if (wantsAppt && !(ctx.lead?.open_appointments || []).some((a) => a.status === "pending_confirmation")) {
-    actions.push({ type: "request_appointment", kind: data.appointment_request.kind || "showroom_visit", preferred_text: data.appointment_request.preferred_text || null,
-      project_id: ctx.projects.some((x) => x.id === data.appointment_request.project_id) ? data.appointment_request.project_id : (scopeProject?.id || null) });
+  const pending = (ctx.lead?.open_appointments || []).find((a) => a.status === "pending_confirmation");
+  const slot = (ctx.slots || []).find((x) => x.id === data.appointment_request?.slot_id); // only slots we offered count
+  if (wantsAppt && (slot || !pending)) {
+    actions.push({ type: "request_appointment", kind: data.appointment_request.kind || "showroom_visit", preferred_text: data.appointment_request.preferred_text || slot?.label_ms || null,
+      project_id: ctx.projects.some((x) => x.id === data.appointment_request.project_id) ? data.appointment_request.project_id : (scopeProject?.id || null),
+      ...(slot ? { slot_id: slot.id, start_at: slot.start, end_at: slot.end, appointment_id: pending?.id || null } : {}) });
   }
   if (decision !== "reply") actions.push({ type: "cancel_follow_ups", reason: "conversation needs a human" });
 
@@ -170,8 +174,16 @@ export async function applyActions(db, { leadId, contactId, result, conversation
     } else if (a.type === "add_interest") {
       await db.post("ai_lead_interests?on_conflict=lead_id,project_id", { lead_id: leadId, project_id: a.project_id, interest: "interested" }, { prefer: "resolution=ignore-duplicates" });
     } else if (a.type === "request_appointment") {
-      // pending until the calendar (Phase 4) or an advisor confirms; the key stops duplicates from redelivered messages
-      await db.post("ai_appointments?on_conflict=idempotency_key", { lead_id: leadId, kind: a.kind, project_id: a.project_id, preferred_text: a.preferred_text, status: "pending_confirmation", calendar_provider: null, idempotency_key: `ai-request:${leadId}:${runId || Date.now()}`, created_by: "ai" }, { prefer: "resolution=ignore-duplicates" });
+      // stays pending until the calendar booking succeeds or an advisor confirms; the key stops duplicates from redelivered messages
+      const slot = a.start_at ? { start_at: a.start_at, end_at: a.end_at } : {};
+      if (a.appointment_id) {
+        await db.patch(`ai_appointments?id=eq.${encodeURIComponent(a.appointment_id)}&status=eq.pending_confirmation`, { kind: a.kind, preferred_text: a.preferred_text, ...slot });
+        done.appointment = { id: a.appointment_id, slot: !!a.start_at };
+      } else {
+        const key = `ai-request:${leadId}:${runId || Date.now()}`;
+        await db.post("ai_appointments?on_conflict=idempotency_key", { lead_id: leadId, kind: a.kind, project_id: a.project_id, preferred_text: a.preferred_text, status: "pending_confirmation", calendar_provider: null, idempotency_key: key, created_by: "ai", ...slot }, { prefer: "resolution=ignore-duplicates" });
+        done.appointment = { key, slot: !!a.start_at };
+      }
     } else continue;
     done.push(a.type);
   }
@@ -190,4 +202,35 @@ export async function logRun(db, { result, leadId = null, conversationId = null,
     }, { prefer: "return=representation" });
     return Array.isArray(rows) && rows[0] ? rows[0].id : null;
   } catch { return null; }
+}
+
+/**
+ * Writes one AI follow-up for a buyer who has gone quiet (inside the 24-hour window only).
+ * Same context, rules and business-rule checker as replies; returns { reply, model, usage } or { skipped, violations? }.
+ */
+export async function composeFollowUp(p) {
+  const now = p.now || new Date();
+  const history = p.history || [];
+  const ctx = await loadContext(p.db, { leadId: p.leadId, message: p.instruction, history, now });
+  if (ctx.aiPaused) return { skipped: "AI is paused for this lead" };
+  const settings = ctx.settings || {};
+  const model = settings.ai?.model || DEFAULT_MODEL;
+  if (p.reserve) {
+    let quota;
+    try { quota = await p.reserve(); } catch (e) { quota = { allowed: false, error: e?.message || String(e) }; }
+    if (!quota?.allowed) return { skipped: quota?.error ? "AI usage could not be checked" : `daily AI limit (${quota.cap}) reached` };
+  }
+  const system = buildSystemPrompt(settings, ctx.objections);
+  const contextText = renderContext(ctx);
+  let feedback = null, check = null, usage = { input_tokens: 0, output_tokens: 0 }, served = model;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const r = await p.llm({ system, messages: buildMessages(history, contextText, "", feedback, { task: p.instruction }), schema: REPLY_SCHEMA, model, effort: settings.ai?.effort || "low" });
+    const data = normalizeReply(r.data); served = r.model || model;
+    usage.input_tokens += r.usage?.input_tokens || 0; usage.output_tokens += r.usage?.output_tokens || 0;
+    if (data.handover?.needed) return { skipped: "the AI judged that a person should follow up", usage, model: served };
+    check = validateReply(data.reply, ctx.rules);
+    if (check.ok) return { reply: data.reply, language: data.language, usage, model: served };
+    feedback = summariseViolations(check.violations);
+  }
+  return { skipped: "the follow-up draft failed the business-rule check", violations: check?.violations || [], usage, model: served };
 }

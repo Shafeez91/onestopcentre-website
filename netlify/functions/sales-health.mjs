@@ -11,6 +11,7 @@ const CONFIG_KEYS = {
   whatsapp_verify_token: "WHATSAPP_VERIFY_TOKEN",
   google_calendar_id: "GOOGLE_CALENDAR_ID",
   google_service_account: "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+  google_private_key: "GOOGLE_PRIVATE_KEY",
 };
 
 export default async (req) => {

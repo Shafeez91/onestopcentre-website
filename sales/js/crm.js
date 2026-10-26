@@ -377,12 +377,40 @@ export async function appointments(el, params) {
   if (scope === "upcoming") query = query.in("status", ["pending_confirmation", "confirmed", "rescheduled"]).order("start_at", { nullsFirst: true });
   else query = query.order("created_at", { ascending: false });
   const rows = (await q(query)) || [];
+  const adv = can("advisor");
   el.innerHTML = `<div class="page-head"><h1>Appointments</h1><div class="seg"><a class="${scope === "upcoming" ? "on" : ""}" href="#/appointments?scope=upcoming">Upcoming &amp; pending</a><a class="${scope === "all" ? "on" : ""}" href="#/appointments?scope=all">All</a></div></div>
-  <div class="card notice"><div>${flag("calendar_booking") ? "Calendar booking is switched on." : "Calendar integration is not connected yet (Phase 4)."} AI-requested slots stay <b>pending confirmation</b> until the calendar confirms them.</div></div>
-  ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Type</th><th>Buyer</th><th>Project</th><th>Advisor</th><th>Status</th></tr></thead><tbody>
+  <div class="card notice"><div>${flag("calendar_booking") ? "<b>Calendar booking is on.</b> The AI offers free Google Calendar slots and books the one the buyer picks; the buyer gets a confirmation only after the event exists." : "AI-requested slots stay <b>pending confirmation</b> until you confirm them here."} Confirming creates the Google Calendar event when the calendar is connected (Integrations).</div></div>
+  ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Type</th><th>Buyer</th><th>Project</th><th>Advisor</th><th>Status</th><th></th></tr></thead><tbody>
   ${rows.map((a) => `<tr><td data-label="When">${a.start_at ? esc(fmtDate(a.start_at)) : `<i>Preferred: ${esc(a.preferred_text || "—")}</i>`}</td><td data-label="Type">${esc(kindLabel(a.kind))}</td>
     <td data-label="Buyer"><a href="#/lead/${attr(a.lead?.id)}">${esc(contactName(a.lead?.contact))}</a><small>${esc(a.lead?.lead_code || "")}</small></td><td data-label="Project">${esc(projectName(a.project_id)) || "—"}</td>
-    <td data-label="Advisor">${esc(a.advisor_email || "—")}</td><td data-label="Status">${apptBadge(a.status)}</td></tr>`).join("")}</tbody></table></div>` : empty("No appointments.")}`;
+    <td data-label="Advisor">${esc(a.advisor_email || "—")}</td><td data-label="Status">${apptBadge(a.status)}${a.calendar_event_id ? `<small>On Google Calendar</small>` : ""}${a.notes ? `<small>${esc(a.notes)}</small>` : ""}</td>
+    <td>${adv && ["pending_confirmation", "rescheduled"].includes(a.status) && !a.calendar_event_id ? `<button class="btn" data-confirm="${attr(a.id)}">Confirm…</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : empty("No appointments.")}`;
+  $$("[data-confirm]", el).forEach((b) => b.onclick = () => confirmAppointment(rows.find((a) => a.id === b.dataset.confirm), () => appointments(el, params)));
+}
+
+function confirmAppointment(a, done) {
+  const ap = S.settings?.business?.appointments || {};
+  const dlg = modal("Confirm appointment", `<form id="fc" class="form two">
+    <p class="note full">${esc(kindLabel(a.kind))} · ${esc(contactName(a.lead?.contact))}${a.preferred_text ? ` · buyer asked for <i>${esc(a.preferred_text)}</i>` : ""}</p>
+    <label>Date and time<input name="start" type="datetime-local" required value="${attr(toLocalInput(a.start_at))}"></label>
+    <label>Duration (minutes)<input name="duration_minutes" type="number" min="15" max="480" step="15" value="${attr(ap.duration_minutes || 60)}"></label>
+    <label class="full">Location<input name="location" maxlength="300" value="${attr(a.location || ap.location || "")}" placeholder="e.g. M MIRA sales gallery, Jalan …"></label>
+    <label>Advisor<select name="advisor_email">${teamOptions(a.advisor_email || S.email)}</select></label>
+    <label class="check"><input type="checkbox" name="notify_buyer" checked> Send the buyer a WhatsApp confirmation</label>
+    <div class="full"><button type="button" class="btn" id="slots" data-busy="Checking calendar…">Show free calendar slots</button><div class="samples" id="slotlist"></div></div>
+    <div class="actions full"><button class="btn pri" type="submit" data-busy="Confirming…">Confirm appointment</button></div></form>`, { wide: true });
+  const f = $("#fc", dlg);
+  $("#slots", dlg).onclick = (e) => act(e.currentTarget, async () => {
+    const { slots } = await api("/api/sales/appointments/slots");
+    $("#slotlist", dlg).innerHTML = slots.length ? slots.map((x) => `<button type="button" class="chip" data-start="${attr(x.start)}">${esc(x.label_en)}</button>`).join("") : `<span class="note">No free slots in the coming days.</span>`;
+    $$("[data-start]", dlg).forEach((c) => c.onclick = () => { f.start.value = toLocalInput(c.dataset.start); });
+  });
+  f.onsubmit = (e) => { e.preventDefault(); const v = formData(f);
+    act(f.querySelector("button[type=submit]"), async () => {
+      const r = await api("/api/sales/appointments/confirm", { method: "POST", body: JSON.stringify({ appointment_id: a.id, start_at: fromLocalInput(v.start), duration_minutes: v.duration_minutes, location: v.location || "", advisor_email: v.advisor_email, notify_buyer: v.notify_buyer }) });
+      dlg.done(); done();
+      toast(`Confirmed${r.calendar ? " and added to Google Calendar" : " (Google Calendar is not connected, so no calendar event was created)"}.${v.notify_buyer ? (r.buyer_notified ? " The buyer was sent a WhatsApp confirmation." : ` Buyer not messaged: ${r.note || "not possible"}`) : ""}`, r.buyer_notified || !v.notify_buyer ? "ok" : "warn");
+    }); };
 }
 
 /* ======================= Handover queue ======================= */
@@ -407,11 +435,54 @@ export async function handover(el) {
 }
 
 /* ======================= Inbox ======================= */
-export async function inbox(el) {
-  const rows = (await q(SB.from("ai_conversations").select("*, contact:ai_contacts(full_name,phone_e164)").eq("status", "open").order("last_inbound_at", { ascending: false, nullsFirst: false }).limit(200))) || [];
-  el.innerHTML = `<div class="page-head"><h1>WhatsApp inbox</h1></div>
-  <div class="card notice"><div><b>WhatsApp is not connected yet.</b> The official WhatsApp Business Platform connection, live inbox, manual replies and AI takeover controls arrive in Phases 4–5. Conversations will appear here automatically once connected.</div></div>
-  ${rows.length ? `<ul class="list card">${rows.map((c) => `<li><b>${esc(contactName(c.contact))}</b> ${badge(c.mode)} ${c.unread_count ? badge(c.unread_count + " unread", "alert") : ""}<small>${esc(ago(c.last_inbound_at))}</small></li>`).join("")}</ul>` : ""}`;
+const TICK = { queued: ["…", "Sending"], sent: ["✓", "Sent"], delivered: ["✓✓", "Delivered"], read: ["✓✓", "Read"], failed: ["⚠", "Not delivered"], received: ["", ""], skipped: ["–", "Skipped"] };
+const WINDOW_MS = 24 * 3600e3 - 60e3;
+const SENDER = (m) => (m.direction === "inbound" ? "" : m.sender_type === "ai" ? "AI assistant" : m.sender_type === "system" ? "Automatic" : m.sender_email || "Staff");
+
+export async function inbox(el, params) {
+  const sel = params?.get("c") || "";
+  const rows = (await q(SB.from("ai_conversations").select("*, contact:ai_contacts(full_name,phone_e164,wa_id), lead:ai_leads(id,lead_code,ai_paused)").eq("status", "open").order("last_inbound_at", { ascending: false, nullsFirst: false }).limit(200))) || [];
+  const on = flag("whatsapp_outbound");
+  el.innerHTML = `<div class="page-head"><h1>WhatsApp inbox</h1><p class="sub">${rows.length} open conversation${rows.length === 1 ? "" : "s"}</p></div>
+  ${on ? "" : `<div class="card notice"><div><b>WhatsApp sending is off.</b> Messages from buyers still arrive here once WhatsApp is connected (Integrations), but nothing is sent until an owner switches on "WhatsApp sending" in Settings → Feature switches.</div></div>`}
+  <div class="inbox${sel ? " has-thread" : ""}"><ul class="conv-list card">${rows.length ? rows.map((c) => `<li class="${c.id === sel ? "on" : ""}"><a href="#/inbox?c=${attr(c.id)}"><b>${esc(contactName(c.contact))}</b>
+      ${c.mode === "ai" && !c.lead?.ai_paused ? badge("AI", "ok") : badge("Human")} ${c.unread_count ? badge(String(c.unread_count), "alert") : ""}<small>${esc(c.lead?.lead_code || "")} · ${esc(ago(c.last_inbound_at || c.created_at))}</small></a></li>`).join("") : `<li>${empty("No WhatsApp conversations yet.")}</li>`}</ul>
+    <section class="thread card" id="thread">${sel ? "" : `<p class="note">Choose a conversation.</p>`}</section></div>`;
+  if (sel) await thread($("#thread", el), rows.find((c) => c.id === sel), () => inbox(el, params));
+}
+
+async function thread(box, c, reload) {
+  if (!c) { box.innerHTML = empty("Conversation not found or closed."); return; }
+  const msgs = (await q(SB.from("ai_messages").select("id,direction,sender_type,sender_email,body,media,status,status_reason,template_name,created_at").eq("conversation_id", c.id).order("created_at", { ascending: false }).limit(200))) || [];
+  msgs.reverse();
+  const adv = can("advisor");
+  const aiOn = c.mode === "ai" && !c.lead?.ai_paused;
+  const open = c.last_inbound_at && Date.now() - new Date(c.last_inbound_at) < WINDOW_MS;
+  const tpls = adv && !open ? (await q(SB.from("ai_message_templates").select("id,name,lang,category").eq("wa_status", "approved").eq("active", true).not("wa_template_name", "is", null).order("name"))) || [] : [];
+  box.innerHTML = `<div class="ho-h"><div><a class="link back" href="#/inbox">← All</a> <b>${esc(contactName(c.contact))}</b> <small>+${esc(c.contact?.wa_id || c.contact?.phone_e164 || "")}</small>
+      ${c.lead ? `<a href="#/lead/${attr(c.lead.id)}"><small>${esc(c.lead.lead_code)}</small></a>` : ""}</div>
+    <div>${aiOn ? badge("AI is answering", "ok") : badge("A person is handling this chat")} ${adv ? (aiOn ? `<button class="btn" id="take">Take over</button>` : `<button class="btn" id="back">Hand back to AI</button>`) : ""}</div></div>
+    <div class="chat" id="msgs">${msgs.map((m) => `<div class="msg ${m.direction === "inbound" ? "buyer" : "ai"}"><div class="bubble">${esc(m.body || (m.media || []).map((x) => "[" + x.type + "]").join(" ") || "")}</div>
+      <small class="meta">${esc(SENDER(m))}${m.template_name ? " · template " + esc(m.template_name) : ""} · ${esc(fmtDate(m.created_at))}${m.direction === "outbound" ? ` <span class="tick ${esc(m.status)}" title="${attr(TICK[m.status]?.[1] || m.status)}">${esc(TICK[m.status]?.[0] || "")}</span>${m.status === "failed" && m.status_reason ? ` <span class="err">${esc(m.status_reason)}</span>` : ""}` : ""}</small></div>`).join("") || empty("No messages yet.")}</div>
+    ${adv ? (open ? `<form id="reply" class="say"><label class="sr" for="rtext">Reply</label><textarea id="rtext" name="text" rows="2" maxlength="4096" required placeholder="Reply on WhatsApp as ${attr(S.email)}…"></textarea>
+        <label class="check"><input type="checkbox" name="take_over"${aiOn ? " checked" : ""}> Pause the AI for this buyer</label><button class="btn pri" data-busy="Sending…"${on() ? "" : " disabled"}>Send</button></form>`
+      : `<div class="card notice"><div>More than 24 hours since the buyer's last message, so WhatsApp only allows an <b>approved template</b> now.</div></div>
+        ${tpls.length ? `<form id="tform" class="say"><label class="sr" for="tsel">Template</label><select id="tsel" name="template_id">${tpls.map((t) => opt(t.id, `${t.name} (${t.lang.toUpperCase()}, ${t.category})`)).join("")}</select><button class="btn pri" data-busy="Sending…"${on() ? "" : " disabled"}>Send template</button></form>` : `<p class="note">No approved templates yet — add them under Templates &amp; objections once Meta approves them.</p>`}`) : ""}`;
+  const list = $("#msgs", box); list.scrollTop = list.scrollHeight;
+  if (adv && c.unread_count) q(SB.from("ai_conversations").update({ unread_count: 0 }).eq("id", c.id)).catch(() => {});
+  const setMode = (ai) => act(ai ? $("#back", box) : $("#take", box), async () => {
+    await q(SB.from("ai_conversations").update({ mode: ai ? "ai" : "human", assigned_email: ai ? null : S.email }).eq("id", c.id).select("id"), { expectRows: true });
+    if (c.lead) await q(SB.from("ai_leads").update({ ai_paused: !ai, ...(ai ? {} : { owner_email: S.email }) }).eq("id", c.lead.id).select("id"), { expectRows: true });
+    reload();
+  }, ai ? "The AI answers this buyer again." : "You are handling this chat. The AI will not reply.");
+  if ($("#take", box)) $("#take", box).onclick = () => setMode(false);
+  if ($("#back", box)) $("#back", box).onclick = () => setMode(true);
+  const send = (form, payload, msg) => { form.onsubmit = (e) => { e.preventDefault();
+    act(form.querySelector("button"), async () => { await api("/api/sales/whatsapp/send", { method: "POST", body: JSON.stringify({ conversation_id: c.id, ...payload() }) }); reload(); }, msg); }; };
+  if ($("#reply", box)) { const f = $("#reply", box); send(f, () => ({ text: f.text.value, take_over: f.take_over.checked }), "Sent on WhatsApp");
+    f.text.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); f.requestSubmit(); } }); }
+  if ($("#tform", box)) { const f = $("#tform", box); send(f, () => ({ template_id: f.template_id.value, take_over: true }), "Template sent"); }
+  function on() { return flag("whatsapp_outbound"); }
 }
 
 export { contactName, kindLabel, errText, api };
