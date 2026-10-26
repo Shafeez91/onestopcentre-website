@@ -210,3 +210,33 @@ test("WhatsApp connection check: owners only; finds an unlinked account and link
   assert.equal(r.healthy, false);
   assert.match(r.phone.error, /Error validating access token \(401, code 190\)/);
 });
+
+test("WhatsApp connection check: a wrong or empty account ID is replaced by the account that holds the number", async () => {
+  const auth = { authorization: "Bearer tok-own" };
+  route(/debug_token\?input_token=wa-token/, () => Response.json({ data: { granular_scopes: [
+    { scope: "business_management", target_ids: ["999"] },
+    { scope: "whatsapp_business_management", target_ids: ["1110000001", "2220000002"] }, { scope: "whatsapp_business_messaging", target_ids: ["2220000002"] }] } }));
+  route(/850701657747469\/phone_numbers/, () => Response.json({ error: { code: 100, message: "Unsupported get request." } }, { status: 400 }));
+  route(/\/1110000001\/phone_numbers/, () => Response.json({ data: [{ id: "OTHER" }] }));
+  route(/\/2220000002\/phone_numbers/, () => Response.json({ data: [{ id: "PN1", display_phone_number: "+60 18-763 6796" }] }));
+  route(/\/2220000002\/subscribed_apps/, () => Response.json({ data: [{ whatsapp_business_api_data: { id: "1678920390495985", name: "OneStopCentre Sales" } }] }));
+  route(/graph\.facebook\.com\/v23\.0\/PN1\?/, () => Response.json({ display_phone_number: "+60 18-763 6796", status: "CONNECTED" }));
+  route(/\/rest\/v1\/ai_integration_accounts/, () => new Response(null, { status: 204 }));
+  let r = await (await setup(post("/api/sales/whatsapp/setup", { action: "check", waba_id: "850701657747469" }, auth))).json();
+  assert.deepEqual([r.healthy, r.waba_id, r.detected, r.entered_waba_id, r.candidates], [true, "2220000002", true, "850701657747469", ["1110000001", "2220000002"]]);
+  const saved = calls.filter((c) => c.u.includes("ai_integration_accounts") && c.method === "PATCH").at(-1).body;
+  assert.deepEqual([saved.status, saved.config.waba_id], ["healthy", "2220000002"]);
+  r = await (await setup(post("/api/sales/whatsapp/setup", { action: "check" }, auth))).json();
+  assert.deepEqual([r.healthy, r.waba_id, r.detected], [true, "2220000002", true]);
+  // the right ID entered: no lookup needed
+  const before = calls.filter((c) => c.u.includes("debug_token")).length;
+  r = await (await setup(post("/api/sales/whatsapp/setup", { action: "check", waba_id: "2220000002" }, auth))).json();
+  assert.deepEqual([r.healthy, r.detected, calls.filter((c) => c.u.includes("debug_token")).length], [true, false, before]);
+  // nothing reachable: a clear 404
+  routes = [];
+  route(/debug_token/, () => Response.json({ data: { granular_scopes: [{ scope: "whatsapp_business_management", target_ids: ["1110000001"] }] } }));
+  route(/\/1110000001\/phone_numbers/, () => Response.json({ data: [] }));
+  const res = await setup(post("/api/sales/whatsapp/setup", { action: "check" }, auth));
+  assert.equal(res.status, 404);
+  assert.deepEqual((await res.json()).candidates, ["1110000001"]);
+});
