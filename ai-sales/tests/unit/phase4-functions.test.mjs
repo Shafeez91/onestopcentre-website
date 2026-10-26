@@ -6,10 +6,11 @@ import webhook, { config as webhookConfig } from "../../../netlify/functions/sal
 import send, { config as sendConfig } from "../../../netlify/functions/sales-whatsapp-send.mjs";
 import appointments, { config as apptConfig } from "../../../netlify/functions/sales-appointments.mjs";
 import { config as workerConfig } from "../../../netlify/functions/sales-worker.mjs";
+import setup, { config as setupConfig } from "../../../netlify/functions/sales-whatsapp-setup.mjs";
 
 const realFetch = globalThis.fetch;
 let calls, envBackup, routes;
-const USERS = { "tok-adv": ["adv@test.local", "advisor"], "tok-view": ["view@test.local", "viewer"] };
+const USERS = { "tok-adv": ["adv@test.local", "advisor"], "tok-view": ["view@test.local", "viewer"], "tok-own": ["own@test.local", "owner"] };
 const FLAGS = { module_enabled: true, whatsapp_outbound: true };
 
 beforeEach(() => {
@@ -181,4 +182,31 @@ test("calendar key from Supabase Vault when GOOGLE_PRIVATE_KEY is not in Netlify
   assert.ok(slots.length > 0);
   await cal.slots({ business: { hours } }, new Date("2026-10-28T03:00:00Z"));
   assert.deepEqual(rpcs, [["ai_vault_secret", { p_name: "google_private_key" }]], "read once");
+});
+
+test("WhatsApp connection check: owners only; finds an unlinked account and links it", async () => {
+  assert.equal(setupConfig.path, "/api/sales/whatsapp/setup");
+  const auth = (t) => ({ authorization: "Bearer " + t });
+  assert.equal((await setup(post("/api/sales/whatsapp/setup", { action: "check", waba_id: "850701657747469" }, auth("tok-adv")))).status, 403);
+  assert.equal((await setup(post("/api/sales/whatsapp/setup", { action: "check", waba_id: "abc" }, auth("tok-own")))).status, 400);
+  let linked = false;
+  route(/graph\.facebook\.com\/v23\.0\/PN1\?/, () => Response.json({ display_phone_number: "+60 18-763 6796", verified_name: "Hafizan Hanis", status: "CONNECTED", platform_type: "CLOUD_API" }));
+  route(/850701657747469\/phone_numbers/, () => Response.json({ data: [{ id: "PN1", display_phone_number: "+60 18-763 6796" }] }));
+  route(/850701657747469\/subscribed_apps/, (u, i) => { if (i.method === "POST") { linked = true; return Response.json({ success: true }); }
+    return Response.json({ data: linked ? [{ whatsapp_business_api_data: { id: "1678920390495985", name: "OneStopCentre Sales" } }] : [] }); });
+  route(/\/rest\/v1\/ai_integration_accounts/, () => new Response(null, { status: 204 }));
+  let r = await (await setup(post("/api/sales/whatsapp/setup", { action: "check", waba_id: "850701657747469" }, auth("tok-own")))).json();
+  assert.deepEqual([r.healthy, r.phone_in_account, r.subscribed_apps.length, r.phone.status], [false, true, 0, "CONNECTED"]);
+  const saved = calls.find((c) => c.u.includes("ai_integration_accounts") && c.method === "PATCH").body;
+  assert.deepEqual([saved.status, saved.config.waba_id], ["error", "850701657747469"]);
+  r = await (await setup(post("/api/sales/whatsapp/setup", { action: "subscribe", waba_id: "850701657747469" }, auth("tok-own")))).json();
+  assert.deepEqual([r.healthy, r.linked.ok, r.subscribed_apps[0].name], [true, true, "OneStopCentre Sales"]);
+  assert.ok(calls.some((c) => c.u.endsWith("850701657747469/subscribed_apps") && c.method === "POST" && c.tok === "wa-token"));
+  // an expired token is reported, not hidden
+  routes = [];
+  route(/graph\.facebook\.com/, () => Response.json({ error: { code: 190, message: "Error validating access token" } }, { status: 401 }));
+  route(/\/rest\/v1\/ai_integration_accounts/, () => new Response(null, { status: 204 }));
+  r = await (await setup(post("/api/sales/whatsapp/setup", { action: "check", waba_id: "850701657747469" }, auth("tok-own")))).json();
+  assert.equal(r.healthy, false);
+  assert.match(r.phone.error, /Error validating access token \(401, code 190\)/);
 });

@@ -75,7 +75,8 @@ You need: a Meta Business account (verified for higher limits) and a phone numbe
 6. Meta → WhatsApp → Configuration → **Webhook**: Callback URL `https://onestopcentreproperty.com/api/sales/whatsapp/webhook`, Verify token = your `WHATSAPP_VERIFY_TOKEN` → Verify and save → subscribe to the **messages** and **smb_message_echoes** fields.
 
 **Number also used in the WhatsApp Business app (coexistence)** — the live setup: +60 18-763 6796 stays in the app on the phone and is connected to the platform. Open the app at least once every 14 days or Meta pauses the connection. Replies sent from the phone arrive as `smb_message_echoes`: they appear in the `/sales/` inbox as "Sent from the WhatsApp app", and the AI and follow-ups stop for that buyer until someone presses *Hand back to AI*.
-7. Send a WhatsApp message to the number from your own phone. It appears in `/sales/` → WhatsApp inbox, and (with *AI auto-reply* still off) you get a Telegram alert.
+7. `/sales/` → Integrations → **Check the WhatsApp connection** with the WhatsApp Business Account ID (Meta → API Setup → "Messaging account ID"). If "Account linked to an app" shows **No**, press **Link WhatsApp account to the app**: Meta only forwards messages for accounts linked (subscribed) to the app, and a number connected through the WhatsApp Business app may not be linked automatically.
+8. Send a WhatsApp message to the number from your own phone. It appears in `/sales/` → WhatsApp inbox, and (with *AI auto-reply* still off) you get a Telegram alert.
 
 ### 7c. Message templates (needed outside the 24-hour window)
 WhatsApp allows free text only within 24 hours of the buyer's last message. After that, only templates approved by Meta (WhatsApp Manager → Message templates) can be sent. Create them there, then record each in `/sales/` → Templates & objections → Message templates with the exact Meta name, language, variables and status *approved*. Used automatically:

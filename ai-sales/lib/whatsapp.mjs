@@ -121,3 +121,17 @@ export async function sendWhatsApp(cfg, to, msg, { fetchImpl = fetch } = {}) {
   if (!id) throw new WhatsAppError("WhatsApp returned no message id", { kind: "rejected" });
   return id;
 }
+
+/** Graph API call with the WhatsApp token (setup checks). Returns parsed JSON or throws WhatsAppError. */
+export async function graph(cfg, method, path, { fetchImpl = fetch } = {}) {
+  if (!cfg) throw new WhatsAppError("WhatsApp is not configured.", { kind: "config" });
+  let r;
+  try { r = await fetchImpl(`https://graph.facebook.com/${cfg.version}/${path}`, { method, headers: { authorization: "Bearer " + cfg.token } }); }
+  catch (e) { throw new WhatsAppError("Meta could not be reached: " + (e?.message || e), { kind: "network" }); }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = d?.error || {};
+    throw new WhatsAppError(`${e.message || "Meta refused the request"} (${r.status}${e.code ? ", code " + e.code : ""})`, { code: e.code ?? null, status: r.status, kind: e.code === 190 || r.status === 401 ? "config" : "rejected" });
+  }
+  return d;
+}
