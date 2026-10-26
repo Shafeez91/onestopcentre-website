@@ -25,3 +25,15 @@ create table storage.buckets (id text primary key, name text, public boolean def
 create table storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text references storage.buckets(id), name text, owner uuid);
 alter table storage.objects enable row level security;
 grant all on storage.objects, storage.buckets to anon, authenticated, service_role;
+
+-- pg_net stand-in: records outgoing HTTP calls instead of sending them
+create schema net;
+create table net.calls (id bigserial primary key, url text, body jsonb, headers jsonb, at timestamptz default now());
+create table net._http_response (id bigint primary key, status_code int, content text, error_msg text, created timestamptz default now());
+create function net.http_post(url text, body jsonb default '{}', params jsonb default '{}', headers jsonb default '{}', timeout_milliseconds int default 5000)
+returns bigint language sql as $$ insert into net.calls (url, body, headers) values (url, body, headers) returning id $$;
+
+-- Vault stand-in
+create schema vault;
+create table vault.decrypted_secrets (name text primary key, decrypted_secret text);
+insert into vault.decrypted_secrets values ('telegram_bot_token', 'TEST-TOKEN');

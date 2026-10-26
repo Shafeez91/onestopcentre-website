@@ -4,6 +4,7 @@
 Apply, in order, through Supabase → SQL editor (or the Supabase MCP / CLI):
 1. `ai-sales/supabase/migrations/20261026000001_ai_sales_foundation.sql`
 2. `ai-sales/supabase/migrations/20261026000002_ai_sales_seed_content.sql`
+3. `ai-sales/supabase/migrations/20261026000003_ai_sales_telegram_reminders.sql` — Telegram staff notifications. Enables Supabase's `pg_cron` extension and schedules `ai_run_reminders()` every 5 minutes (job name `ai-sales-reminders`).
 
 Both are additive: they only create `ai_*` tables/functions/views, the private `ai-docs` bucket and its four storage policies. They do not touch `projects`, `settings`, `leads`, `admins`, the `photos` bucket or any existing function/trigger. Verified on a local replica by `ai-sales/tests/db/run-db-tests.sh` (20 tests).
 
@@ -30,6 +31,15 @@ Go to `https://onestopcentreproperty.com/sales/` and sign in with your existing 
 2. Property projects → add verified facts, units, prices and promotions per project.
 3. Knowledge base → upload brochures / price lists, review and approve extracted entries.
 4. Team → add advisors.
+
+## 4b. Telegram notifications
+Staff-only messages through the existing Telegram bot (token already in Supabase Vault as `telegram_bot_token`, chat `8821015679` by default — change it in `/sales/` → Settings → Telegram notifications):
+- **Appointment alerts** instantly on request, confirmation, reschedule, cancellation, no-show.
+- **Appointment reminders** 24 h and 2 h before (configurable); pending appointments are flagged "STILL PENDING CONFIRMATION".
+- **Follow-up reminders** for open tasks with a due time (30 min before by default), plus follow-up sequence steps due while automatic sending is off.
+- **Daily digest** at 8 am Malaysia time.
+Every message is sent once (dedupe key), logged in `ai_notifications` with Telegram's HTTP status, and never blocks saving data. Turn it off with the master switch, or pause the schedule: `select cron.unschedule('ai-sales-reminders');`.
+Note: messages contain buyer names and phone numbers — keep the chat private or staff-only.
 
 ## 5. Switching the module off
 - Instantly, for staff: `/sales/` → Settings → Feature switches → untick *AI Sales module* (owners still get in).

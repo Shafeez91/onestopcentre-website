@@ -3,6 +3,8 @@
 import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, api, loadLookups, projectName, sourceName } from "./core.js";
 import { DEFAULT_SCORING } from "../shared/scoring.mjs";
 
+const hasDraftChanges = (f) => f.classList.contains("has-draft");
+
 const FLAGS = [
   ["module_enabled", "AI Sales module", "Turns the whole /sales/ workspace on or off for non-owners. The public website is never affected."],
   ["website_lead_import", "Import website enquiries", "Copies enquiries from the website form into the CRM (read-only on the website's own data)."],
@@ -25,7 +27,7 @@ const SAFEGUARDS = [
 export async function settings(el, params) {
   const sub = params.get("tab") || "flags";
   const st = S.settings;
-  const tabs = [["flags", "Feature switches"], ["persona", "AI persona"], ["ai", "AI model & limits"], ["scoring", "Lead scoring"], ["business", "Business hours & rules"], ["compliance", "Compliance"]];
+  const tabs = [["flags", "Feature switches"], ["persona", "AI persona"], ["ai", "AI model & limits"], ["scoring", "Lead scoring"], ["business", "Business hours & rules"], ["notifications", "Telegram notifications"], ["compliance", "Compliance"]];
   const own = can("owner");
   el.innerHTML = `<div class="page-head"><h1>AI agent settings</h1>${own ? "" : `<p class="sub">Read-only — only owners can change settings.</p>`}</div>
   <div class="seg">${tabs.map(([k, l]) => `<a class="${sub === k ? "on" : ""}" href="#/settings?tab=${k}">${l}</a>`).join("")}<a href="#/settings/pipeline">Pipeline stages</a></div><div id="sbody" class="card"></div>`;
@@ -104,6 +106,43 @@ export async function settings(el, params) {
       f.onsubmit = (e) => { e.preventDefault(); const v = formData(f); const hours = {};
         for (const d of days) { const o = v["o_" + d], c = v["c_" + d]; if (!!o !== !!c) return toast(`${d.toUpperCase()}: enter both open and close, or neither.`, "err"); if (o && c <= o) return toast(`${d.toUpperCase()}: close must be after open.`, "err"); hours[d] = o ? [o, c] : null; }
         act(f.querySelector("button"), () => save("business", { ...b, timezone: v.timezone || "Asia/Kuala_Lumpur", hours, max_marketing_messages_per_week: v.max_marketing_messages_per_week, inventory_max_age_hours: v.inventory_max_age_hours, price_max_age_days: v.price_max_age_days }, f), "Saved"); }; }
+    return;
+  }
+  if (sub === "notifications") {
+    const n = st.notifications || {};
+    let log = [];
+    if (can("manager")) { try { log = (await q(SB.from("ai_notifications").select("kind,status,error,created_at,message").order("created_at", { ascending: false }).limit(30))) || []; } catch { log = []; } }
+    const KIND = { appointment_change: "Appointment alert", appointment_reminder: "Appointment reminder", task_reminder: "Follow-up reminder", follow_up_due: "Follow-up step due", daily_digest: "Daily digest", test: "Test" };
+    body.innerHTML = `<h2>Telegram notifications</h2>
+      <p class="note">Sent to staff only, through the same Telegram bot that already alerts you about website enquiries. Checked every 5 minutes. Messages include the buyer's name and phone number, so use a private chat or a staff-only group.</p>
+      <form id="sf" class="form two">
+      <label class="switch full"><input type="checkbox" name="telegram_enabled"${n.telegram_enabled ? " checked" : ""}${dis}><span><b>Send Telegram notifications</b><small>Master switch for everything on this page.</small></span></label>
+      <label class="full">Telegram chat ID<input name="telegram_chat_id" value="${attr(n.telegram_chat_id)}" inputmode="numeric" placeholder="e.g. 8821015679, or -100… for a group"${dis}></label>
+      <label class="switch full"><input type="checkbox" name="appointment_changes"${n.appointment_changes ? " checked" : ""}${dis}><span><b>Appointment alerts</b><small>Instantly when an appointment is requested, confirmed, rescheduled, cancelled or a buyer doesn't show up.</small></span></label>
+      <label class="full">Appointment reminders (minutes before, comma-separated)<input name="appointment_reminder_minutes" value="${attr((n.appointment_reminder_minutes || []).join(", "))}" placeholder="1440, 120 = 24 h and 2 h before"${dis}></label>
+      <label class="switch full"><input type="checkbox" name="task_reminders"${n.task_reminders ? " checked" : ""}${dis}><span><b>Follow-up reminders</b><small>For every open follow-up task with a due time (and follow-up sequence steps while automatic sending is off).</small></span></label>
+      <label>Remind this many minutes before a follow-up is due<input name="task_lead_minutes" type="number" min="0" max="1440" value="${attr(n.task_lead_minutes ?? 30)}"${dis}></label><span></span>
+      <label class="switch"><input type="checkbox" name="daily_digest"${n.daily_digest ? " checked" : ""}${dis}><span><b>Daily digest</b><small>Today's appointments, follow-ups due, overdue, hot leads.</small></span></label>
+      <label>Digest time (hour, Malaysia time)<input name="digest_hour" type="number" min="0" max="23" value="${attr(n.digest_hour ?? 8)}"${dis}></label>
+      ${own ? `<div class="actions full"><button class="btn pri" type="submit">Save</button><button class="btn" type="button" id="tgtest" data-busy="Sending…">Send test message</button></div>` : ""}</form>
+      ${can("manager") ? `<h3>Recent notifications</h3>${log.length ? `<ul class="list">${log.map((x) => `<li>${esc(KIND[x.kind] || x.kind)} ${badge(x.status, x.status === "sent" ? "ok" : x.status === "failed" ? "alert" : "warn")}<small>${esc(fmtDate(x.created_at))}${x.error ? " · " + esc(x.error) : ""}</small><details><summary>Message</summary><pre class="content">${esc(x.message)}</pre></details></li>`).join("")}</ul>` : empty("Nothing sent yet.")}` : ""}`;
+    const f = $("#sf", body);
+    if (own) {
+      guardForm(f, "settings:notifications");
+      f.onsubmit = (e) => { e.preventDefault(); const v = formData(f);
+        const mins = String(v.appointment_reminder_minutes || "").split(/[,\s]+/).filter(Boolean).map(Number);
+        if (mins.some((m) => !Number.isInteger(m) || m < 1 || m > 20160)) return toast("Reminder minutes must be whole numbers between 1 and 20160 (14 days).", "err");
+        if (v.telegram_enabled && !/^-?\d{5,20}$/.test(v.telegram_chat_id || "")) return toast("Enter a valid Telegram chat ID (numbers only).", "err");
+        act(f.querySelector("button[type=submit]"), () => save("notifications", { ...n, ...v, appointment_reminder_minutes: [...new Set(mins)].sort((a, b) => b - a), task_lead_minutes: v.task_lead_minutes ?? 30, digest_hour: v.digest_hour ?? 8 }, f), "Notification settings saved");
+      };
+      $("#tgtest", body).onclick = (e) => act(e.currentTarget, async () => {
+        if (hasDraftChanges(f)) throw new Error("Save your changes first, then send the test.");
+        const r = await q(SB.rpc("ai_telegram_test"));
+        if (r.status === "sent") toast("Test message sent — check Telegram. Delivery is confirmed in the log within 5 minutes.");
+        else throw new Error(r.error || (r.queued === false ? "Notifications are switched off." : "Not sent"));
+        settings(el, params);
+      });
+    }
     return;
   }
   const c = st.compliance;

@@ -216,9 +216,9 @@ export async function leadDetail(el, id) {
       ${can("advisor") ? `<form id="fi" class="inline"><select name="project_id" aria-label="Project">${projectOptions("", "Add a project…")}</select><select name="interest" aria-label="Interest">${["enquired", "interested", "shortlisted", "visited", "rejected"].map((x) => opt(x, x)).join("")}</select><button class="btn">Add</button></form>` : ""}
     </section>
 
-    <section class="card"><h2>Tasks</h2>
+    <section class="card"><h2>Follow-ups &amp; tasks</h2><p class="note">Give a task a due time and you get a Telegram reminder before it is due.</p>
       ${(tasks || []).length ? `<ul class="list">${tasks.map((t) => `<li class="${t.status !== "open" ? "done" : ""}">${can("advisor") && t.status === "open" ? `<button class="link" data-done="${attr(t.id)}" aria-label="Mark done">☐</button>` : t.status === "done" ? "☑" : "✕"} ${esc(t.title)}<small class="${t.status === "open" && t.due_at && new Date(t.due_at) < Date.now() ? "late" : ""}">${esc(t.due_at ? fmtDate(t.due_at) : "")}${t.assignee_email ? " · " + esc(t.assignee_email) : ""}</small></li>`).join("")}</ul>` : empty("No tasks.")}
-      ${can("advisor") ? `<form id="ft" class="form two"><label class="full">New task<input name="title" maxlength="200" required placeholder="e.g. Send floor plan Type B"></label><label>Due<input name="due_at" type="datetime-local"></label><label>Assignee<select name="assignee_email">${teamOptions(S.email)}</select></label><div class="actions full"><button class="btn">Add task</button></div></form>` : ""}
+      ${can("advisor") ? `<form id="ft" class="form two"><label class="full">New follow-up / task<input name="title" maxlength="200" required placeholder="e.g. Follow up on Type B floor plan"></label><label>Due<input name="due_at" type="datetime-local"></label><label>Assignee<select name="assignee_email">${teamOptions(S.email)}</select></label><div class="actions full"><button class="btn">Add task</button></div></form>` : ""}
     </section>
 
     <section class="card"><h2>Appointments</h2>

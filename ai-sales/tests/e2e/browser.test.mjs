@@ -56,7 +56,8 @@ function fixtures() {
   return {
     ai_settings: [{ id: 1, flags: { module_enabled: true, website_lead_import: true, ai_auto_reply: false, whatsapp_outbound: false, follow_ups: false, calendar_booking: false },
       persona: { name: "OSC Property Assistant", tone: "Friendly", greeting_en: "Hi", greeting_ms: "Hai", allow_manglish: true }, business: { timezone: "Asia/Kuala_Lumpur", hours: { mon: ["09:00", "18:00"], sun: null }, inventory_max_age_hours: 72, price_max_age_days: 30, max_marketing_messages_per_week: 2 },
-      scoring: { weights: { readiness: 25, budget: 20, suitability: 15, timeline: 15, engagement: 15, financing: 10 }, thresholds: { hot: 70, warm: 45, nurture: 20 } }, ai: { provider: "anthropic", model: "", confidence_threshold: 0.7, max_reply_chars: 700 }, compliance: { pdpa_notice_en: "x", pdpa_notice_ms: "y" } }],
+      scoring: { weights: { readiness: 25, budget: 20, suitability: 15, timeline: 15, engagement: 15, financing: 10 }, thresholds: { hot: 70, warm: 45, nurture: 20 } }, ai: { provider: "anthropic", model: "", confidence_threshold: 0.7, max_reply_chars: 700 }, compliance: { pdpa_notice_en: "x", pdpa_notice_ms: "y" },
+      notifications: { telegram_enabled: true, telegram_chat_id: "123456789", appointment_changes: true, appointment_reminder_minutes: [1440, 120], task_reminders: true, task_lead_minutes: 30, daily_digest: true, digest_hour: 8 } }],
     ai_pipeline_stages: stages,
     ai_lead_sources: [{ id: "src1", name: "Website enquiry form", channel: "website", active: true }],
     ai_campaigns: [], ai_team_members: [{ email: "advisor@test.local", role: "advisor", active: true }],
@@ -71,6 +72,7 @@ function fixtures() {
     ai_follow_up_jobs: [], ai_audit_logs: [{ id: 1, actor: "owner@test.local", action: "update", table_name: "ai_settings", record_id: "1", changes: {}, created_at: NOW }],
     ai_integration_accounts: [{ provider: "anthropic", status: "not_configured" }, { provider: "whatsapp_cloud", status: "not_configured" }],
     leads: [],
+    ai_notifications: [{ kind: "appointment_reminder", status: "sent", error: null, created_at: NOW, message: "⏰ Appointment in 2 hour(s)" }],
   };
 }
 
@@ -99,6 +101,7 @@ async function newPage(viewport, { signedIn = true } = {}) {
       if (rpc[1] === "ai_role") return json("owner");
       if (rpc[1] === "ai_upsert_contact") return json("c2");
       if (rpc[1] === "ai_open_lead") return json("L2");
+      if (rpc[1] === "ai_telegram_test") return json({ queued: true, status: "sent", error: null });
       if (rpc[1] === "ai_import_website_leads") return json({ imported: 0, skipped_no_contact: 0 });
       return json([]);
     }
@@ -119,7 +122,7 @@ async function newPage(viewport, { signedIn = true } = {}) {
 
 const VIEWPORTS = { phone: { width: 390, height: 844 }, ipad: { width: 820, height: 1180 }, desktop: { width: 1366, height: 900 } };
 const SECTIONS = ["overview", "inbox", "leads", "lead/L1", "pipeline", "appointments", "handover", "properties", "property/t1", "knowledge", "knowledge?tab=entries", "knowledge?tab=faqs", "knowledge?tab=search",
-  "templates", "templates?tab=templates", "followups", "campaigns", "reports", "settings", "settings?tab=persona", "settings?tab=scoring", "settings?tab=business", "settings?tab=compliance", "settings/pipeline", "team", "integrations", "audit", "audit?tab=consent", "audit?tab=retention"];
+  "templates", "templates?tab=templates", "followups", "campaigns", "reports", "settings", "settings?tab=persona", "settings?tab=scoring", "settings?tab=business", "settings?tab=compliance", "settings?tab=notifications", "settings/pipeline", "team", "integrations", "audit", "audit?tab=consent", "audit?tab=retention"];
 
 for (const [name, vp] of Object.entries(VIEWPORTS)) {
   test(`every dashboard section renders without errors or horizontal scroll — ${name}`, { skip: skip || (!chromium && "playwright not installed") }, async () => {
@@ -240,5 +243,26 @@ test("existing website homepage still renders listings and the enquiry form stil
       assert.equal(insert.body.name, "Regression Test");
       assert.equal(insert.body.consent, true);
     }
+  } finally { await ctx.close(); }
+});
+
+test("Telegram settings: validates input, saves the reminder timings and sends a test message", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.phone);
+  try {
+    await page.goto(base + "/sales/#/settings?tab=notifications");
+    await page.waitForSelector("#sf input[name=telegram_chat_id]");
+    await page.fill("#sf input[name=appointment_reminder_minutes]", "60, abc");
+    await page.click("#sf button[type=submit]");
+    await page.waitForSelector(".toast.err");
+    await page.fill("#sf input[name=appointment_reminder_minutes]", "120, 1440, 30");
+    await page.click("#sf button[type=submit]");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /saved/.test(t.textContent)));
+    const w = writes.find((x) => x.table === "ai_settings" && x.body && x.body.notifications);
+    assert.deepEqual(w.body.notifications.appointment_reminder_minutes, [1440, 120, 30]);
+    assert.equal(w.body.notifications.telegram_chat_id, "123456789");
+    await page.click("#tgtest");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Test message sent/.test(t.textContent)));
+    assert.ok(writes.some((x) => x.rpc === "ai_telegram_test"));
+    assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });

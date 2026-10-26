@@ -307,4 +307,173 @@ do $$ begin
     'no new triggers on existing tables';
 end $$;
 
+\echo 'T21 Telegram: new appointment sends one alert with buyer, time and link; no duplicates on re-save'
+begin;
+set local role authenticated;
+select public.t_login('advisor@test.local');
+do $$ declare l uuid; ap uuid; begin
+  l := public.ai_open_lead(public.ai_upsert_contact('0123334444', 'Aminah'), null, 't1');
+  insert into public.ai_appointments (lead_id, kind, project_id, status, start_at, advisor_email)
+  values (l, 'showroom_visit', 't1', 'confirmed', now() + interval '3 days', 'advisor@test.local') returning id into ap;
+  update public.ai_appointments set notes = 'bring IC' where id = ap;            -- not a status/time change
+end $$;
+reset role;
+do $$ declare m text; begin
+  assert (select count(*) from net.calls) = 1, 'exactly one Telegram call, got ' || (select count(*) from net.calls);
+  m := (select body ->> 'text' from net.calls);
+  assert m like '%New appointment (confirmed)%' and m like '%Aminah%' and m like '%Test Residence%' and m like '%+60123334444%' and m like '%/sales/#/lead/%', m;
+  assert (select url from net.calls) = 'https://api.telegram.org/botTEST-TOKEN/sendMessage';
+  assert (select body ->> 'chat_id' from net.calls) = '8821015679';
+  assert (select status from public.ai_notifications) = 'sent';
+end $$;
+rollback;
+
+\echo 'T22 Telegram: reschedule and cancellation each alert once'
+begin;
+set local role authenticated;
+select public.t_login('advisor@test.local');
+do $$ declare l uuid; ap uuid; begin
+  l := public.ai_open_lead(public.ai_upsert_contact('0123335555'));
+  insert into public.ai_appointments (lead_id, kind, preferred_text) values (l, 'phone_call', 'Sabtu pagi') returning id into ap;
+  update public.ai_appointments set start_at = now() + interval '2 days', status = 'confirmed' where id = ap;
+  update public.ai_appointments set start_at = now() + interval '4 days', status = 'rescheduled' where id = ap;
+  update public.ai_appointments set status = 'cancelled' where id = ap;
+end $$;
+reset role;
+do $$ begin
+  assert (select count(*) from net.calls) = 4, 'request + confirm + reschedule + cancel, got ' || (select count(*) from net.calls);
+  assert exists (select 1 from net.calls where body ->> 'text' like '%pending confirmation%Preferred: Sabtu pagi (not confirmed)%');
+  assert exists (select 1 from net.calls where body ->> 'text' like '%rescheduled%');
+  assert exists (select 1 from net.calls where body ->> 'text' like '%cancelled%');
+end $$;
+rollback;
+
+\echo 'T23 appointment reminders: 24 h and 2 h before, smallest window only, never twice, none after cancel'
+begin;
+update public.ai_settings set notifications = notifications || '{"appointment_changes": false, "daily_digest": false}';
+do $$ declare l uuid; ap uuid; ap2 uuid; t0 timestamptz := '2026-11-02 02:00+00'; r jsonb; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  l := public.ai_open_lead(public.ai_upsert_contact('0129990000', 'Reminder Test'));
+  insert into public.ai_appointments (lead_id, kind, status, start_at) values (l, 'showroom_visit', 'confirmed', t0 + interval '30 hours') returning id into ap;
+  r := public.ai_run_reminders(t0);                                        -- 30 h before: nothing yet
+  assert (r ->> 'appointment_reminders')::int = 0, r::text;
+  r := public.ai_run_reminders(t0 + interval '7 hours');                  -- 23 h before: 24 h reminder
+  assert (r ->> 'appointment_reminders')::int = 1, r::text;
+  r := public.ai_run_reminders(t0 + interval '7 hours 5 minutes');        -- re-run: no duplicate
+  assert (r ->> 'appointment_reminders')::int = 0, r::text;
+  r := public.ai_run_reminders(t0 + interval '28 hours 30 minutes');      -- 1.5 h before: 2 h reminder
+  assert (r ->> 'appointment_reminders')::int = 1, r::text;
+  assert (select count(*) from net.calls where body ->> 'text' like '%Appointment in 1 day(s)%') = 1;
+  assert (select count(*) from net.calls where body ->> 'text' like '%Appointment in 2 hour(s)%') = 1;
+  -- booked 1 hour ahead: only the 2 h reminder fires, not both
+  insert into public.ai_appointments (lead_id, kind, status, start_at) values (l, 'video_call', 'pending_confirmation', t0 + interval '50 hours') returning id into ap2;
+  r := public.ai_run_reminders(t0 + interval '49 hours');
+  assert (r ->> 'appointment_reminders')::int = 1, r::text;
+  assert exists (select 1 from net.calls where body ->> 'text' like '%2 hour(s) — STILL PENDING CONFIRMATION%');
+  update public.ai_appointments set status = 'cancelled' where id = ap2;
+  perform public.ai_run_reminders(t0 + interval '49 hours 30 minutes');
+  assert (select count(*) from net.calls) = 3, 'nothing for cancelled appointments';
+end $$;
+rollback;
+
+\echo 'T24 follow-up reminders: task due soon is announced once; done/old tasks are not'
+begin;
+update public.ai_settings set notifications = notifications || '{"appointment_changes": false, "daily_digest": false}';
+do $$ declare l uuid; t0 timestamptz := '2026-11-02 02:00+00'; r jsonb; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  l := public.ai_open_lead(public.ai_upsert_contact('0128880000', 'Follow Me'));
+  insert into public.ai_tasks (lead_id, title, due_at, assignee_email) values
+    (l, 'Send floor plan Type B', t0 + interval '20 minutes', 'advisor@test.local'),
+    (l, 'Call back about LPPSA', t0 + interval '3 hours', null),
+    (l, 'Already done', t0 + interval '10 minutes', null),
+    (l, 'Ancient overdue', t0 - interval '3 days', null);
+  update public.ai_tasks set status = 'done' where title = 'Already done';
+  r := public.ai_run_reminders(t0);
+  assert (r ->> 'task_reminders')::int = 1, r::text;
+  assert exists (select 1 from net.calls where body ->> 'text' like '%Follow-up due%Send floor plan Type B%Follow Me%advisor@test.local%');
+  r := public.ai_run_reminders(t0 + interval '1 minute');
+  assert (r ->> 'task_reminders')::int = 0, 'no duplicate';
+  r := public.ai_run_reminders(t0 + interval '2 hours 40 minutes');
+  assert (r ->> 'task_reminders')::int = 1, 'second task when its time comes';
+end $$;
+rollback;
+
+\echo 'T25 follow-up sequence steps due are announced for manual sending while automation is off'
+begin;
+update public.ai_settings set notifications = notifications || '{"appointment_changes": false, "daily_digest": false}';
+do $$ declare l uuid; s uuid; t0 timestamptz := '2026-11-02 02:00+00'; r jsonb; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  l := public.ai_open_lead(public.ai_upsert_contact('0127770000', 'Seq Buyer'));
+  select id into s from public.ai_follow_up_sequences where name = 'New enquiry (example)';
+  insert into public.ai_follow_up_jobs (lead_id, sequence_id, step_index, run_at, idempotency_key) values (l, s, 1, t0, 'k1');
+  r := public.ai_run_reminders(t0);
+  assert (r ->> 'follow_ups_due')::int = 1, r::text;
+  assert exists (select 1 from net.calls where body ->> 'text' like '%send manually%step 2%Share one useful verified fact%');
+  update public.ai_settings set flags = flags || '{"follow_ups": true}';
+  insert into public.ai_follow_up_jobs (lead_id, sequence_id, step_index, run_at, idempotency_key) values (l, s, 2, t0, 'k2');
+  r := public.ai_run_reminders(t0);
+  assert (r ->> 'follow_ups_due')::int = 0, 'engine on: no manual reminder';
+end $$;
+rollback;
+
+\echo 'T26 daily digest: once per Malaysian day, after the configured hour'
+begin;
+update public.ai_settings set notifications = notifications || '{"appointment_changes": false}';
+do $$ declare r jsonb; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_run_reminders('2026-11-02 23:00+00');   -- 07:00 in KL: too early
+  assert (r ->> 'digest')::int = 0, r::text;
+  r := public.ai_run_reminders('2026-11-03 00:05+00');   -- 08:05 in KL
+  assert (r ->> 'digest')::int = 1, r::text;
+  r := public.ai_run_reminders('2026-11-03 05:00+00');   -- later the same day
+  assert (r ->> 'digest')::int = 0, r::text;
+  assert exists (select 1 from net.calls where body ->> 'text' like '%AI Sales — Tue 03 Nov%Appointments today: 0%Overdue follow-ups%');
+end $$;
+rollback;
+
+\echo 'T27 notifications switched off: nothing is sent; missing token is logged as skipped'
+begin;
+update public.ai_settings set notifications = notifications || '{"telegram_enabled": false}';
+set local role authenticated;
+select public.t_login('advisor@test.local');
+do $$ declare l uuid; begin
+  l := public.ai_open_lead(public.ai_upsert_contact('0126660000'));
+  insert into public.ai_appointments (lead_id, kind, status, start_at) values (l, 'phone_call', 'confirmed', now() + interval '1 hour');
+end $$;
+reset role;
+do $$ begin
+  assert (select count(*) from net.calls) = 0;
+  assert (public.ai_run_reminders() ->> 'skipped') = 'telegram disabled';
+end $$;
+update public.ai_settings set notifications = notifications || '{"telegram_enabled": true}';
+delete from vault.decrypted_secrets;
+set local role authenticated;
+select public.t_login('owner@test.local');
+do $$ begin
+  assert (public.ai_telegram_test() ->> 'status') = 'skipped';
+end $$;
+rollback;
+
+\echo 'T28 permissions: staff cannot call the sender or the scheduler; only owners can send a test'
+do $$ begin
+  assert not has_function_privilege('authenticated', 'public.ai_send_telegram(text,text,text,text)', 'execute');
+  assert not has_function_privilege('authenticated', 'public.ai_run_reminders(timestamptz)', 'execute');
+  assert not has_function_privilege('anon', 'public.ai_telegram_test()', 'execute');
+  assert not has_table_privilege('anon', 'public.ai_notifications', 'select');
+end $$;
+begin;
+set local role authenticated;
+select public.t_login('advisor@test.local');
+do $$ begin
+  begin perform public.ai_telegram_test(); assert false, 'advisor sent a test';
+  exception when raise_exception then null; end;
+  assert (select count(*) from public.ai_notifications) = 0, 'advisors cannot read the notification log';
+end $$;
+select public.t_login('owner@test.local');
+do $$ begin
+  assert (public.ai_telegram_test() ->> 'status') = 'sent';
+  assert (select count(*) from public.ai_notifications where kind = 'test') = 1;
+end $$;
+rollback;
+
 \echo 'ALL DB TESTS PASSED'
