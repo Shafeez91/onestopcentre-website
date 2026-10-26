@@ -67,15 +67,25 @@ export async function settings(el, params) {
   }
   if (sub === "ai") {
     const a = st.ai;
-    body.innerHTML = `<h2>AI model &amp; limits</h2><form id="sf" class="form two">
-      <label>Provider<select name="provider"${dis}>${opt("anthropic", "Anthropic Claude", a.provider)}${opt("openai", "OpenAI (adapter planned)", a.provider)}</select></label>
-      <label>Model ID<input name="model" value="${attr(a.model)}" placeholder="Blank = recommended default"${dis}></label>
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
+    const usage = (await q(SB.from("ai_usage_daily").select("ai_messages,capped").eq("day", today).maybeSingle())) || { ai_messages: 0, capped: 0 };
+    const cap = a.daily_message_cap ?? 200;
+    body.innerHTML = `<h2>AI model &amp; limits</h2>
+      <div class="card notice"><div><b>Today: ${usage.ai_messages} of ${cap} AI replies used.</b>${usage.capped ? ` ${usage.capped} buyer message${usage.capped === 1 ? " was" : "s were"} handed to advisors because the limit was reached.` : ""} The count resets at midnight (Malaysia time).</div></div>
+      <form id="sf" class="form two">
+      <label>Provider<select name="provider"${dis}>${opt("anthropic", "Anthropic Claude", a.provider)}</select></label>
+      <label>Model ID<input name="model" value="${attr(a.model)}" placeholder="claude-opus-5-5 (default)"${dis}></label>
+      <label>Reasoning effort<select name="effort"${dis}>${opt("low", "Low — fast, best for chat (default)", a.effort || "low")}${opt("medium", "Medium", a.effort)}${opt("high", "High — slower, more thorough", a.effort)}</select></label>
       <label>Confidence threshold for handover (0–1)<input name="confidence_threshold" type="number" min="0" max="1" step="0.05" value="${attr(a.confidence_threshold)}"${dis}></label>
       <label>Max reply length (characters)<input name="max_reply_chars" type="number" min="200" max="2000" step="50" value="${attr(a.max_reply_chars)}"${dis}></label>
+      <label>Daily limit on AI replies<input name="daily_message_cap" type="number" min="0" max="5000" step="10" value="${attr(cap)}"${dis}></label>
+      <p class="note">Each buyer message the AI answers counts once. When the limit is reached, buyers get a polite holding reply, an advisor is alerted, and you get one Telegram message that day. 0 switches AI replies off. Also set a spend limit in your Anthropic account.</p>
       <p class="note full">API keys are never stored here. They live only in Netlify environment variables (see Integrations).</p>
       ${own ? `<div class="actions full"><button class="btn pri">Save</button></div>` : ""}</form>`;
     const f = $("#sf", body); if (own) { guardForm(f, "settings:ai");
-      f.onsubmit = (e) => { e.preventDefault(); const v = formData(f); act(f.querySelector("button"), () => save("ai", { ...a, ...v }, f), "Saved"); }; }
+      f.onsubmit = (e) => { e.preventDefault(); const v = formData(f);
+        if (!Number.isInteger(v.daily_message_cap) || v.daily_message_cap < 0 || v.daily_message_cap > 5000) return toast("Daily limit must be a whole number from 0 to 5000.", "err");
+        act(f.querySelector("button"), () => save("ai", { ...a, ...v }, f), v.daily_message_cap === 0 ? "Saved — AI replies are switched off" : "Saved"); }; }
     return;
   }
   if (sub === "scoring") {

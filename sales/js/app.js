@@ -3,15 +3,17 @@ import { SB, S, $, $$, esc, q, act, toast, loadLookups, flag, hasUnsaved, errTex
 import * as crm from "./crm.js";
 import * as kb from "./knowledge.js";
 import * as adm from "./admin.js";
+import * as ait from "./aitest.js";
 
 const NAV = [
-  ["Sales", [["overview", "Overview", "◎"], ["inbox", "WhatsApp inbox", "✉"], ["leads", "Leads & CRM", "☺"], ["pipeline", "Pipeline", "▤"], ["appointments", "Appointments", "◷"], ["handover", "Handover queue", "⚑"]]],
+  ["Sales", [["overview", "Overview", "◎"], ["inbox", "WhatsApp inbox", "✉"], ["ai-test", "AI test console", "✦"], ["leads", "Leads & CRM", "☺"], ["pipeline", "Pipeline", "▤"], ["appointments", "Appointments", "◷"], ["handover", "Handover queue", "⚑"]]],
   ["Knowledge", [["properties", "Property projects", "⌂"], ["knowledge", "Knowledge base", "❏"], ["templates", "Templates & objections", "❝"]]],
   ["Automation", [["followups", "Follow-up automation", "↻"], ["campaigns", "Campaigns", "◈"], ["reports", "Reports", "▥"]]],
   ["Admin", [["settings", "AI agent settings", "⚙"], ["team", "Team & permissions", "⚇"], ["integrations", "Integrations", "⇄"], ["audit", "Consent, security & audit", "⛨"]]],
 ];
 const ROUTES = {
   overview: (el) => crm.overview(el), inbox: (el) => crm.inbox(el), leads: (el, p) => crm.leads(el, p), lead: (el, p, id) => crm.leadDetail(el, id),
+  "ai-test": (el, p) => ait.aitest(el, p),
   pipeline: (el) => crm.pipeline(el), appointments: (el, p) => crm.appointments(el, p), handover: (el) => crm.handover(el),
   properties: (el) => kb.properties(el), property: (el, p, id) => kb.property(el, id), knowledge: (el, p) => kb.knowledge(el, p),
   templates: (el, p) => adm.templates(el, p), followups: (el) => adm.followups(el), campaigns: (el) => adm.campaigns(el), reports: (el, p) => adm.reports(el, p),

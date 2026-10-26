@@ -72,6 +72,7 @@ function fixtures() {
     ai_follow_up_jobs: [], ai_audit_logs: [{ id: 1, actor: "owner@test.local", action: "update", table_name: "ai_settings", record_id: "1", changes: {}, created_at: NOW }],
     ai_integration_accounts: [{ provider: "anthropic", status: "not_configured" }, { provider: "whatsapp_cloud", status: "not_configured" }],
     leads: [],
+    ai_usage_daily: [{ day: new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" }), ai_messages: 12, capped: 0 }],
     ai_notifications: [{ kind: "appointment_reminder", status: "sent", error: null, created_at: NOW, message: "⏰ Appointment in 2 hour(s)" }],
   };
 }
@@ -113,6 +114,13 @@ async function newPage(viewport, { signedIn = true } = {}) {
     if ((req.headers()["accept"] || "").includes("vnd.pgrst.object")) return rows.length ? json(rows[0]) : json(null, 406, {});
     return json(rows, 200, { "content-range": `0-${Math.max(0, rows.length - 1)}/${rows.length}` });
   });
+  await page.route("**/api/sales/ai/simulate", async (r) => {
+    const req = JSON.parse(r.request().postData() || "{}");
+    writes.push({ simulate: req });
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ decision: "handover", reply: "Baik, permintaan diskaun perlu disemak oleh penasihat kami.", intent: "negotiation", agent: "handover", language: "ms", confidence: 0.9, model: "claude-opus-5-5", latency_ms: 4200,
+      attempts: [{ attempt: 1, reply: "Saya boleh bagi RM10,000 lagi!", violations: [{ code: "unverified_price", detail: "RM10,000 does not match any verified price" }] }, { attempt: 2, reply: "ok", violations: [] }],
+      actions: [{ type: "handover", reason: "negotiation", next_action: "Call about pricing" }, { type: "update_qualification", changed: ["asked_price"], score: 34, temperature: "nurture" }], facts_used: ["price:t1:Type A"], simulated: true }) });
+  });
   await page.route("**/api/sales/health", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ server_enabled: false, database: "ok", configured: { llm_anthropic: false }, checked_at: NOW }) }));
   if (signedIn) {
     await page.addInitScript((s) => localStorage.setItem("sb-deethrwnmyezwsohmhzl-auth-token", JSON.stringify(s)), { access_token: "tok", token_type: "bearer", expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: "r", user: { id: "u1", email: "owner@test.local", aud: "authenticated" } });
@@ -121,8 +129,8 @@ async function newPage(viewport, { signedIn = true } = {}) {
 }
 
 const VIEWPORTS = { phone: { width: 390, height: 844 }, ipad: { width: 820, height: 1180 }, desktop: { width: 1366, height: 900 } };
-const SECTIONS = ["overview", "inbox", "leads", "lead/L1", "pipeline", "appointments", "handover", "properties", "property/t1", "knowledge", "knowledge?tab=entries", "knowledge?tab=faqs", "knowledge?tab=search",
-  "templates", "templates?tab=templates", "followups", "campaigns", "reports", "settings", "settings?tab=persona", "settings?tab=scoring", "settings?tab=business", "settings?tab=compliance", "settings?tab=notifications", "settings/pipeline", "team", "integrations", "audit", "audit?tab=consent", "audit?tab=retention"];
+const SECTIONS = ["overview", "inbox", "ai-test", "leads", "lead/L1", "pipeline", "appointments", "handover", "properties", "property/t1", "knowledge", "knowledge?tab=entries", "knowledge?tab=faqs", "knowledge?tab=search",
+  "templates", "templates?tab=templates", "followups", "campaigns", "reports", "settings", "settings?tab=persona", "settings?tab=ai", "settings?tab=scoring", "settings?tab=business", "settings?tab=compliance", "settings?tab=notifications", "settings/pipeline", "team", "integrations", "audit", "audit?tab=consent", "audit?tab=retention"];
 
 for (const [name, vp] of Object.entries(VIEWPORTS)) {
   test(`every dashboard section renders without errors or horizontal scroll — ${name}`, { skip: skip || (!chromium && "playwright not installed") }, async () => {
@@ -263,6 +271,52 @@ test("Telegram settings: validates input, saves the reminder timings and sends a
     await page.click("#tgtest");
     await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Test message sent/.test(t.textContent)));
     assert.ok(writes.some((x) => x.rpc === "ai_telegram_test"));
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("AI test console: sends the conversation, shows the draft, the checker result and what the AI would do", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.phone);
+  try {
+    await page.goto(base + "/sales/#/ai-test");
+    await page.waitForSelector("#msg");
+    await page.click("[data-s='Boleh bagi discount lagi?']");
+    await page.click("#say button");
+    await page.waitForSelector(".msg.ai .bubble", { timeout: 8000 }).catch(async (e) => { throw new Error("no AI bubble; chat shows: " + (await page.textContent("#chat")) + " | errors: " + errors.join("; ")); });
+    assert.match(await page.textContent(".msg.ai .bubble"), /penasihat kami/);
+    assert.match(await page.textContent(".msg.ai .why"), /alert a human/i);
+    await page.click(".msg.ai details summary");
+    const details = await page.textContent(".msg.ai details");
+    assert.match(details, /Alert a human — price negotiation/);
+    assert.match(details, /unverified_price/);
+    const sent = writes.find((w) => w.simulate).simulate;
+    assert.deepEqual(sent, { lead_id: null, history: [], message: "Boleh bagi discount lagi?" });
+    await page.fill("#msg", "ok terima kasih");
+    await page.click("#say button");
+    await page.waitForFunction(() => document.querySelectorAll(".msg.ai").length === 2);
+    if (process.env.E2E_SHOTS) { await page.click(".msg.ai details summary"); await page.screenshot({ path: path.join(process.env.E2E_SHOTS, "phone-ai-test.png"), fullPage: true }); }
+    const second = writes.filter((w) => w.simulate)[1].simulate;
+    assert.equal(second.history.length, 2, "previous buyer message and AI reply are sent as history");
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("AI settings: shows today's usage and saves a valid daily limit", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    await page.goto(base + "/sales/#/settings?tab=ai");
+    await page.waitForSelector("#sf input[name=daily_message_cap]");
+    assert.match(await page.textContent("#sbody"), /Today: 12 of 200 AI replies used/);
+    await page.fill("#sf input[name=daily_message_cap]", "-5");
+    await page.click("#sf button");
+    assert.equal(await page.$eval("#sf input[name=daily_message_cap]", (el) => el.checkValidity()), false, "browser rejects a negative limit");
+    assert.ok(!writes.some((x) => x.table === "ai_settings"), "nothing saved");
+    await page.fill("#sf input[name=daily_message_cap]", "50");
+    await page.click("#sf button");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => t.textContent === "Saved"));
+    const w = writes.find((x) => x.table === "ai_settings" && x.body?.ai);
+    assert.equal(w.body.ai.daily_message_cap, 50);
+    assert.equal(w.body.ai.confidence_threshold, 0.7, "other AI settings kept");
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });

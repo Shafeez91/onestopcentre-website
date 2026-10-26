@@ -6,7 +6,7 @@ Apply, in order, through Supabase → SQL editor (or the Supabase MCP / CLI):
 2. `ai-sales/supabase/migrations/20261026000002_ai_sales_seed_content.sql`
 3. `ai-sales/supabase/migrations/20261026000003_ai_sales_telegram_reminders.sql` — Telegram staff notifications. Enables Supabase's `pg_cron` extension and schedules `ai_run_reminders()` every 5 minutes (job name `ai-sales-reminders`).
 
-Both are additive: they only create `ai_*` tables/functions/views, the private `ai-docs` bucket and its four storage policies. They do not touch `projects`, `settings`, `leads`, `admins`, the `photos` bucket or any existing function/trigger. Verified on a local replica by `ai-sales/tests/db/run-db-tests.sh` (20 tests).
+All are additive: they only create `ai_*` tables/functions/views, the private `ai-docs` bucket and its four storage policies. They do not touch `projects`, `settings`, `leads`, `admins`, the `photos` bucket or any existing function/trigger. Verified on a local replica by `ai-sales/tests/db/run-db-tests.sh` (28 tests).
 
 Check after applying (should return 0 rows of changes to existing data):
 ```sql
@@ -40,6 +40,12 @@ Staff-only messages through the existing Telegram bot (token already in Supabase
 - **Daily digest** at 8 am Malaysia time.
 Every message is sent once (dedupe key), logged in `ai_notifications` with Telegram's HTTP status, and never blocks saving data. Turn it off with the master switch, or pause the schedule: `select cron.unschedule('ai-sales-reminders');`.
 Note: messages contain buyer names and phone numbers — keep the chat private or staff-only.
+
+## 4c. AI assistant (Phase 3)
+Set in Netlify (Functions scope) and redeploy: `ANTHROPIC_API_KEY`, `AI_SALES_ENABLED=true` (optional `SUPABASE_SERVICE_ROLE_KEY` for the run log).
+Then open `/sales/` → **AI test console** and chat as a buyer. Replies are simulated: nothing is sent and no lead changes.
+Cost control: a daily cap on AI replies (default 200) in `/sales/` → Settings → AI model & limits, plus a spend limit in your Anthropic account (Settings → Limits) and prepaid credits with auto-reload off.
+Live evaluation (calls the API, costs money): `ANTHROPIC_API_KEY=… node ai-sales/tests/eval/run-eval.mjs`.
 
 ## 5. Switching the module off
 - Instantly, for staff: `/sales/` → Settings → Feature switches → untick *AI Sales module* (owners still get in).

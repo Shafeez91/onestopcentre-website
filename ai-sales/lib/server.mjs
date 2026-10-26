@@ -82,3 +82,23 @@ export async function audit(caller, action, details = {}) {
 }
 
 export const isEmail = (s) => typeof s === "string" && s.length <= 160 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+
+/** Minimal PostgREST adapter used by the AI orchestrator: { get, post, patch, rpc }. */
+function dbAdapter(request) {
+  const call = async (path, init = {}) => {
+    const r = await request(path, init);
+    if (!r.ok) throw new Error(`Database error ${r.status} on ${path.split("?")[0]}: ${(await r.text()).slice(0, 200)}`);
+    const t = await r.text();
+    return t ? JSON.parse(t) : null;
+  };
+  return {
+    get: (path) => call("/rest/v1/" + path),
+    post: (path, body, { prefer = "return=minimal" } = {}) => call("/rest/v1/" + path, { method: "POST", headers: { prefer }, body: JSON.stringify(body) }),
+    patch: (path, body) => call("/rest/v1/" + path, { method: "PATCH", headers: { prefer: "return=minimal" }, body: JSON.stringify(body) }),
+    rpc: (name, args) => call("/rest/v1/rpc/" + name, { method: "POST", body: JSON.stringify(args || {}) }),
+  };
+}
+/** Reads and writes as the signed-in staff member (RLS applies). */
+export const userDb = (caller) => dbAdapter((path, init) => fetch(sbUrl() + path, { ...init, headers: { apikey: sbAnon(), authorization: "Bearer " + caller.token, "content-type": "application/json", ...(init.headers || {}) } }));
+/** Service-role access; only after the caller's permission has been checked. Returns null when the key is not configured. */
+export const serviceDb = () => (env("SUPABASE_SERVICE_ROLE_KEY") ? dbAdapter((path, init) => asService(path, init)) : null);
