@@ -437,7 +437,7 @@ export async function handover(el) {
 /* ======================= Inbox ======================= */
 const TICK = { queued: ["…", "Sending"], sent: ["✓", "Sent"], delivered: ["✓✓", "Delivered"], read: ["✓✓", "Read"], failed: ["⚠", "Not delivered"], received: ["", ""], skipped: ["–", "Skipped"] };
 const WINDOW_MS = 24 * 3600e3 - 60e3;
-const SENDER = (m) => (m.direction === "inbound" ? "" : m.sender_type === "ai" ? "AI assistant" : m.sender_type === "system" ? "Automatic" : m.sender_email || "Staff");
+const SENDER = (m) => (m.direction === "inbound" ? "" : m.sender_type === "ai" ? "AI assistant" : m.sender_type === "system" ? "Automatic" : m.provider === "whatsapp_app" ? "Sent from the WhatsApp app" : m.sender_email || "Staff");
 
 export async function inbox(el, params) {
   const sel = params?.get("c") || "";
@@ -453,7 +453,7 @@ export async function inbox(el, params) {
 
 async function thread(box, c, reload) {
   if (!c) { box.innerHTML = empty("Conversation not found or closed."); return; }
-  const msgs = (await q(SB.from("ai_messages").select("id,direction,sender_type,sender_email,body,media,status,status_reason,template_name,created_at").eq("conversation_id", c.id).order("created_at", { ascending: false }).limit(200))) || [];
+  const msgs = (await q(SB.from("ai_messages").select("id,direction,sender_type,sender_email,provider,body,media,status,status_reason,template_name,created_at").eq("conversation_id", c.id).order("created_at", { ascending: false }).limit(200))) || [];
   msgs.reverse();
   const adv = can("advisor");
   const aiOn = c.mode === "ai" && !c.lead?.ai_paused;

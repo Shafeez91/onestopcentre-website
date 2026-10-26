@@ -26,7 +26,7 @@ export default async (req, context) => {
 
   const deps = liveDeps();
   if (!deps.db) return json({ error: "SUPABASE_SERVICE_ROLE_KEY is not set" }, 500);
-  const { messages, statuses } = parseWebhook(payload, env("WHATSAPP_PHONE_NUMBER_ID"));
+  const { messages, statuses, echoes } = parseWebhook(payload, env("WHATSAPP_PHONE_NUMBER_ID"));
   let queued = 0;
   try {
     for (const m of messages) {
@@ -34,6 +34,8 @@ export default async (req, context) => {
       if (r && !r.duplicate && r.job_id) queued++;
     }
     for (const s of statuses) await deps.db.rpc("ai_wa_status", { p_wamid: s.wamid, p_status: s.status, p_error: s.error });
+    // replies sent from the WhatsApp Business app on the phone: recorded, and the AI steps back for that chat
+    for (const e of echoes) await deps.db.rpc("ai_wa_echo", { p_wa_id: e.wa_id, p_wamid: e.wamid, p_type: e.type, p_body: e.text, p_sent_at: e.sent_at });
   } catch (e) {
     return json({ error: "Could not store the event: " + (e?.message || e) }, 500); // Meta retries; storing is idempotent
   }
@@ -42,7 +44,7 @@ export default async (req, context) => {
     const work = runWorker(deps, { maxJobs: 5, followUps: false, reminders: false }).catch((e) => console.error("worker:", e?.message || e));
     if (typeof context?.waitUntil === "function") context.waitUntil(work); else await work;
   }
-  return json({ ok: true, messages: messages.length, statuses: statuses.length });
+  return json({ ok: true, messages: messages.length, statuses: statuses.length, echoes: echoes.length });
 };
 
 export const config = { path: "/api/sales/whatsapp/webhook", method: ["GET", "POST"] };

@@ -72,7 +72,9 @@ You need: a Meta Business account (verified for higher limits) and a phone numbe
 3. Business Settings → Users → **System users** → add one (Admin) → *Generate new token* for the app with permissions `whatsapp_business_messaging` and `whatsapp_business_management`, expiry *Never*. Copy the token.
 4. App settings → Basic → copy the **App secret**.
 5. Netlify → Project configuration → Environment variables (tick *Contains secret values*): `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN` (any long random text you choose), `SUPABASE_SERVICE_ROLE_KEY` (Supabase → Project Settings → API keys → secret key). Redeploy.
-6. Meta → WhatsApp → Configuration → **Webhook**: Callback URL `https://onestopcentreproperty.com/api/sales/whatsapp/webhook`, Verify token = your `WHATSAPP_VERIFY_TOKEN` → Verify and save → subscribe to the **messages** field.
+6. Meta → WhatsApp → Configuration → **Webhook**: Callback URL `https://onestopcentreproperty.com/api/sales/whatsapp/webhook`, Verify token = your `WHATSAPP_VERIFY_TOKEN` → Verify and save → subscribe to the **messages** and **smb_message_echoes** fields.
+
+**Number also used in the WhatsApp Business app (coexistence)** — the live setup: +60 18-763 6796 stays in the app on the phone and is connected to the platform. Open the app at least once every 14 days or Meta pauses the connection. Replies sent from the phone arrive as `smb_message_echoes`: they appear in the `/sales/` inbox as "Sent from the WhatsApp app", and the AI and follow-ups stop for that buyer until someone presses *Hand back to AI*.
 7. Send a WhatsApp message to the number from your own phone. It appears in `/sales/` → WhatsApp inbox, and (with *AI auto-reply* still off) you get a Telegram alert.
 
 ### 7c. Message templates (needed outside the 24-hour window)

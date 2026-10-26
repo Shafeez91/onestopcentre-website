@@ -48,6 +48,18 @@ test("webhook parsing: text, captions, buttons, media, statuses; other numbers a
   assert.equal(textOf({ type: "button", button: { text: "Book" } }), "Book");
 });
 
+test("webhook parsing: replies sent from the WhatsApp Business app (coexistence echoes)", () => {
+  const p = { object: "whatsapp_business_account", entry: [{ changes: [
+    { field: "smb_message_echoes", value: { metadata: { phone_number_id: "PN1" }, message_echoes: [
+      { from: "60187636796", to: "60123456789", id: "wamid.E1", timestamp: "1793156400", type: "text", text: { body: "Boleh, saya call petang ni" } },
+      { from: "60187636796", to: "60123456789", id: "wamid.E2", type: "image", image: {} }] } },
+    { field: "smb_message_echoes", value: { metadata: { phone_number_id: "OTHER" }, message_echoes: [{ to: "601", id: "wamid.X", type: "text", text: { body: "x" } }] } }] }] };
+  const { echoes, messages } = parseWebhook(p, "PN1");
+  assert.equal(messages.length, 0);
+  assert.deepEqual(echoes.map((e) => [e.wa_id, e.wamid, e.type, e.text]), [["60123456789", "wamid.E1", "text", "Boleh, saya call petang ni"], ["60123456789", "wamid.E2", "image", "[image]"]]);
+  assert.equal(echoes[0].sent_at, new Date(1793156400e3).toISOString());
+});
+
 test("24-hour window: open just inside, closed after (with a safety margin)", () => {
   assert.equal(inWindow(ago(60), NOW), true);
   assert.equal(inWindow(ago(24 * 60 - 2), NOW), true);

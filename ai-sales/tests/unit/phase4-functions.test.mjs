@@ -75,6 +75,16 @@ test("webhook events: signature required, switched-off module refused, messages 
   assert.ok(!calls.some((c) => c.u.endsWith("/rpc/ai_claim_jobs")), "a redelivered message starts no work");
 });
 
+test("webhook: replies sent from the phone app are stored as echoes", async () => {
+  const echo = JSON.stringify({ object: "whatsapp_business_account", entry: [{ changes: [{ field: "smb_message_echoes", value: { metadata: { phone_number_id: "PN1" },
+    message_echoes: [{ from: "60187636796", to: "60123456789", id: "wamid.E1", timestamp: "1793156400", type: "text", text: { body: "Saya call petang ni" } }] } }] }] });
+  route(/rpc\/ai_wa_echo$/, () => Response.json({ duplicate: false }));
+  const r = await webhook(post("/api/sales/whatsapp/webhook", echo, { "x-hub-signature-256": sign(echo) }), {});
+  assert.equal(r.status, 200);
+  assert.deepEqual(calls.find((c) => c.u.endsWith("/rpc/ai_wa_echo")).body, { p_wa_id: "60123456789", p_wamid: "wamid.E1", p_type: "text", p_body: "Saya call petang ni", p_sent_at: new Date(1793156400e3).toISOString() });
+  assert.ok(!calls.some((c) => c.u.endsWith("/rpc/ai_claim_jobs")), "an echo starts no AI work");
+});
+
 test("webhook: a new message is answered straight away in the background (waitUntil)", async () => {
   route(/rpc\/ai_wa_inbound$/, () => Response.json({ duplicate: false, job_id: "J1" }));
   route(/rpc\/ai_wa_status$/, () => Response.json(true));

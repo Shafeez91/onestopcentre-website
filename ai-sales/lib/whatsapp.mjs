@@ -26,17 +26,27 @@ export function textOf(m) {
 export const isReadable = (m) => ["text", "button", "interactive"].includes(m?.type) && textOf(m).trim() !== "";
 
 /**
- * Flattens a webhook payload into inbound messages and delivery statuses.
+ * Flattens a webhook payload into inbound messages, delivery statuses and echoes.
+ * Echoes ("smb_message_echoes") are messages the business sent from the WhatsApp Business app on the phone,
+ * when the number is used in the app and the API at the same time (coexistence).
  * Only events for `phoneNumberId` are kept when it is given (other numbers on the same app are ignored).
  */
 export function parseWebhook(payload, phoneNumberId = null) {
-  const messages = [], statuses = [];
-  if (payload?.object !== "whatsapp_business_account") return { messages, statuses };
+  const messages = [], statuses = [], echoes = [];
+  if (payload?.object !== "whatsapp_business_account") return { messages, statuses, echoes };
   for (const entry of payload.entry || []) {
     for (const ch of entry.changes || []) {
-      if (ch.field !== "messages") continue;
       const v = ch.value || {};
       if (phoneNumberId && v.metadata?.phone_number_id && String(v.metadata.phone_number_id) !== String(phoneNumberId)) continue;
+      if (ch.field === "smb_message_echoes") {
+        for (const m of v.message_echoes || []) {
+          if (!m?.id || !m?.to) continue;
+          echoes.push({ wa_id: String(m.to), wamid: String(m.id), type: m.type || "unknown", text: textOf(m).slice(0, 4096),
+            sent_at: m.timestamp ? new Date(Number(m.timestamp) * 1000).toISOString() : null });
+        }
+        continue;
+      }
+      if (ch.field !== "messages") continue;
       const names = Object.fromEntries((v.contacts || []).map((c) => [c.wa_id, c.profile?.name || null]));
       for (const m of v.messages || []) {
         if (!m?.id || !m?.from) continue;
@@ -53,7 +63,7 @@ export function parseWebhook(payload, phoneNumberId = null) {
       }
     }
   }
-  return { messages, statuses };
+  return { messages, statuses, echoes };
 }
 
 /** True while free-form messages are allowed: within 24 hours of the buyer's last message. */

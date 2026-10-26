@@ -649,4 +649,30 @@ do $$ begin
 end $$;
 rollback;
 
+\echo 'T40 replies sent from the WhatsApp Business app: stored, AI paused, follow-ups cancelled; repeats and own messages ignored'
+begin;
+update public.ai_follow_up_sequences set active = true where lead_type = 'new_enquiry';
+do $$ declare r jsonb; e jsonb; lid uuid; j uuid; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456706', 'Eva', 'wamid.F1', 'text', 'Ada unit lagi?');
+  lid := (r ->> 'lead_id')::uuid;
+  j := public.ai_follow_up_start(lid, 'new_enquiry');
+  e := public.ai_wa_echo('60123456706', 'wamid.ECHO1', 'text', 'Ada, saya call sekarang', now());
+  assert not (e ->> 'duplicate')::boolean;
+  assert e ->> 'conversation_id' = r ->> 'conversation_id', 'same conversation';
+  assert (select sender_type || '/' || provider || '/' || status from public.ai_messages where provider_message_id = 'wamid.ECHO1') = 'human/whatsapp_app/sent';
+  assert (select mode from public.ai_conversations where id = (r ->> 'conversation_id')::uuid) = 'human';
+  assert (select ai_paused from public.ai_leads where id = lid);
+  assert (select status from public.ai_follow_up_jobs where id = j) = 'cancelled';
+  assert (public.ai_wa_echo('60123456706', 'wamid.ECHO1', 'text', 'Ada, saya call sekarang') ->> 'duplicate')::boolean, 'redelivery';
+  -- an echo of a message this system sent changes nothing
+  insert into public.ai_messages (conversation_id, direction, sender_type, body, provider_message_id, status) values ((r ->> 'conversation_id')::uuid, 'outbound', 'ai', 'Hai', 'wamid.OWN', 'sent');
+  assert (public.ai_wa_echo('60123456706', 'wamid.OWN', 'text', 'Hai') ->> 'duplicate')::boolean;
+  -- a phone reply to someone new starts a conversation already handled by a person
+  e := public.ai_wa_echo('60123456707', 'wamid.ECHO2', 'text', 'Hi, follow up dari showroom');
+  assert (select mode from public.ai_conversations where id = (e ->> 'conversation_id')::uuid) = 'human';
+  assert not has_function_privilege('authenticated', 'public.ai_wa_echo(text, text, text, text, timestamptz)', 'execute');
+end $$;
+rollback;
+
 \echo 'ALL DB TESTS PASSED'
