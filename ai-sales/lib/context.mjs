@@ -7,6 +7,8 @@ const DAY = 864e5;
 const enc = encodeURIComponent;
 const clean = (v) => { v = String(v ?? "").trim(); return /^(none|null|undefined)$/i.test(v) ? "" : v; };
 const num = (v) => { const n = +String(v ?? "").replace(/[^\d.]/g, ""); return n > 0 ? n : null; };
+const arr = (v) => (Array.isArray(v) ? v : []);
+const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 
 /** Buyer-written figures such as "budget 500k", "RM450,000", "dalam 400 ribu". */
 export function buyerAmounts(text) {
@@ -68,11 +70,11 @@ export async function loadContext(db, { leadId = null, message = "", history = [
       id: r.id, name: clean(d.n), area: clean(d.l), developer: clean(d.d), type: clean(d.t) || clean(d.c), status: clean(d.s), tenure: clean(d.tenure),
       completion: f?.completion_date || clean(d.year) || null, completionVerified: !!f?.completion_date,
       url: SITE + "property/" + r.slug + "/", urlMs: SITE + "ms/property/" + r.slug + "/", brochure: /^https?:/.test(d.brochure || "") ? d.brochure : null, mapUrl: /^https?:/.test(d.mapUrl || "") ? d.mapUrl : null,
-      layouts: (d.types || []).filter((t) => t && t.name).map((t) => ({ layout: clean(t.name), size_sqft: clean(t.size), bedrooms: clean(t.beds), bathrooms: clean(t.baths), price_from: clean(t.price) || null })),
-      websitePrices: [...(d.types || []).map((t) => t && t.price), d.p].map(num).filter((n) => n && n >= 10000),
+      layouts: arr(d.types).filter((t) => t && t.name).map((t) => ({ layout: clean(t.name), size_sqft: clean(t.size), bedrooms: clean(t.beds), bathrooms: clean(t.baths), price_from: clean(t.price) || null })),
+      websitePrices: [...arr(d.types).map((t) => t && t.price), d.p].map(num).filter((n) => n && n >= 10000),
       maintPsfWebsite: num(d.maintPsf),
-      facilities: (d.facilities || []).filter(Boolean).slice(0, 15),
-      nearby: Object.fromEntries(Object.entries(d.near || {}).map(([k, v]) => [k, (v || []).filter((x) => x && x.n).slice(0, 5).map((x) => [x.n, x.d].filter(Boolean).join(" "))]).filter(([, v]) => v.length)),
+      facilities: arr(d.facilities).filter((x) => typeof x === "string" && x).slice(0, 15),
+      nearby: Object.fromEntries(Object.entries(obj(d.near)).map(([k, v]) => [k, arr(v).filter((x) => x && x.n).slice(0, 5).map((x) => [x.n, x.d].filter(Boolean).join(" "))]).filter(([, v]) => v.length)),
       facts: factFields, factsFresh: !!f?.verified_at && now - new Date(f.verified_at) <= priceMaxMs,
       prices: pr,
       availability: us.length

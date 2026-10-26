@@ -19,7 +19,9 @@ function fakeDb(over = {}) {
     settings: [{ data: { wa: "60123456789" } }],
     projects: [
       { id: "t1", slug: "test-residence", data: { n: "Test Residence", l: "Cheras", d: "Test Dev", t: "Condominium", s: "New Launch", tenure: "Freehold", year: "2028", types: [{ name: "Type A", size: "800", beds: "3", baths: "2", price: "RM450,000" }], facilities: ["Swimming pool"], brochure: "https://example.test/brochure.pdf" } },
-      { id: "t2", slug: "test-heights", data: { n: "Test Heights", l: "Setapak", types: [{ name: "Type B", price: "RM380,000" }] } },
+      { id: "t2", slug: "test-heights", data: { n: "Test Heights", l: "Setapak", types: [{ name: "Type B", price: "RM380,000" }],
+        // same shape as the live listings: near mixes lists, objects and strings
+        near: { transit: [{ n: "MRT Taman Connaught", d: "800m", t: "MRT", ok: true }], schools: [], tod: "", todName: "", concl: { ai: true, ok: false, text: "" }, pop: { cov: "District(s)", catch: "Cheras" } } } },
     ],
     ai_project_facts: [{ project_id: "t1", booking_fee: "RM1,000", showroom_hours: "10am–6pm daily", maintenance_fee_psf: 0.35, verified_at: daysAgo(3), official_url: "https://dev.example.test/residence" }],
     ai_project_prices: [{ project_id: "t1", unit_type: "Type A", price_kind: "list", price_myr: 465000, effective_from: "2026-10-01", verified_at: daysAgo(5) },
@@ -138,6 +140,15 @@ test("context: verified vs stale vs indicative, freshness, allow-lists", async (
   assert.ok(ctx.rules.allowedUrls.includes("https://dev.example.test/residence"));
   assert.equal(ctx.rules.isFirstReply, true);
   assert.equal(ctx.projects.find((p) => p.id === "t2").prices[0].fresh, false);
+});
+
+test("context: tolerates the live listing shapes (near with objects/strings, odd fields)", async () => {
+  const ctx = await loadContext(fakeDb(), { message: "hi", now: NOW });
+  const t2 = ctx.projects.find((p) => p.id === "t2");
+  assert.deepEqual(t2.nearby, { transit: ["MRT Taman Connaught 800m"] });
+  const odd = await loadContext(fakeDb({ projects: [{ id: "x", slug: "x", data: { n: "X", types: "n/a", facilities: { a: 1 }, near: "none" } }] }), { message: "hi", now: NOW });
+  assert.deepEqual(odd.projects[0].layouts, []);
+  assert.deepEqual(odd.projects[0].nearby, {});
 });
 
 test("buyer amounts and search query helpers", () => {
