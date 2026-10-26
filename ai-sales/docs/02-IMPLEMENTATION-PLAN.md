@@ -50,9 +50,9 @@ Retention: `ai_purge_expired()` (webhook payloads 90 days, agent-run payloads 18
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Audit, baseline, regression suite, plan | **Done** |
-| 2 | Schema + RLS + roles, `/sales/` admin shell, CRM (contacts, leads, pipeline, timeline, tasks, consent), project knowledge base (verified facts, units, prices, promotions, FAQs, documents, search), team & permissions, flags, audit log, website-lead import, health endpoint | **This delivery** |
-| 3 | LLM provider adapter (Claude by default, configurable), orchestrator, agents A–J, response validator (price/promo/availability/guarantee rules), lead scoring from conversation, handover summaries, offline evaluation suite (BM/EN/Manglish scenarios) | Next |
-| 4 | WhatsApp Cloud API webhook (verify, HMAC signature, idempotency), outbound send with 24-h window + template rules, delivery statuses, follow-up scheduler (Netlify scheduled function), Google Calendar availability + booking + reminders | After 3 |
+| 2 | Schema + RLS + roles, `/sales/` admin shell, CRM (contacts, leads, pipeline, timeline, tasks, consent), project knowledge base (verified facts, units, prices, promotions, FAQs, documents, search), team & permissions, flags, audit log, website-lead import, health endpoint | **Done** |
+| 3 | LLM provider adapter (Claude by default, configurable), orchestrator, agents A–J, response validator (price/promo/availability/guarantee rules), lead scoring from conversation, handover summaries, offline evaluation suite (BM/EN/Manglish scenarios) | **Done** |
+| 4 | WhatsApp Cloud API webhook (verify, HMAC signature, idempotency), outbound send with 24-h window + template rules, delivery statuses, follow-up scheduler (Netlify scheduled function), Google Calendar availability + booking + reminders | **This delivery** (see `06-PHASE-4-REPORT.md`) |
 | 5 | Unified inbox UI with human takeover, follow-up sequence editor, appointment calendar UI, reports & analytics, campaign attribution | After 4 |
 | 6 | End-to-end tests against sandbox accounts, security review, production runbook, controlled go-live | Last |
 

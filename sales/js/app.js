@@ -12,7 +12,7 @@ const NAV = [
   ["Admin", [["settings", "AI agent settings", "⚙"], ["team", "Team & permissions", "⚇"], ["integrations", "Integrations", "⇄"], ["audit", "Consent, security & audit", "⛨"]]],
 ];
 const ROUTES = {
-  overview: (el) => crm.overview(el), inbox: (el) => crm.inbox(el), leads: (el, p) => crm.leads(el, p), lead: (el, p, id) => crm.leadDetail(el, id),
+  overview: (el) => crm.overview(el), inbox: (el, p) => crm.inbox(el, p), leads: (el, p) => crm.leads(el, p), lead: (el, p, id) => crm.leadDetail(el, id),
   "ai-test": (el, p) => ait.aitest(el, p),
   pipeline: (el) => crm.pipeline(el), appointments: (el, p) => crm.appointments(el, p), handover: (el) => crm.handover(el),
   properties: (el) => kb.properties(el), property: (el, p, id) => kb.property(el, id), knowledge: (el, p) => kb.knowledge(el, p),

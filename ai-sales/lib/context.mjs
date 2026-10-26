@@ -46,7 +46,7 @@ export async function loadContext(db, { leadId = null, message = "", history = [
     const l = rows[0];
     if (l) {
       interests = (await db.get(`ai_lead_interests?lead_id=eq.${enc(leadId)}&select=project_id,interest`)) || [];
-      appointments = (await db.get(`ai_appointments?lead_id=eq.${enc(leadId)}&status=in.(pending_confirmation,confirmed,rescheduled)&select=kind,status,start_at,preferred_text,project_id`)) || [];
+      appointments = (await db.get(`ai_appointments?lead_id=eq.${enc(leadId)}&status=in.(pending_confirmation,confirmed,rescheduled)&select=id,kind,status,start_at,preferred_text,project_id`)) || [];
       aiPaused = !!l.ai_paused;
       buyer = { name: clean(l.contact?.full_name) || null, salutation: clean(l.contact?.salutation) || null, preferred_language: l.contact?.preferred_language || null };
       lead = {

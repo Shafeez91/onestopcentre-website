@@ -518,4 +518,135 @@ rollback;
 \echo 'T31 existing settings get the default cap of 200'
 do $$ begin assert (select (ai ->> 'daily_message_cap')::int from public.ai_settings) = 200; end $$;
 
+\echo 'T32 WhatsApp inbound: contact, lead, conversation, message and reply job in one call; redelivery is a no-op'
+begin;
+do $$ declare r jsonb; r2 jsonb; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456701', 'Aina', 'wamid.A1', 'text', 'Salam, boleh info M Mira?', now() - interval '5 seconds');
+  assert not (r ->> 'duplicate')::boolean;
+  assert (select phone_e164 from public.ai_contacts where id = (r ->> 'contact_id')::uuid) = '60123456701';
+  assert (select s.channel from public.ai_leads l join public.ai_lead_sources s on s.id = l.source_id where l.id = (r ->> 'lead_id')::uuid) = 'whatsapp';
+  assert (select unread_count from public.ai_conversations where id = (r ->> 'conversation_id')::uuid) = 1;
+  assert (select last_inbound_at is not null from public.ai_conversations where id = (r ->> 'conversation_id')::uuid);
+  assert (select count(*) from public.ai_jobs where kind = 'wa_reply' and payload ->> 'message_id' = r ->> 'message_id') = 1;
+  -- Meta redelivers the same webhook
+  r2 := public.ai_wa_inbound('60123456701', 'Aina', 'wamid.A1', 'text', 'Salam, boleh info M Mira?');
+  assert (r2 ->> 'duplicate')::boolean, 'redelivery recognised';
+  assert (select count(*) from public.ai_messages where provider_message_id = 'wamid.A1') = 1;
+  assert (select count(*) from public.ai_jobs where kind = 'wa_reply') = 1;
+  -- second message: same contact, lead and conversation
+  r2 := public.ai_wa_inbound('60123456701', 'Aina', 'wamid.A2', 'image', '[image]');
+  assert r2 ->> 'conversation_id' = r ->> 'conversation_id' and r2 ->> 'lead_id' = r ->> 'lead_id';
+  assert (select unread_count from public.ai_conversations where id = (r ->> 'conversation_id')::uuid) = 2;
+  assert (select media -> 0 ->> 'type' from public.ai_messages where provider_message_id = 'wamid.A2') = 'image';
+  assert (select count(*) from public.ai_leads) = 1 and (select count(*) from public.ai_contacts) = 1;
+end $$;
+rollback;
+
+\echo 'T33 WhatsApp functions are server-only (staff and anon cannot call them)'
+do $$ begin
+  assert not has_function_privilege('anon', 'public.ai_wa_inbound(text, text, text, text, text, timestamptz)', 'execute');
+  assert not has_function_privilege('authenticated', 'public.ai_wa_inbound(text, text, text, text, text, timestamptz)', 'execute');
+  assert not has_function_privilege('authenticated', 'public.ai_wa_status(text, text, text)', 'execute');
+  assert not has_function_privilege('authenticated', 'public.ai_claim_follow_ups(int)', 'execute');
+  assert not has_function_privilege('anon', 'public.ai_follow_up_start(uuid, text, timestamptz)', 'execute');
+  assert has_function_privilege('service_role', 'public.ai_wa_inbound(text, text, text, text, text, timestamptz)', 'execute');
+end $$;
+
+\echo 'T34 delivery statuses only move forward; failures are recorded with the reason'
+begin;
+do $$ declare r jsonb; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456702', null, 'wamid.B1', 'text', 'hi');
+  insert into public.ai_messages (conversation_id, direction, sender_type, body, provider_message_id, status, purpose)
+  values ((r ->> 'conversation_id')::uuid, 'outbound', 'ai', 'Hai!', 'wamid.OUT1', 'sent', 'reply');
+  assert public.ai_wa_status('wamid.OUT1', 'read');
+  assert not public.ai_wa_status('wamid.OUT1', 'delivered'), 'late "delivered" does not undo "read"';
+  assert (select status from public.ai_messages where provider_message_id = 'wamid.OUT1') = 'read';
+  assert public.ai_wa_status('wamid.OUT1', 'failed', 'Re-engagement message');
+  assert (select status_reason from public.ai_messages where provider_message_id = 'wamid.OUT1') = 'Re-engagement message';
+  assert not public.ai_wa_status('wamid.B1', 'read'), 'inbound messages are not touched';
+  assert not public.ai_wa_status('wamid.UNKNOWN', 'sent');
+end $$;
+rollback;
+
+\echo 'T35 follow-ups: start schedules step 1 of the active sequence; inbound reply cancels; claim is exclusive'
+begin;
+update public.ai_follow_up_sequences set active = true where lead_type = 'new_enquiry';
+do $$ declare r jsonb; lid uuid; j uuid; j2 uuid; n int; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456703', 'Ben', 'wamid.C1', 'text', 'hello');
+  lid := (r ->> 'lead_id')::uuid;
+  j := public.ai_follow_up_start(lid, 'new_enquiry', now() - interval '25 hours');
+  assert j is not null;
+  assert (select step_index from public.ai_follow_up_jobs where id = j) = 0;
+  assert public.ai_follow_up_start(lid, 'no_such_type') is null, 'no active sequence → nothing scheduled';
+  -- restart replaces the old step
+  j2 := public.ai_follow_up_start(lid, 'new_enquiry', now() - interval '25 hours' + interval '1 second');
+  assert (select status from public.ai_follow_up_jobs where id = j) = 'cancelled';
+  -- due step is claimed once only
+  select count(*) into n from public.ai_claim_follow_ups(10);
+  assert n = 1, 'claimed ' || n;
+  select count(*) into n from public.ai_claim_follow_ups(10);
+  assert n = 0, 'claimed twice';
+  update public.ai_follow_up_jobs set status = 'scheduled' where id = j2;
+  -- buyer replies → scheduled steps are cancelled
+  perform public.ai_wa_inbound('60123456703', 'Ben', 'wamid.C2', 'text', 'ok thanks');
+  assert (select status || '/' || reason from public.ai_follow_up_jobs where id = j2) = 'cancelled/customer replied';
+  -- paused (human handling) leads get no sequence
+  update public.ai_leads set ai_paused = true where id = lid;
+  assert public.ai_follow_up_start(lid, 'new_enquiry') is null;
+end $$;
+rollback;
+
+\echo 'T36 confirming an appointment stops follow-ups'
+begin;
+update public.ai_follow_up_sequences set active = true where lead_type = 'appointment_pending';
+do $$ declare r jsonb; lid uuid; j uuid; a uuid; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456704', 'Chen', 'wamid.D1', 'text', 'nak datang sabtu');
+  lid := (r ->> 'lead_id')::uuid;
+  insert into public.ai_appointments (lead_id, kind, preferred_text) values (lid, 'showroom_visit', 'Sabtu') returning id into a;
+  j := public.ai_follow_up_start(lid, 'appointment_pending');
+  update public.ai_appointments set status = 'confirmed', start_at = now() + interval '2 days', end_at = now() + interval '2 days 1 hour' where id = a;
+  assert (select status || '/' || reason from public.ai_follow_up_jobs where id = j) = 'cancelled/appointment booked';
+end $$;
+rollback;
+
+\echo 'T37 handovers alert staff on Telegram once; the alert can be switched off'
+begin;
+do $$ declare r jsonb; h uuid; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456705', 'Dina', 'wamid.E1', 'text', 'nak cakap dengan orang');
+  insert into public.ai_handover_events (lead_id, conversation_id, reason, summary)
+  values ((r ->> 'lead_id')::uuid, (r ->> 'conversation_id')::uuid, 'customer_request', '{"text":"Buyer asked for a person","next_action":"Call her"}') returning id into h;
+  assert (select count(*) from public.ai_notifications where kind = 'handover' and ref_id = h::text) = 1;
+  assert (select count(*) from net.calls where body ->> 'text' like '%Buyer needs a person — customer request%Dina%Next: Call her%') = 1;
+  update public.ai_settings set notifications = notifications || '{"handover_alerts": false}';
+  insert into public.ai_handover_events (lead_id, reason) values ((r ->> 'lead_id')::uuid, 'complaint');
+  assert (select count(*) from public.ai_notifications where kind = 'handover') = 1, 'switched off';
+end $$;
+rollback;
+
+\echo 'T38 Phase 4 settings defaults are added without overwriting'
+do $$ begin
+  assert (select (business -> 'appointments' ->> 'duration_minutes')::int from public.ai_settings) = 60;
+  assert (select business -> 'hours' -> 'sat' ->> 0 from public.ai_settings) = '10:00', 'business hours kept';
+  assert (select (notifications ->> 'handover_alerts')::boolean from public.ai_settings);
+  assert (select notifications ->> 'telegram_chat_id' from public.ai_settings) = '8821015679', 'telegram settings kept';
+end $$;
+
+\echo 'T39 Vault secret reader: server only, Google key only'
+begin;
+insert into vault.decrypted_secrets values ('google_private_key', 'PEM');
+do $$ begin
+  assert not has_function_privilege('authenticated', 'public.ai_vault_secret(text)', 'execute');
+  assert not has_function_privilege('anon', 'public.ai_vault_secret(text)', 'execute');
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  assert public.ai_vault_secret('google_private_key') = 'PEM';
+  begin perform public.ai_vault_secret('telegram_bot_token'); assert false, 'read another secret';
+  exception when raise_exception then null; end;
+end $$;
+rollback;
+
 \echo 'ALL DB TESTS PASSED'

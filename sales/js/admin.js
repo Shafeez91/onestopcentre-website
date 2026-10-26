@@ -1,6 +1,6 @@
 // AI Sales dashboard — settings & flags, pipeline stages, team, integrations, templates & objections,
 // follow-up sequences, campaigns, reports, and consent/security/audit.
-import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, api, loadLookups, projectName, sourceName } from "./core.js";
+import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, api, loadLookups, projectName, sourceName, flag } from "./core.js";
 import { DEFAULT_SCORING } from "../shared/scoring.mjs";
 
 const hasDraftChanges = (f) => f.classList.contains("has-draft");
@@ -8,10 +8,10 @@ const hasDraftChanges = (f) => f.classList.contains("has-draft");
 const FLAGS = [
   ["module_enabled", "AI Sales module", "Turns the whole /sales/ workspace on or off for non-owners. The public website is never affected."],
   ["website_lead_import", "Import website enquiries", "Copies enquiries from the website form into the CRM (read-only on the website's own data)."],
-  ["ai_auto_reply", "AI auto-reply", "Lets the AI answer customers on WhatsApp. Requires Phase 3–4 and the server switch AI_SALES_ENABLED."],
+  ["ai_auto_reply", "AI auto-reply", "Lets the AI answer buyers on WhatsApp automatically. Needs WhatsApp connected (Integrations) and \"WhatsApp sending\" on. When off, new messages alert staff on Telegram instead."],
   ["whatsapp_outbound", "WhatsApp sending", "Allows any outbound WhatsApp message, including human replies from the inbox."],
   ["follow_ups", "Automated follow-ups", "Lets the follow-up engine send scheduled messages (always subject to consent and opt-outs)."],
-  ["calendar_booking", "Calendar booking", "Lets the AI offer real calendar slots and create bookings."],
+  ["calendar_booking", "Calendar booking", "Lets the AI offer free Google Calendar slots and book the one the buyer picks. The buyer is told it is confirmed only after the calendar event exists."],
 ];
 const SAFEGUARDS = [
   "The AI always identifies itself as an AI assistant when asked and never claims to be human or to have visited a property.",
@@ -103,26 +103,33 @@ export async function settings(el, params) {
     return;
   }
   if (sub === "business") {
-    const b = st.business; const days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    const b = st.business; const days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]; const ap = b.appointments || {};
     body.innerHTML = `<h2>Business hours &amp; rules</h2><form id="sf" class="form two">
       <label>Time zone<input name="timezone" value="${attr(b.timezone)}"${dis}></label><span></span>
       ${days.map((d) => { const h = (b.hours || {})[d]; return `<label>${d.toUpperCase()} open<input name="o_${d}" type="time" value="${attr(h ? h[0] : "")}"${dis}></label><label>${d.toUpperCase()} close<input name="c_${d}" type="time" value="${attr(h ? h[1] : "")}"${dis}></label>`; }).join("")}
       <label>Max marketing messages / week<input name="max_marketing_messages_per_week" type="number" min="0" max="7" value="${attr(b.max_marketing_messages_per_week)}"${dis}></label>
       <label>Inventory freshness (hours)<input name="inventory_max_age_hours" type="number" min="1" max="720" value="${attr(b.inventory_max_age_hours)}"${dis}></label>
       <label>Price freshness (days)<input name="price_max_age_days" type="number" min="1" max="365" value="${attr(b.price_max_age_days)}"${dis}></label>
-      <p class="note full">Leave both times empty for a closed day. Automated messages are only sent within business hours.</p>
+      <p class="note full">Leave both times empty for a closed day. Automated messages are only sent within business hours, and appointment slots are offered only inside them.</p>
+      <h3 class="full">Appointments</h3>
+      <label>Appointment length (minutes)<input name="a_duration_minutes" type="number" min="15" max="480" step="15" value="${attr(ap.duration_minutes ?? 60)}"${dis}></label>
+      <label>Minimum notice (hours)<input name="a_min_notice_hours" type="number" min="0" max="168" value="${attr(ap.min_notice_hours ?? 3)}"${dis}></label>
+      <label>Offer slots up to (days ahead)<input name="a_days_ahead" type="number" min="1" max="30" value="${attr(ap.days_ahead ?? 7)}"${dis}></label>
+      <label>Slots offered at most<input name="a_max_slots_offered" type="number" min="1" max="12" value="${attr(ap.max_slots_offered ?? 6)}"${dis}></label>
+      <label class="full">Default location (sent to the buyer in confirmations)<input name="a_location" maxlength="300" value="${attr(ap.location || "")}" placeholder="e.g. One Stop Centre showroom, Jalan …"${dis}></label>
       ${own ? `<div class="actions full"><button class="btn pri">Save</button></div>` : ""}</form>`;
     const f = $("#sf", body); if (own) { guardForm(f, "settings:business");
       f.onsubmit = (e) => { e.preventDefault(); const v = formData(f); const hours = {};
         for (const d of days) { const o = v["o_" + d], c = v["c_" + d]; if (!!o !== !!c) return toast(`${d.toUpperCase()}: enter both open and close, or neither.`, "err"); if (o && c <= o) return toast(`${d.toUpperCase()}: close must be after open.`, "err"); hours[d] = o ? [o, c] : null; }
-        act(f.querySelector("button"), () => save("business", { ...b, timezone: v.timezone || "Asia/Kuala_Lumpur", hours, max_marketing_messages_per_week: v.max_marketing_messages_per_week, inventory_max_age_hours: v.inventory_max_age_hours, price_max_age_days: v.price_max_age_days }, f), "Saved"); }; }
+        const appointments = { ...ap, duration_minutes: v.a_duration_minutes ?? 60, min_notice_hours: v.a_min_notice_hours ?? 3, days_ahead: v.a_days_ahead ?? 7, max_slots_offered: v.a_max_slots_offered ?? 6, location: v.a_location || "" };
+        act(f.querySelector("button"), () => save("business", { ...b, timezone: v.timezone || "Asia/Kuala_Lumpur", hours, max_marketing_messages_per_week: v.max_marketing_messages_per_week, inventory_max_age_hours: v.inventory_max_age_hours, price_max_age_days: v.price_max_age_days, appointments }, f), "Saved"); }; }
     return;
   }
   if (sub === "notifications") {
     const n = st.notifications || {};
     let log = [];
     if (can("manager")) { try { log = (await q(SB.from("ai_notifications").select("kind,status,error,created_at,message").order("created_at", { ascending: false }).limit(30))) || []; } catch { log = []; } }
-    const KIND = { appointment_change: "Appointment alert", appointment_reminder: "Appointment reminder", task_reminder: "Follow-up reminder", follow_up_due: "Follow-up step due", daily_digest: "Daily digest", test: "Test" };
+    const KIND = { appointment_change: "Appointment alert", appointment_reminder: "Appointment reminder", task_reminder: "Follow-up reminder", follow_up_due: "Follow-up step due", daily_digest: "Daily digest", test: "Test", ai_cap: "AI daily limit", handover: "Buyer needs a person", whatsapp_message: "WhatsApp message" };
     body.innerHTML = `<h2>Telegram notifications</h2>
       <p class="note">Sent to staff only, through the same Telegram bot that already alerts you about website enquiries. Checked every 5 minutes. Messages include the buyer's name and phone number, so use a private chat or a staff-only group.</p>
       <form id="sf" class="form two">
@@ -132,6 +139,8 @@ export async function settings(el, params) {
       <label class="full">Appointment reminders (minutes before, comma-separated)<input name="appointment_reminder_minutes" value="${attr((n.appointment_reminder_minutes || []).join(", "))}" placeholder="1440, 120 = 24 h and 2 h before"${dis}></label>
       <label class="switch full"><input type="checkbox" name="task_reminders"${n.task_reminders ? " checked" : ""}${dis}><span><b>Follow-up reminders</b><small>For every open follow-up task with a due time (and follow-up sequence steps while automatic sending is off).</small></span></label>
       <label>Remind this many minutes before a follow-up is due<input name="task_lead_minutes" type="number" min="0" max="1440" value="${attr(n.task_lead_minutes ?? 30)}"${dis}></label><span></span>
+      <label class="switch full"><input type="checkbox" name="handover_alerts"${n.handover_alerts !== false ? " checked" : ""}${dis}><span><b>Buyer needs a person</b><small>Instantly when the AI hands a buyer over (asked for a person, negotiation, complaint, unsure…) or a staff member flags one.</small></span></label>
+      <label class="switch full"><input type="checkbox" name="whatsapp_alerts"${n.whatsapp_alerts !== false ? " checked" : ""}${dis}><span><b>WhatsApp messages the AI does not answer</b><small>When AI auto-reply is off or a person has taken over the chat (at most one alert per chat per hour).</small></span></label>
       <label class="switch"><input type="checkbox" name="daily_digest"${n.daily_digest ? " checked" : ""}${dis}><span><b>Daily digest</b><small>Today's appointments, follow-ups due, overdue, hot leads.</small></span></label>
       <label>Digest time (hour, Malaysia time)<input name="digest_hour" type="number" min="0" max="23" value="${attr(n.digest_hour ?? 8)}"${dis}></label>
       ${own ? `<div class="actions full"><button class="btn pri" type="submit">Save</button><button class="btn" type="button" id="tgtest" data-busy="Sending…">Send test message</button></div>` : ""}</form>
@@ -232,7 +241,13 @@ export async function integrations(el) {
   <section class="card"><h2>Server</h2>${h ? `<dl class="kv"><dt>Server switch AI_SALES_ENABLED</dt><dd>${h.server_enabled ? badge("On", "ok") : badge("Off", "warn")}</dd><dt>Database from server</dt><dd>${esc(h.database)}</dd>
     ${Object.entries(h.configured).map(([k, v]) => `<dt>${esc(k.replace(/_/g, " "))}</dt><dd>${yes(v)}</dd>`).join("")}<dt>Checked</dt><dd>${esc(fmtDate(h.checked_at))}</dd></dl>` : `<p class="note">Server functions not reachable: ${esc(herr)}. They become available after this branch is deployed.</p>`}</section>
   <section class="card"><h2>Accounts</h2><ul class="list">${rows.map((r) => `<li><b>${esc(NAMES[r.provider] || r.provider)}</b> ${badge(r.status.replace("_", " "), r.status === "healthy" ? "ok" : r.status === "error" ? "alert" : "")}<small>${r.last_checked_at ? "Checked " + esc(fmtDate(r.last_checked_at)) : "Not checked yet"}${r.last_error ? " · " + esc(r.last_error) : ""}</small></li>`).join("")}</ul>
-  <p class="note">Connection steps for each provider are in <code>ai-sales/docs/03-SETUP.md</code>. WhatsApp, LLM and calendar connections are built in Phases 3–4.</p></section>`;
+  <p class="note">Connection steps for each provider are in <code>ai-sales/docs/03-SETUP.md</code>.</p></section>
+  <section class="card"><h2>WhatsApp webhook (Meta)</h2>
+    <dl class="kv"><dt>Callback URL</dt><dd><code>https://onestopcentreproperty.com/api/sales/whatsapp/webhook</code></dd>
+    <dt>Verify token</dt><dd>The value you set as <code>WHATSAPP_VERIFY_TOKEN</code> in Netlify</dd><dt>Webhook field</dt><dd><code>messages</code></dd></dl>
+    <p class="note">Every webhook call is checked against <code>WHATSAPP_APP_SECRET</code>. Needs <code>SUPABASE_SERVICE_ROLE_KEY</code> so incoming messages can be stored. Nothing is sent to buyers until "WhatsApp sending" is switched on in Settings.</p></section>
+  <section class="card"><h2>Google Calendar</h2>
+    <p class="note">Share the calendar with the service account email (permission: "Make changes to events"), then set <code>GOOGLE_SERVICE_ACCOUNT_EMAIL</code>, <code>GOOGLE_PRIVATE_KEY</code> and <code>GOOGLE_CALENDAR_ID</code> in Netlify. Free slots come from that calendar inside your business hours.</p></section>`;
 }
 
 /* ======================= Templates & objections ======================= */
@@ -263,7 +278,8 @@ export async function templates(el, params) {
     return;
   }
   const rows = (await q(SB.from("ai_message_templates").select("*").order("name").order("lang"))) || [];
-  body.innerHTML = `<div class="card notice"><div>Messages sent outside WhatsApp's 24-hour customer-service window must use a template <b>approved by Meta</b>. Record the approved template name here once Meta approves it.</div></div>
+  body.innerHTML = `<div class="card notice"><div>Messages sent outside WhatsApp's 24-hour customer-service window must use a template <b>approved by Meta</b>. Record the approved template name here once Meta approves it.
+    Templates with these names are used automatically: <b>appointment_reminder</b> (variables: name, appointment) and <b>appointment_confirmation</b> (name, appointment). Follow-up steps can name any other template.</div></div>
   ${m ? `<div class="actions"><button class="btn pri" id="nt">＋ Add template</button></div>` : ""}
   ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Lang</th><th>Category</th><th>WhatsApp status</th><th>Text</th><th></th></tr></thead><tbody>${rows.map((t) => `<tr><td data-label="Name"><b>${esc(t.name)}</b>${t.active ? "" : badge("Inactive")}</td><td data-label="Lang">${esc(t.lang.toUpperCase())}</td><td data-label="Category">${esc(t.category)}</td>
     <td data-label="WhatsApp">${badge(t.wa_status.replace("_", " "), t.wa_status === "approved" ? "ok" : t.wa_status === "rejected" ? "alert" : "")}${t.wa_template_name ? `<small>${esc(t.wa_template_name)}</small>` : ""}</td><td data-label="Text"><small>${esc(t.body.slice(0, 140))}${t.body.length > 140 ? "…" : ""}</small></td><td>${m ? `<button class="link" data-edit="${attr(t.id)}">Edit</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : empty("No templates yet.")}`;
@@ -273,29 +289,35 @@ export async function templates(el, params) {
     <label>WhatsApp status<select name="wa_status">${["not_submitted", "pending", "approved", "rejected", "paused"].map((c) => opt(c, c.replace("_", " "), t.wa_status)).join("")}</select></label>
     <label class="full">Approved WhatsApp template name<input name="wa_template_name" value="${attr(t.wa_template_name)}"></label>
     <label class="full">Text (use {{1}}, {{2}} for variables)<textarea name="body" rows="5" required>${esc(t.body)}</textarea></label>
+    <label class="full">Variables, in order ({{1}}, {{2}}…) — any of: name, project, appointment<input name="variables" value="${attr((t.variables || []).join(", "))}" placeholder="e.g. name, project" pattern="\\s*(name|project|appointment)(\\s*,\\s*(name|project|appointment))*\\s*"></label>
     <label class="check full"><input type="checkbox" name="active"${t.active !== false ? " checked" : ""}> Active</label><div class="actions full"><button class="btn pri">Save</button></div></form>`, { wide: true });
     const f = $("#ftp", dlg); guardForm(f, "tpl:" + (t.id || "new"));
     f.onsubmit = (e) => { e.preventDefault(); const v = formData(f);
+      v.variables = String(v.variables || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const n = Math.max(0, ...[...String(v.body).matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1])));
+      if (n !== v.variables.length) return toast(`The text uses ${n} variable${n === 1 ? "" : "s"}; list exactly ${n} in "Variables".`, "err");
       act(f.querySelector("button"), async () => { if (t.id) await q(SB.from("ai_message_templates").update(v).eq("id", t.id).select("id"), { expectRows: true }); else await q(SB.from("ai_message_templates").insert(v)); clearDraft(f); dlg.done(); templates(el, params); }, "Saved"); }; };
   if (m) { $("#nt", body).onclick = () => edit(); $$("[data-edit]", body).forEach((b) => b.onclick = () => edit(rows.find((r) => r.id === b.dataset.edit))); }
 }
 
 /* ======================= Follow-up automation ======================= */
 export async function followups(el) {
-  const [seqs, jobs] = await Promise.all([
+  const [seqs, jobs, tpls] = await Promise.all([
     q(SB.from("ai_follow_up_sequences").select("*").order("name")),
     q(SB.from("ai_follow_up_jobs").select("*, lead:ai_leads(lead_code)").order("run_at", { ascending: false }).limit(100)),
+    q(SB.from("ai_message_templates").select("name,wa_status").eq("active", true).order("name")),
   ]);
+  const tplNames = [...new Set((tpls || []).map((t) => t.name))];
   const m = can("manager");
   el.innerHTML = `<div class="page-head"><h1>Follow-up automation</h1>${m ? `<button class="btn pri" id="ns">＋ New sequence</button>` : ""}</div>
-  <div class="card notice"><div>The follow-up engine is built in Phase 4. Sequences can be prepared now; nothing is sent until the engine is deployed <b>and</b> "Automated follow-ups" is switched on. Messages always stop on reply, opt-out, booking, human request or lead closure.</div></div>
+  <div class="card notice"><div>${flag("follow_ups") ? "<b>Automated follow-ups are on.</b>" : "<b>Automated follow-ups are off</b> — due steps are announced to staff on Telegram instead."} After each AI reply the matching sequence starts (new enquiry, or appointment pending). Within 24 hours of the buyer's last message the AI writes the step from its instruction (checked by the business rules); after that only the step's <b>approved template</b> can be sent, otherwise the step is skipped. Steps are sent only in business hours and always stop on reply, opt-out, booking, a person taking over, or lead closure.</div></div>
   ${(seqs || []).map((s) => `<article class="card entry ${s.active ? "" : "draft"}"><div class="ho-h"><b>${esc(s.name)}</b> ${badge(s.lead_type.replace(/_/g, " "))} ${s.active ? badge("Active", "ok") : badge("Inactive")}</div>
-    <ol class="steps">${(s.steps || []).map((st) => `<li><b>after ${esc(st.delay_hours >= 24 ? st.delay_hours / 24 + " day(s)" : st.delay_hours + " h")}</b> ${badge(st.purpose, st.purpose === "marketing" ? "warn" : "")} ${esc(st.instruction || "")}</li>`).join("")}</ol>
+    <ol class="steps">${(s.steps || []).map((st) => `<li><b>after ${esc(st.delay_hours >= 24 ? st.delay_hours / 24 + " day(s)" : st.delay_hours + " h")}</b> ${badge(st.purpose, st.purpose === "marketing" ? "warn" : "")} ${esc(st.instruction || "")}${st.template ? ` <small>template: ${esc(st.template)}</small>` : ""}</li>`).join("")}</ol>
     <p class="note">Stops on: ${esc((s.stop_on || []).join(", ").replace(/_/g, " "))}</p>${m ? `<div class="actions"><button class="link" data-edit="${attr(s.id)}">Edit</button></div>` : ""}</article>`).join("") || empty("No sequences.")}
   <section class="card"><h2>Recent follow-up jobs</h2>${(jobs || []).length ? `<ul class="list">${jobs.map((j) => `<li>${esc(j.lead?.lead_code || "")} · step ${j.step_index + 1} ${badge(j.status)}<small>${esc(fmtDate(j.run_at))}${j.reason ? " · " + esc(j.reason) : ""}</small></li>`).join("")}</ul>` : empty("No jobs yet — the engine arrives in Phase 4.")}</section>`;
   const STOPS = ["customer_reply", "opt_out", "appointment_booked", "human_requested", "lead_closed"];
   const edit = (s = { steps: [], stop_on: STOPS }) => {
-    const stepRow = (st = {}) => `<div class="steprow"><input name="delay_hours" type="number" min="1" max="2160" value="${attr(st.delay_hours)}" placeholder="Hours" aria-label="Delay in hours" required><select name="purpose" aria-label="Purpose">${opt("service", "Service", st.purpose)}${opt("marketing", "Marketing (needs consent)", st.purpose)}</select><input name="instruction" value="${attr(st.instruction)}" placeholder="What should this message do?" aria-label="Instruction" required><button type="button" class="icon" data-rm aria-label="Remove step">✕</button></div>`;
+    const stepRow = (st = {}) => `<div class="steprow"><input name="delay_hours" type="number" min="1" max="2160" value="${attr(st.delay_hours)}" placeholder="Hours" aria-label="Delay in hours" required><select name="purpose" aria-label="Purpose">${opt("service", "Service", st.purpose)}${opt("marketing", "Marketing (needs consent)", st.purpose)}</select><input name="instruction" value="${attr(st.instruction)}" placeholder="What should this message do?" aria-label="Instruction" required><select name="template" aria-label="Template after 24 hours">${opt("", "No template (skip after 24 h)", st.template)}${tplNames.map((n) => opt(n, "Template: " + n, st.template)).join("")}</select><button type="button" class="icon" data-rm aria-label="Remove step">✕</button></div>`;
     const dlg = modal(s.id ? "Edit sequence" : "New sequence", `<form id="fs" class="form two"><label>Name<input name="name" required value="${attr(s.name)}"></label>
       <label>Lead type<select name="lead_type">${["new_enquiry", "price_list", "brochure", "financing", "undecided", "appointment_pending", "appointment_confirmation", "missed_appointment", "reactivation", "post_viewing"].map((t) => opt(t, t.replace(/_/g, " "), s.lead_type)).join("")}</select></label>
       <div class="full"><b>Steps</b> <small>(delay counted from the previous message)</small><div id="steps">${(s.steps.length ? s.steps : [{}]).map(stepRow).join("")}</div><button type="button" class="btn" id="addstep">＋ Step</button></div>
@@ -305,7 +327,7 @@ export async function followups(el) {
     const wireRm = () => $$("[data-rm]", box).forEach((b) => b.onclick = () => { if ($$(".steprow", box).length > 1) b.parentElement.remove(); });
     $("#addstep", dlg).onclick = () => { box.insertAdjacentHTML("beforeend", stepRow()); wireRm(); }; wireRm();
     f.onsubmit = (e) => { e.preventDefault();
-      const steps = $$(".steprow", box).map((r) => ({ delay_hours: Number(r.querySelector("[name=delay_hours]").value), purpose: r.querySelector("[name=purpose]").value, instruction: r.querySelector("[name=instruction]").value.trim() }));
+      const steps = $$(".steprow", box).map((r) => ({ delay_hours: Number(r.querySelector("[name=delay_hours]").value), purpose: r.querySelector("[name=purpose]").value, instruction: r.querySelector("[name=instruction]").value.trim(), ...(r.querySelector("[name=template]").value ? { template: r.querySelector("[name=template]").value } : {}) }));
       const stop_on = STOPS.filter((x) => x === "opt_out" || f.querySelector(`[name=stop_${x}]`).checked);
       const rec = { name: f.name.value.trim(), lead_type: f.lead_type.value, steps, stop_on, active: f.active.checked };
       act(f.querySelector("button[type=submit]"), async () => { if (s.id) await q(SB.from("ai_follow_up_sequences").update(rec).eq("id", s.id).select("id"), { expectRows: true }); else await q(SB.from("ai_follow_up_sequences").insert(rec)); dlg.done(); followups(el); }, "Sequence saved"); };
