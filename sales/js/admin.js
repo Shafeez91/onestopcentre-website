@@ -248,7 +248,7 @@ export async function integrations(el) {
     <p class="note">Every webhook call is checked against <code>WHATSAPP_APP_SECRET</code>. Needs <code>SUPABASE_SERVICE_ROLE_KEY</code> so incoming messages can be stored. Nothing is sent to buyers until "WhatsApp sending" is switched on in Settings.</p>
     ${can("owner") ? `<h3>Check the WhatsApp connection</h3>
     <p class="note">Meta only forwards messages when the WhatsApp Business Account is linked to this app. The check also confirms the access token works.</p>
-    <form id="wac" class="form two"><label>WhatsApp Business Account ID<input name="waba_id" inputmode="numeric" pattern="\\d{5,25}" required value="${attr(rows.find((r) => r.provider === "whatsapp_cloud")?.config?.waba_id || "")}" placeholder="From Meta → API Setup (Messaging account ID)"></label>
+    <form id="wac" class="form two"><label>WhatsApp Business Account ID<input name="waba_id" inputmode="numeric" pattern="\\d{5,25}" value="${attr(rows.find((r) => r.provider === "whatsapp_cloud")?.config?.waba_id || "")}" placeholder="Leave empty to find it automatically"></label>
       <div class="actions"><button class="btn" type="submit" data-busy="Checking…">Check connection</button></div></form>
     <div id="wacr"></div>` : ""}</section>
   <section class="card"><h2>Google Calendar</h2>
@@ -257,6 +257,7 @@ export async function integrations(el) {
   if (wf) {
     const run = (btn, action) => act(btn, async () => {
       const r = await api("/api/sales/whatsapp/setup", { method: "POST", body: JSON.stringify({ action, waba_id: wf.waba_id.value.trim() }) });
+      if (r.waba_id) wf.waba_id.value = r.waba_id;
       out.innerHTML = waResult(r);
       const link = $("#walink", out);
       if (link) link.onclick = () => run(link, "subscribe");
@@ -269,7 +270,8 @@ function waResult(r) {
   const ok = (v) => (v ? badge("Yes", "ok") : badge("No", "alert"));
   const p = r.phone || {};
   return `<div class="card ${r.healthy ? "notice" : "error"}"><div><b>${r.healthy ? "WhatsApp is connected." : "WhatsApp is not fully connected yet."}</b></div></div>
-  <dl class="kv"><dt>Access token works</dt><dd>${ok(!p.error)}${p.error ? `<small>${esc(p.error)}</small>` : ""}</dd>
+  <dl class="kv">${r.detected ? `<dt>WhatsApp Business Account</dt><dd>${esc(r.waba_id)}<small>found automatically${r.entered_waba_id ? ` (the ID entered, ${esc(r.entered_waba_id)}, does not hold this number or is not reachable with the token)` : ""}</small></dd>` : ""}
+  <dt>Access token works</dt><dd>${ok(!p.error)}${p.error ? `<small>${esc(p.error)}</small>` : ""}</dd>
   ${p.display_phone_number ? `<dt>Number</dt><dd>${esc(p.display_phone_number)} · ${esc(p.verified_name || "")}</dd><dt>Status</dt><dd>${esc([p.status, p.platform_type, p.quality_rating && "quality " + p.quality_rating, p.name_status && "name " + p.name_status].filter(Boolean).join(" · "))}</dd>` : ""}
   <dt>Number belongs to this account</dt><dd>${r.phone_in_account === null ? badge("Unknown", "warn") + `<small>${esc(r.numbers_error || "")}</small>` : ok(r.phone_in_account)}</dd>
   <dt>Account linked to an app</dt><dd>${r.subscribed_apps === null ? badge("Unknown", "warn") + `<small>${esc(r.subscribed_error || "")}</small>` : r.subscribed_apps.length ? badge("Yes", "ok") + `<small>${esc(r.subscribed_apps.map((a) => a.name || a.id).join(", "))}</small>` : badge("No", "alert")}</dd>

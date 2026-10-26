@@ -2,10 +2,25 @@
 // check: token works, the phone number as Meta sees it, and whether the WhatsApp Business Account is linked
 //        ("subscribed") to this app — Meta only forwards messages to the webhook of subscribed apps.
 // subscribe: links the WhatsApp Business Account to the app that owns the token.
+// The account id is optional: when it is missing, wrong or not reachable with the token, the account that holds
+// WHATSAPP_PHONE_NUMBER_ID is looked up among the accounts the token was granted (Meta's debug_token).
 import { env, json, getCaller, hasRole, moduleEnabled, disabled, serviceDb, audit } from "../../ai-sales/lib/server.mjs";
 import { waConfig, graph } from "../../ai-sales/lib/whatsapp.mjs";
 
 const attempt = async (fn) => { try { return { ok: true, data: await fn() }; } catch (e) { return { ok: false, error: e.message }; } };
+const holdsPhone = (res, phoneNumberId) => res.ok && (res.data?.data || []).some((n) => String(n.id) === String(phoneNumberId));
+
+/** The WhatsApp Business Account ids the token was granted, and the one that holds the phone number (or null). */
+async function findWaba(cfg) {
+  const dbg = await attempt(() => graph(cfg, "GET", `debug_token?input_token=${encodeURIComponent(cfg.token)}`));
+  if (!dbg.ok) return { waba: null, candidates: [], error: dbg.error };
+  const candidates = [...new Set((dbg.data?.data?.granular_scopes || []).filter((s) => /^whatsapp_business_/.test(s.scope || ""))
+    .flatMap((s) => s.target_ids || []).map(String))];
+  for (const id of candidates) {
+    if (holdsPhone(await attempt(() => graph(cfg, "GET", `${id}/phone_numbers?fields=id`)), cfg.phoneNumberId)) return { waba: id, candidates };
+  }
+  return { waba: null, candidates };
+}
 
 export default async (req) => {
   if (!moduleEnabled()) return disabled();
@@ -16,8 +31,18 @@ export default async (req) => {
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
   const cfg = waConfig(env);
   if (!cfg) return json({ error: "WhatsApp is not configured (WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID)." }, 501);
-  const waba = String(body?.waba_id || env("WHATSAPP_BUSINESS_ACCOUNT_ID") || "").trim();
-  if (!/^\d{5,25}$/.test(waba)) return json({ error: "Enter the WhatsApp Business Account ID (numbers only, from Meta → API Setup)." }, 400);
+  const entered = String(body?.waba_id || env("WHATSAPP_BUSINESS_ACCOUNT_ID") || "").trim();
+  if (entered && !/^\d{5,25}$/.test(entered)) return json({ error: "The WhatsApp Business Account ID is numbers only (Meta → API Setup). Leave it empty to find it automatically." }, 400);
+
+  // use the entered account when it holds the number; otherwise look for the right one
+  let waba = entered, detected = null;
+  const first = entered ? await attempt(() => graph(cfg, "GET", `${entered}/phone_numbers?fields=id`)) : null;
+  if (!first || !holdsPhone(first, cfg.phoneNumberId)) {
+    detected = await findWaba(cfg);
+    if (detected.waba) waba = detected.waba;
+  }
+  if (!waba) return json({ error: "The WhatsApp Business Account could not be found with this access token" + (detected?.error ? ": " + detected.error : ". Check that the system user has the WhatsApp account assigned (Business settings → System users → Assign assets)."),
+    candidates: detected?.candidates || [] }, 404);
 
   let linked = null;
   if (body?.action === "subscribe") {
@@ -43,7 +68,8 @@ export default async (req) => {
     } catch { /* the check result is still returned */ }
   }
   return json({
-    healthy, waba_id: waba,
+    healthy, waba_id: waba, entered_waba_id: entered || null, detected: !!(detected?.waba && detected.waba !== entered),
+    candidates: detected ? detected.candidates : undefined, detect_error: detected?.error || undefined,
     phone: phone.ok ? phone.data : { error: phone.error },
     phone_in_account: phoneInAccount, numbers_error: numbers.ok ? null : numbers.error,
     subscribed_apps: subscribed, subscribed_error: apps.ok ? null : apps.error,
