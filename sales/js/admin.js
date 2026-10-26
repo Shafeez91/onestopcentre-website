@@ -244,7 +244,7 @@ export async function integrations(el) {
   <p class="note">Connection steps for each provider are in <code>ai-sales/docs/03-SETUP.md</code>.</p></section>
   <section class="card"><h2>WhatsApp webhook (Meta)</h2>
     <dl class="kv"><dt>Callback URL</dt><dd><code>https://onestopcentreproperty.com/api/sales/whatsapp/webhook</code></dd>
-    <dt>Verify token</dt><dd>The value you set as <code>WHATSAPP_VERIFY_TOKEN</code> in Netlify</dd><dt>Webhook field</dt><dd><code>messages</code></dd></dl>
+    <dt>Verify token</dt><dd>The value you set as <code>WHATSAPP_VERIFY_TOKEN</code> in Netlify</dd><dt>Webhook fields</dt><dd><code>messages</code> and <code>smb_message_echoes</code> (replies you send from the WhatsApp Business app on your phone pause the AI for that chat)</dd></dl>
     <p class="note">Every webhook call is checked against <code>WHATSAPP_APP_SECRET</code>. Needs <code>SUPABASE_SERVICE_ROLE_KEY</code> so incoming messages can be stored. Nothing is sent to buyers until "WhatsApp sending" is switched on in Settings.</p></section>
   <section class="card"><h2>Google Calendar</h2>
     <p class="note">Share the calendar with the service account email (permission: "Make changes to events"), then set <code>GOOGLE_SERVICE_ACCOUNT_EMAIL</code>, <code>GOOGLE_PRIVATE_KEY</code> and <code>GOOGLE_CALENDAR_ID</code> in Netlify. Free slots come from that calendar inside your business hours.</p></section>`;
