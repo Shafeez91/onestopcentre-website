@@ -59,7 +59,7 @@ Bugs found by the new tests and fixed before release: a reminder would have foll
 ## 5. Needed from you
 1. Apply `ai-sales/supabase/APPLY-PHASE-4-IN-SQL-EDITOR.sql` (or let me apply it).
 2. `SUPABASE_SERVICE_ROLE_KEY` in Netlify (now required).
-3. WhatsApp: Meta Business account, a dedicated phone number not used in the WhatsApp app, then the steps in 03-SETUP.md §7b; templates `appointment_reminder` / `appointment_confirmation` submitted to Meta.
+3. WhatsApp: Meta Business account and a phone number for the API (see §7b about numbers already on the WhatsApp Business app), then the steps in 03-SETUP.md §7b; templates `appointment_reminder` / `appointment_confirmation` submitted to Meta.
 4. Google Calendar: which calendar holds showroom/advisor availability, a service account shared on it (§7d).
 5. Business rules: confirm showroom hours, appointment length and default location, and which follow-up sequences to activate.
 

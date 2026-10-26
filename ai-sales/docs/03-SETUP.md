@@ -66,7 +66,7 @@ Everything below is off until you switch it on. Order matters: database → cred
 Supabase → SQL Editor → paste `ai-sales/supabase/APPLY-PHASE-4-IN-SQL-EDITOR.sql` → **Run** (choose "Run without RLS" if asked; the script sets its own permissions). Additive only.
 
 ### 7b. WhatsApp Business Platform (Meta Cloud API)
-You need: a Meta Business account (verified for higher limits), and a phone number **not** currently used in the WhatsApp or WhatsApp Business app (it moves to the API; the app can no longer use it).
+You need: a Meta Business account (verified for higher limits) and a phone number for the API. Simplest is a number not registered on WhatsApp at all. If you want to use a number that already runs the WhatsApp Business app, Meta's setup may offer to keep the app working alongside the API; check what the setup screen offers before registering, because otherwise the number stops working in the app.
 1. developers.facebook.com → My Apps → **Create app** → type *Business* → add the **WhatsApp** product.
 2. WhatsApp → API Setup: add and verify your business phone number. Copy the **Phone number ID**.
 3. Business Settings → Users → **System users** → add one (Admin) → *Generate new token* for the app with permissions `whatsapp_business_messaging` and `whatsapp_business_management`, expiry *Never*. Copy the token.
