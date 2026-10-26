@@ -68,8 +68,9 @@ export async function settings(el, params) {
   if (sub === "ai") {
     const a = st.ai;
     body.innerHTML = `<h2>AI model &amp; limits</h2><form id="sf" class="form two">
-      <label>Provider<select name="provider"${dis}>${opt("anthropic", "Anthropic Claude", a.provider)}${opt("openai", "OpenAI (adapter planned)", a.provider)}</select></label>
-      <label>Model ID<input name="model" value="${attr(a.model)}" placeholder="Blank = recommended default"${dis}></label>
+      <label>Provider<select name="provider"${dis}>${opt("anthropic", "Anthropic Claude", a.provider)}</select></label>
+      <label>Model ID<input name="model" value="${attr(a.model)}" placeholder="claude-opus-5-5 (default)"${dis}></label>
+      <label>Reasoning effort<select name="effort"${dis}>${opt("low", "Low — fast, best for chat (default)", a.effort || "low")}${opt("medium", "Medium", a.effort)}${opt("high", "High — slower, more thorough", a.effort)}</select></label>
       <label>Confidence threshold for handover (0–1)<input name="confidence_threshold" type="number" min="0" max="1" step="0.05" value="${attr(a.confidence_threshold)}"${dis}></label>
       <label>Max reply length (characters)<input name="max_reply_chars" type="number" min="200" max="2000" step="50" value="${attr(a.max_reply_chars)}"${dis}></label>
       <p class="note full">API keys are never stored here. They live only in Netlify environment variables (see Integrations).</p>
