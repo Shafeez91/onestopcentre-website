@@ -6,7 +6,7 @@ import { isOptOut, wantsHuman, detectLanguage, fixedReply } from "../../sales/sh
 import { validateReply } from "../../sales/shared/validator.mjs";
 import { scoreLead } from "../../sales/shared/scoring.mjs";
 import { loadContext } from "./context.mjs";
-import { buildSystemPrompt, renderContext, buildMessages, REPLY_SCHEMA } from "./prompt.mjs";
+import { buildSystemPrompt, renderContext, buildMessages, REPLY_SCHEMA, normalizeReply } from "./prompt.mjs";
 import { DEFAULT_MODEL, LlmError } from "./llm.mjs";
 
 const QUAL_FIELDS = ["purpose", "first_home", "bedrooms", "size_sqft", "budget_min", "budget_max", "employment", "financing", "timeline_months", "readiness", "concerns"];
@@ -87,7 +87,7 @@ export async function respond(p) {
   try {
     for (let attempt = 1; attempt <= 2; attempt++) {
       const r = await p.llm({ system, messages: buildMessages(history, contextText, message, feedback), schema: REPLY_SCHEMA, model, effort });
-      data = r.data; servedBy = r.model || model;
+      data = normalizeReply(r.data); servedBy = r.model || model;
       usage.input_tokens += r.usage?.input_tokens || 0; usage.output_tokens += r.usage?.output_tokens || 0;
       check = validateReply(data.reply, ctx.rules);
       base.attempts.push({ attempt, reply: data.reply, violations: check.violations });

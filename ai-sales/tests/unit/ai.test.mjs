@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { isOptOut, wantsHuman, detectLanguage } from "../../../sales/shared/guard.mjs";
 import { validateReply, extractAmounts } from "../../../sales/shared/validator.mjs";
-import { buildMessages, buildSystemPrompt, REPLY_SCHEMA } from "../../lib/prompt.mjs";
+import { buildMessages, buildSystemPrompt, REPLY_SCHEMA, normalizeReply } from "../../lib/prompt.mjs";
 import { loadContext, buyerAmounts, searchQuery } from "../../lib/context.mjs";
 import { respond, applyActions, mergeQualification } from "../../lib/orchestrator.mjs";
 import { callClaude, LlmError } from "../../lib/llm.mjs";
@@ -44,10 +44,11 @@ function fakeDb(over = {}) {
 const draft = (o = {}) => ({
   reply: "Hai! Saya pembantu AI One Stop Centre. Harga terkini Type A di Test Residence ialah RM465,000. Tuan/puan cari untuk didiami atau pelaburan?",
   language: "ms", intent: "price", agent: "knowledge", confidence: 0.9, facts_used: ["price:t1:Type A"],
-  qualification_updates: { purpose: null, first_home: null, bedrooms: null, size_sqft: null, budget_min: null, budget_max: null, employment: null, financing: null, timeline_months: null, readiness: null, concerns: null, preferred_project_id: "t1", asked_price: true, requested_brochure: null },
-  appointment_request: { wanted: false, kind: null, preferred_text: null, project_id: null },
-  handover: { needed: false, reason: null, summary: null, next_action: null },
-  objection_key: null, ...o,
+  // "unknown" placeholders exactly as the schema makes the model send them
+  qualification_updates: { purpose: "", first_home: "", bedrooms: "", size_sqft: "", budget_min: 0, budget_max: 0, employment: "", financing: "", timeline_months: 0, readiness: "", concerns: "", preferred_project_id: "t1", asked_price: true, requested_brochure: false },
+  appointment_request: { wanted: false, kind: "", preferred_text: "", project_id: "" },
+  handover: { needed: false, reason: "", summary: "", next_action: "" },
+  objection_key: "", ...o,
 });
 const scripted = (...replies) => { const calls = []; const fn = async (p) => { calls.push(p); const d = replies[Math.min(calls.length - 1, replies.length - 1)]; if (d instanceof Error) throw d; return { data: d, model: "claude-opus-5-5", usage: { input_tokens: 100, output_tokens: 50 } }; }; fn.calls = calls; return fn; };
 
@@ -149,6 +150,23 @@ test("context: tolerates the live listing shapes (near with objects/strings, odd
   const odd = await loadContext(fakeDb({ projects: [{ id: "x", slug: "x", data: { n: "X", types: "n/a", facilities: { a: 1 }, near: "none" } }] }), { message: "hi", now: NOW });
   assert.deepEqual(odd.projects[0].layouts, []);
   assert.deepEqual(odd.projects[0].nearby, {});
+});
+
+test("prompt: schema stays within the API's structured-output limits", () => {
+  // The API rejects schemas with more than 16 union-typed (anyOf / type-array / nullable) parameters.
+  let unions = 0;
+  const walk = (s) => { if (s && typeof s === "object") { if (s.anyOf || Array.isArray(s.type)) unions++; Object.values(s).forEach(walk); } };
+  walk(REPLY_SCHEMA);
+  assert.equal(unions, 0);
+  const n = normalizeReply({ reply: "x", confidence: 0, objection_key: "",
+    qualification_updates: { purpose: "", budget_max: 0, budget_min: 450000, bedrooms: "3", asked_price: false, requested_brochure: true },
+    appointment_request: { wanted: false, kind: "", preferred_text: "", project_id: "" },
+    handover: { needed: true, reason: "", summary: "s", next_action: "" } });
+  assert.deepEqual(n.qualification_updates, { purpose: null, budget_max: null, budget_min: 450000, bedrooms: "3", asked_price: false, requested_brochure: true });
+  assert.deepEqual(n.appointment_request, { wanted: false, kind: null, preferred_text: null, project_id: null });
+  assert.deepEqual(n.handover, { needed: true, reason: null, summary: "s", next_action: null });
+  assert.equal(n.objection_key, null);
+  assert.equal(n.confidence, 0, "confidence is not a placeholder");
 });
 
 test("buyer amounts and search query helpers", () => {

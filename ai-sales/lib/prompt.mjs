@@ -1,7 +1,8 @@
 // System prompt, structured-output schema and per-turn context message for the AI sales assistant.
 // The system prompt only changes when settings or the objection library change, so it is cached.
 
-const nul = (schema) => ({ anyOf: [schema, { type: "null" }] });
+// No nullable/union fields: the API caps union-typed parameters (16). "Unknown" is "" for text and enums,
+// 0 for numbers and false for flags; normalizeReply() turns those back into null.
 const str = { type: "string" };
 const num = { type: "number" };
 const bool = { type: "boolean" };
@@ -26,34 +27,49 @@ export const REPLY_SCHEMA = {
       type: "object", additionalProperties: false,
       required: ["purpose", "first_home", "bedrooms", "size_sqft", "budget_min", "budget_max", "employment", "financing", "timeline_months", "readiness", "concerns", "preferred_project_id", "asked_price", "requested_brochure"],
       properties: {
-        purpose: nul(enumOf("own_stay", "investment", "both")),
-        first_home: nul(enumOf("yes", "no")),
-        bedrooms: nul(str), size_sqft: nul(str),
-        budget_min: nul(num), budget_max: nul(num),
-        employment: nul(enumOf("government", "private", "self_employed")),
-        financing: nul(enumOf("lppsa", "bank", "cash", "preapproved", "undecided")),
-        timeline_months: nul(num),
-        readiness: nul(enumOf("ready", "considering", "researching")),
-        concerns: nul(str),
-        preferred_project_id: nul(str),
-        asked_price: nul(bool), requested_brochure: nul(bool),
+        purpose: enumOf("", "own_stay", "investment", "both"),
+        first_home: enumOf("", "yes", "no"),
+        bedrooms: str, size_sqft: str,
+        budget_min: num, budget_max: num,
+        employment: enumOf("", "government", "private", "self_employed"),
+        financing: enumOf("", "lppsa", "bank", "cash", "preapproved", "undecided"),
+        timeline_months: num,
+        readiness: enumOf("", "ready", "considering", "researching"),
+        concerns: str,
+        preferred_project_id: str,
+        asked_price: bool, requested_brochure: bool,
       },
     },
     appointment_request: {
       type: "object", additionalProperties: false, required: ["wanted", "kind", "preferred_text", "project_id"],
       properties: {
         wanted: bool,
-        kind: nul(enumOf("showroom_visit", "property_viewing", "phone_call", "video_call", "financing_discussion")),
-        preferred_text: nul(str), project_id: nul(str),
+        kind: enumOf("", "showroom_visit", "property_viewing", "phone_call", "video_call", "financing_discussion"),
+        preferred_text: str, project_id: str,
       },
     },
     handover: {
       type: "object", additionalProperties: false, required: ["needed", "reason", "summary", "next_action"],
-      properties: { needed: bool, reason: nul(enumOf(...HANDOVER_REASONS)), summary: nul(str), next_action: nul(str) },
+      properties: { needed: bool, reason: enumOf("", ...HANDOVER_REASONS), summary: str, next_action: str },
     },
-    objection_key: nul(str),
+    objection_key: str,
   },
 };
+
+const blank = (v) => (v === "" || v === 0 || v === null || v === undefined ? null : v);
+const blanks = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k, typeof v === "boolean" ? v : blank(v)]));
+
+/** Turns the schema's "unknown" placeholders ("" / 0) back into null. */
+export function normalizeReply(d) {
+  if (!d || typeof d !== "object") return d;
+  return {
+    ...d,
+    qualification_updates: blanks(d.qualification_updates),
+    appointment_request: blanks(d.appointment_request),
+    handover: blanks(d.handover),
+    objection_key: blank(d.objection_key),
+  };
+}
 
 export function buildSystemPrompt(settings = {}, objections = []) {
   const p = settings.persona || {}, ai = settings.ai || {}, c = settings.compliance || {};
@@ -79,7 +95,7 @@ Facts: the context is your only source of truth
 Buyer qualification (do it gradually, through conversation, not as a questionnaire)
 - Learn over time: own stay or investment, first home, bedrooms, budget, employment type (government / private / self-employed), financing (LPPSA, bank loan, cash), timeline, main concerns, preferred project.
 - Ask about income or commitments only if the buyer wants an affordability check, and never ask for documents, IC numbers or bank details on WhatsApp.
-- Put anything the buyer has told you into qualification_updates (null for fields you learned nothing new about).
+- Put anything the buyer has told you into qualification_updates (use "" for text and choices, 0 for numbers and false for yes/no flags when you learned nothing new).
 
 Recommendations and objections
 - Recommend projects that fit the buyer's stated needs and budget, explaining why, the trade-offs and what still needs confirming. If nothing fits the budget, say so honestly and suggest reasonable alternatives. Never favour a project for any reason other than fit.
