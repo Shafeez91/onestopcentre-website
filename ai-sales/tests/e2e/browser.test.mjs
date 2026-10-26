@@ -72,6 +72,7 @@ function fixtures() {
     ai_follow_up_jobs: [], ai_audit_logs: [{ id: 1, actor: "owner@test.local", action: "update", table_name: "ai_settings", record_id: "1", changes: {}, created_at: NOW }],
     ai_integration_accounts: [{ provider: "anthropic", status: "not_configured" }, { provider: "whatsapp_cloud", status: "not_configured" }],
     leads: [],
+    ai_usage_daily: [{ day: new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" }), ai_messages: 12, capped: 0 }],
     ai_notifications: [{ kind: "appointment_reminder", status: "sent", error: null, created_at: NOW, message: "⏰ Appointment in 2 hour(s)" }],
   };
 }
@@ -129,7 +130,7 @@ async function newPage(viewport, { signedIn = true } = {}) {
 
 const VIEWPORTS = { phone: { width: 390, height: 844 }, ipad: { width: 820, height: 1180 }, desktop: { width: 1366, height: 900 } };
 const SECTIONS = ["overview", "inbox", "ai-test", "leads", "lead/L1", "pipeline", "appointments", "handover", "properties", "property/t1", "knowledge", "knowledge?tab=entries", "knowledge?tab=faqs", "knowledge?tab=search",
-  "templates", "templates?tab=templates", "followups", "campaigns", "reports", "settings", "settings?tab=persona", "settings?tab=scoring", "settings?tab=business", "settings?tab=compliance", "settings?tab=notifications", "settings/pipeline", "team", "integrations", "audit", "audit?tab=consent", "audit?tab=retention"];
+  "templates", "templates?tab=templates", "followups", "campaigns", "reports", "settings", "settings?tab=persona", "settings?tab=ai", "settings?tab=scoring", "settings?tab=business", "settings?tab=compliance", "settings?tab=notifications", "settings/pipeline", "team", "integrations", "audit", "audit?tab=consent", "audit?tab=retention"];
 
 for (const [name, vp] of Object.entries(VIEWPORTS)) {
   test(`every dashboard section renders without errors or horizontal scroll — ${name}`, { skip: skip || (!chromium && "playwright not installed") }, async () => {
@@ -296,6 +297,26 @@ test("AI test console: sends the conversation, shows the draft, the checker resu
     if (process.env.E2E_SHOTS) { await page.click(".msg.ai details summary"); await page.screenshot({ path: path.join(process.env.E2E_SHOTS, "phone-ai-test.png"), fullPage: true }); }
     const second = writes.filter((w) => w.simulate)[1].simulate;
     assert.equal(second.history.length, 2, "previous buyer message and AI reply are sent as history");
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("AI settings: shows today's usage and saves a valid daily limit", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    await page.goto(base + "/sales/#/settings?tab=ai");
+    await page.waitForSelector("#sf input[name=daily_message_cap]");
+    assert.match(await page.textContent("#sbody"), /Today: 12 of 200 AI replies used/);
+    await page.fill("#sf input[name=daily_message_cap]", "-5");
+    await page.click("#sf button");
+    assert.equal(await page.$eval("#sf input[name=daily_message_cap]", (el) => el.checkValidity()), false, "browser rejects a negative limit");
+    assert.ok(!writes.some((x) => x.table === "ai_settings"), "nothing saved");
+    await page.fill("#sf input[name=daily_message_cap]", "50");
+    await page.click("#sf button");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => t.textContent === "Saved"));
+    const w = writes.find((x) => x.table === "ai_settings" && x.body?.ai);
+    assert.equal(w.body.ai.daily_message_cap, 50);
+    assert.equal(w.body.ai.confidence_threshold, 0.7, "other AI settings kept");
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });

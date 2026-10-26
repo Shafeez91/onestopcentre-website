@@ -26,7 +26,8 @@ export function mergeQualification(current = {}, updates = {}) {
 const summariseViolations = (vs) => vs.map((v) => `- ${v.code}: ${v.detail}`).join("\n");
 
 /**
- * @param {object} p { db, llm, leadId, message, history, now, mode: "simulate" | "live" }
+ * @param {object} p { db, llm, reserve?, leadId, message, history, now, mode: "simulate" | "live" }
+ *   reserve(): Promise<{allowed, used, cap}> — books one AI reply against the daily cap
  */
 export async function respond(p) {
   const t0 = Date.now();
@@ -66,7 +67,22 @@ export async function respond(p) {
   const system = buildSystemPrompt(settings, ctx.objections);
   const contextText = renderContext(ctx);
 
-  // 3) AI draft + validation, with one corrected retry
+  // 3) daily cost cap: reserve one AI reply before calling the model (fail closed if usage can't be checked)
+  if (p.reserve) {
+    let quota;
+    try { quota = await p.reserve(); } catch (e) { quota = { allowed: false, error: e?.message || String(e) }; }
+    if (!quota?.allowed) {
+      const lang = ctx.buyer?.preferred_language === "en" ? "en" : guessLang;
+      const why = quota?.error ? `AI usage could not be checked (${quota.error})` : `the daily AI limit (${quota.cap}) has been reached`;
+      return finish({
+        decision: "capped", reply: fixedReply("safe_fallback", lang), language: lang, agent: "handover", confidence: 0, quota,
+        actions: [{ type: "handover", reason: "other", summary: `Not answered by the AI: ${why}. Buyer wrote: "${message.slice(0, 300)}"`, next_action: "Reply to the buyer personally." }],
+      });
+    }
+    base.quota = quota;
+  }
+
+  // 4) AI draft + validation, with one corrected retry
   let data = null, check = null, feedback = null, usage = { input_tokens: 0, output_tokens: 0 }, servedBy = null;
   try {
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -88,7 +104,7 @@ export async function respond(p) {
   }
   base.model = servedBy; base.usage = usage;
 
-  // 4) decision
+  // 5) decision
   const actions = [];
   let decision = "reply", reply = data.reply;
   if (!check.ok) {
@@ -103,7 +119,7 @@ export async function respond(p) {
     actions.push({ type: "handover", reason: "low_confidence", summary: `AI confidence ${Number(data.confidence).toFixed(2)} is below ${threshold}. Draft sent: "${reply.slice(0, 300)}"`, next_action: "Review the conversation and follow up." });
   }
 
-  // 5) qualification, scoring, interests, appointment request
+  // 6) qualification, scoring, interests, appointment request
   const leadQual = {};
   if (ctx.lead?.qualification_known) Object.assign(leadQual, ctx.lead.qualification_known);
   const { qualification, changed } = mergeQualification(leadQual, data.qualification_updates || {});

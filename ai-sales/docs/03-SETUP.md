@@ -44,6 +44,7 @@ Note: messages contain buyer names and phone numbers — keep the chat private o
 ## 4c. AI assistant (Phase 3)
 Set in Netlify (Functions scope) and redeploy: `ANTHROPIC_API_KEY`, `AI_SALES_ENABLED=true` (optional `SUPABASE_SERVICE_ROLE_KEY` for the run log).
 Then open `/sales/` → **AI test console** and chat as a buyer. Replies are simulated: nothing is sent and no lead changes.
+Cost control: a daily cap on AI replies (default 200) in `/sales/` → Settings → AI model & limits, plus a spend limit in your Anthropic account (Settings → Limits) and prepaid credits with auto-reload off.
 Live evaluation (calls the API, costs money): `ANTHROPIC_API_KEY=… node ai-sales/tests/eval/run-eval.mjs`.
 
 ## 5. Switching the module off

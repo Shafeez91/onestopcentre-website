@@ -21,7 +21,8 @@ export default async (req) => {
     .map((h) => ({ role: h?.role === "assistant" ? "assistant" : "user", text: String(h?.text || "").slice(0, 2000) })).filter((h) => h.text);
 
   try {
-    const result = await respond({ db: userDb(caller), llm: (p) => callClaude(p), leadId, message, history, mode: "simulate" });
+    const db = userDb(caller);
+    const result = await respond({ db, llm: (p) => callClaude(p), reserve: () => db.rpc("ai_reserve_ai_call", {}), leadId, message, history, mode: "simulate" });
     const svc = serviceDb();
     const runId = svc ? await logRun(svc, { result, leadId, channel: "simulate", input: { by: caller.email } }) : null;
     return json({ ...result, run_id: runId, simulated: true });

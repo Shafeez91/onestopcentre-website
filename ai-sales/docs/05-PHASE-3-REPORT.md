@@ -10,11 +10,13 @@
   6. **CRM actions** it would take: qualification merge (keeps known answers), transparent re-score, project interest, pending appointment request (never confirmed), handover with summary and next action, follow-up cancellation. `applyActions()` performs them for live channels (Phase 4) with idempotent keys.
 - **AI test console** (`/sales/#/ai-test`): chat as a buyer (new buyer or an existing lead), see the reply, the decision, the checker's verdict on each draft, the facts used and the CRM changes it *would* make. Simulation only; nothing is sent or saved. Rate-limited to 20 messages per minute.
 - **Settings → AI model & limits**: model (default `claude-opus-5-5`), effort, confidence threshold, reply length.
+- **Daily cost cap** (migration `20261027000005`, applied to production 2026-10-27): every buyer message the AI answers reserves one slot in a per-day counter (Malaysia time) inside the database before the model is called; the cap (default 200, 0 = AI off) is read from settings in the database, so it can't be bypassed. At the cap the AI is not called, the buyer gets the holding reply, an advisor is alerted, and one Telegram message goes out that day. If usage can't be checked, it fails closed. Settings → AI model & limits shows today's usage.
 - **Run log**: every simulated run is written to `ai_agent_runs` when `SUPABASE_SERVICE_ROLE_KEY` is set.
 
 ## 2. Files
 New: `ai-sales/lib/{llm,prompt,context,orchestrator}.mjs`, `sales/shared/{guard,validator}.mjs`, `netlify/functions/sales-ai.mjs`, `sales/js/aitest.js`, `ai-sales/tests/unit/{ai,syntax}.test.mjs`, `ai-sales/tests/eval/run-eval.mjs`.
-Changed: `ai-sales/lib/server.mjs` (DB adapters), `sales/js/app.js` (route), `sales/js/admin.js` (effort setting), `sales/app.css`, browser tests. No database changes in this phase.
+Database: `ai_usage_daily` table and `ai_reserve_ai_call()` (migration 5).
+Changed: `ai-sales/lib/server.mjs` (DB adapters), `sales/js/app.js` (route), `sales/js/admin.js` (effort setting), `sales/app.css`, browser tests. 
 
 The Claude API is called over raw HTTPS rather than the official SDK because the site has no `package.json`/build step (adding one would change how Netlify publishes the live site). The request follows the documented Messages API shape and is covered by a test that checks headers and body.
 
@@ -22,9 +24,9 @@ The Claude API is called over raw HTTPS rather than the official SDK because the
 | Suite | Result |
 |---|---|
 | Existing-site regression | 40 / 40 |
-| Unit (incl. 25 new AI tests: guards, validator, context freshness, prompt/schema, orchestrator decisions, retry/block, opt-out, handover, appointments, failures, API adapter; 19 ES-module syntax checks) | 58 / 58 |
-| Database | 28 / 28 |
-| Browser (incl. the AI test console on phone/iPad/desktop) | 10 / 10 |
+| Unit (incl. 25 new AI tests: guards, validator, context freshness, prompt/schema, orchestrator decisions, retry/block, opt-out, handover, appointments, failures, API adapter; 19 ES-module syntax checks) | 59 / 59 |
+| Database (incl. daily cap: exact count, refusal, one alert, per-day reset, permissions) | 31 / 31 |
+| Browser (incl. the AI test console and AI limit settings) | 11 / 11 |
 | **Live AI evaluation** (15 BM/EN/Manglish scenarios against the real model) | **Not run — no API key in this environment.** Dry run with a stub confirmed the grader works (a one-size reply fails 7/15). |
 
 Bugs found and fixed by the new tests before release: "speak with an advisor" not recognised as a human request; "visited the showroom" missed by the impersonation check; "belum disahkan" (not yet confirmed) wrongly blocked; offering to check availability wrongly blocked; a shadowed `URL` constant broke link checking; a template typo that stopped the dashboard loading; console handlers reading a detached container.

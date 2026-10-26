@@ -272,3 +272,21 @@ test("LLM adapter: documented request shape, fallback opt-in, JSON parsing, refu
   await assert.rejects(callClaude({ apiKey: "k", system: "S", messages: [], schema: {}, fetchImpl: async () => Response.json({ error: { message: "bad key" } }, { status: 401 }) }), (e) => e.kind === "auth");
   await assert.rejects(callClaude({ system: "S", messages: [], schema: {}, fetchImpl: async () => Response.json(ok) }), (e) => e.kind === "config");
 });
+
+test("daily cap: the AI is not called once the limit is reached, and fails closed if usage can't be checked", async () => {
+  const llm = scripted(draft());
+  let r = await respond({ db: fakeDb(), llm, reserve: async () => ({ allowed: false, used: 200, cap: 200 }), message: "harga Type A?", now: NOW });
+  assert.equal(r.decision, "capped");
+  assert.equal(llm.calls.length, 0, "no model call, no cost");
+  assert.match(r.reply, /penasihat kami/i);
+  assert.ok(r.actions.some((a) => a.type === "handover" && /daily AI limit \(200\)/.test(a.summary)));
+  r = await respond({ db: fakeDb(), llm, reserve: async () => { throw new Error("db down"); }, message: "harga Type A?", now: NOW });
+  assert.equal(r.decision, "capped");
+  assert.equal(llm.calls.length, 0);
+  assert.match(r.actions[0].summary, /could not be checked \(db down\)/);
+  r = await respond({ db: fakeDb(), llm, reserve: async () => ({ allowed: true, used: 5, cap: 200 }), message: "harga Type A?", now: NOW });
+  assert.equal(r.decision, "reply");
+  assert.equal(llm.calls.length, 1);
+  const stop = await respond({ db: fakeDb(), llm, reserve: async () => { throw new Error("must not be called"); }, message: "STOP", now: NOW });
+  assert.equal(stop.decision, "opt_out", "opt-outs never use up the AI allowance");
+});

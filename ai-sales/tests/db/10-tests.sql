@@ -476,4 +476,46 @@ do $$ begin
 end $$;
 rollback;
 
+\echo 'T29 daily AI cap: exact count, refusal after the cap, one Telegram alert, counter per day'
+begin;
+update public.ai_settings set ai = ai || '{"daily_message_cap": 3}';
+set local role authenticated;
+select public.t_login('advisor@test.local');
+do $$ declare r jsonb; i int; begin
+  for i in 1..3 loop r := public.ai_reserve_ai_call(); assert (r ->> 'allowed')::boolean, 'call ' || i || ' allowed'; end loop;
+  assert (r ->> 'used')::int = 3;
+  r := public.ai_reserve_ai_call(); assert not (r ->> 'allowed')::boolean, 'fourth call refused';
+  r := public.ai_reserve_ai_call(); assert not (r ->> 'allowed')::boolean, 'fifth call refused';
+end $$;
+reset role;
+do $$ begin
+  assert (select ai_messages from public.ai_usage_daily) = 3, 'never counts past the cap';
+  assert (select capped from public.ai_usage_daily) = 2;
+  assert (select count(*) from net.calls where body ->> 'text' like '%AI daily limit reached (3 replies today)%') = 1, 'one alert per day';
+  -- yesterday's usage does not count today
+  update public.ai_usage_daily set day = day - 1;
+end $$;
+set local role authenticated;
+select public.t_login('advisor@test.local');
+do $$ begin assert (public.ai_reserve_ai_call() ->> 'allowed')::boolean, 'new day starts at zero'; end $$;
+rollback;
+
+\echo 'T30 daily AI cap of 0 switches the AI off; viewers cannot spend; anon cannot call it'
+begin;
+update public.ai_settings set ai = ai || '{"daily_message_cap": 0}';
+set local role authenticated;
+select public.t_login('advisor@test.local');
+do $$ begin assert not (public.ai_reserve_ai_call() ->> 'allowed')::boolean, 'cap 0 = AI off'; end $$;
+select public.t_login('viewer@test.local');
+do $$ begin
+  begin perform public.ai_reserve_ai_call(); assert false, 'viewer reserved an AI call';
+  exception when raise_exception then null; end;
+end $$;
+reset role;
+do $$ begin assert not has_function_privilege('anon', 'public.ai_reserve_ai_call()', 'execute'); end $$;
+rollback;
+
+\echo 'T31 existing settings get the default cap of 200'
+do $$ begin assert (select (ai ->> 'daily_message_cap')::int from public.ai_settings) = 200; end $$;
+
 \echo 'ALL DB TESTS PASSED'

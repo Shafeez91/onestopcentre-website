@@ -9,7 +9,7 @@ const save = (lead, turns) => { try { sessionStorage.setItem(KEY(lead), JSON.str
 const SAMPLES = ["Hi, how much is this property?", "Monthly berapa?", "Cashback betul ke?", "Saya nak datang showroom Sabtu", "Saya takut tak boleh dapat loan", "Boleh bagi discount lagi?", "Bro got unit left or not?", "STOP"];
 const DECISION = {
   reply: ["Would send", "ok"], handover: ["Would send + alert a human", "warn"], blocked: ["Draft blocked — safe reply + human alert", "alert"],
-  opt_out: ["Opt-out honoured", "warn"], paused: ["AI paused — no reply", ""], error: ["AI unavailable — safe reply + human alert", "alert"], ignored: ["Ignored", ""],
+  opt_out: ["Opt-out honoured", "warn"], capped: ["Daily AI limit reached — safe reply + human alert", "alert"], paused: ["AI paused — no reply", ""], error: ["AI unavailable — safe reply + human alert", "alert"], ignored: ["Ignored", ""],
 };
 const REASON = { customer_request: "buyer asked for a person", ready_to_buy: "ready to buy", negotiation: "price negotiation", legal: "legal / contract question", complaint: "complaint", financing: "financing assessment", conflicting_info: "facts missing or conflicting", low_confidence: "AI not confident", sensitive: "sensitive situation", other: "other" };
 function actionText(a) {
