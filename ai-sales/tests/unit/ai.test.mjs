@@ -5,7 +5,7 @@ import { isOptOut, wantsHuman, detectLanguage } from "../../../sales/shared/guar
 import { validateReply, extractAmounts } from "../../../sales/shared/validator.mjs";
 import { buildMessages, buildSystemPrompt, REPLY_SCHEMA, normalizeReply } from "../../lib/prompt.mjs";
 import { loadContext, buyerAmounts, searchQuery } from "../../lib/context.mjs";
-import { respond, applyActions, mergeQualification } from "../../lib/orchestrator.mjs";
+import { respond, applyActions, mergeQualification, logRun } from "../../lib/orchestrator.mjs";
 import { callClaude, LlmError } from "../../lib/llm.mjs";
 
 const NOW = new Date("2026-10-27T03:00:00Z");
@@ -320,4 +320,85 @@ test("daily cap: the AI is not called once the limit is reached, and fails close
   assert.equal(llm.calls.length, 1);
   const stop = await respond({ db: fakeDb(), llm, reserve: async () => { throw new Error("must not be called"); }, message: "STOP", now: NOW });
   assert.equal(stop.decision, "opt_out", "opt-outs never use up the AI allowance");
+});
+
+/* ---------- loan eligibility engine in the conversation ---------- */
+const FIN_EMPTY = { route: "", age: 0, basic_salary: 0, fixed_allowances: 0, variable_income: 0, self_employed_income: 0, mandatory_deductions: 0, commitments_monthly: 0,
+  credit_card_balance: 0, confirmed_service: "", service_years: 0, second_financing: "", property_price: 0, valuation: 0, requested_amount: 0, down_payment: 0,
+  property_count: 0, co_age: 0, co_income: 0, co_mandatory_deductions: 0, co_commitments_monthly: 0 };
+const LPPSA_SAID = { ...FIN_EMPTY, route: "lppsa", age: 30, basic_salary: 4000, fixed_allowances: 1000, mandatory_deductions: 500, commitments_monthly: 800, confirmed_service: "yes", property_price: 450000 };
+
+test("loan engine: new figures → engine recalculates → the AI rewrites from the result; only engine figures pass", async () => {
+  const first = draft({ reply: "Baik Tuan, saya kira sekejap.", intent: "instalment", financing_updates: LPPSA_SAID });
+  const second = draft({ reply: "Anggaran awal LPPSA: ansuran lebih kurang RM1,992 sebulan untuk RM450,000, tempoh 35 tahun. Ini anggaran awal, bukan kelulusan.", intent: "instalment", financing_updates: LPPSA_SAID });
+  const llm = scripted(first, second);
+  const r = await respond({ db: fakeDb(), llm, message: "Saya cikgu, gaji pokok 4000, elaun 1000, potongan wajib 500, hutang kereta 800, umur 30, dah sah jawatan. Rumah 450k", history: [{ role: "assistant", text: "Hai, saya pembantu AI." }], now: NOW, mode: "simulate" });
+  assert.equal(llm.calls.length, 2);
+  assert.match(llm.calls[0].system, /Loan eligibility and affordability/);
+  const ctx2 = llm.calls[1].messages.at(-1).content;
+  assert.match(ctx2, /"financing_engine"/);
+  assert.match(ctx2, /"instalment_for_needed":1992/);
+  assert.match(ctx2, /"recalculated_this_turn":true/);
+  assert.equal(r.decision, "reply");
+  assert.match(r.reply, /RM1,992/);
+  assert.deepEqual(r.attempts[0].recalculated.slice(0, 2), ["route", "age"]);
+  const save = r.actions.find((a) => a.type === "save_financing");
+  assert.equal(save.result.outcome, "potentially_affordable");
+  assert.equal(save.new_assessment, true);
+  assert.equal(r.qualification.financing, "lppsa");
+  assert.equal(r.qualification.financing_check, "potentially_affordable");
+  assert.ok(!r.actions.some((a) => a.type === "handover"), "nothing to escalate");
+  assert.equal(r.financing.inputs.commitments_monthly, 800);
+});
+
+test("loan engine: an instalment the engine did not calculate is blocked, even with assumptions stated", async () => {
+  const bad = draft({ reply: "Hai, saya pembantu AI. Anggaran ansuran RM1,500 sebulan, kadar 4%, 35 tahun.", intent: "instalment" });
+  const r = await respond({ db: fakeDb(), llm: scripted(bad, bad), message: "monthly berapa?", now: NOW, mode: "simulate" });
+  assert.equal(r.decision, "blocked");
+  assert.equal(r.attempts[0].violations[0].code, "uncalculated_amount");
+  // the illustrative example for a listed price is an engine figure: RM465,000 × 90% at 4.2% over 35 years
+  const ok = draft({ reply: "Hai, saya pembantu AI. Contoh: pinjaman RM418,500 (90%) pada kadar andaian 4.2%, 35 tahun ≈ RM1,904 sebulan. Anggaran sahaja, bukan tawaran pinjaman.", intent: "instalment" });
+  const r2 = await respond({ db: fakeDb(), llm: scripted(ok), message: "monthly berapa?", now: NOW, mode: "simulate" });
+  assert.equal(r2.decision, "reply", JSON.stringify(r2.violations));
+});
+
+test("loan engine: switched off for live chats unless the loan_engine flag is on", async () => {
+  const llm = scripted(draft({ financing_updates: LPPSA_SAID }));
+  const r = await respond({ db: fakeDb(), llm, message: "gaji 4000", now: NOW, mode: "live" });
+  assert.equal(llm.calls.length, 1);
+  assert.doesNotMatch(llm.calls[0].system, /Loan eligibility and affordability/);
+  assert.ok(!r.actions.some((a) => a.type === "save_financing"));
+  assert.equal(r.financing, undefined);
+});
+
+test("loan engine (live): a challenging result is saved and escalated to an advisor with a summary", async () => {
+  const settings = [{ id: 1, flags: { loan_engine: true }, persona: {}, ai: { confidence_threshold: 0.7 }, business: {}, scoring: {}, compliance: {} }];
+  const lead = { id: "L1", lead_code: "OSC-000001", qualification: {}, contact: { full_name: "Ali" } };
+  const saved = { id: "FP1", inputs: { route: "lppsa", age: 60, basic_salary: 4000, fixed_allowances: 1000, mandatory_deductions: 500, commitments_monthly: 800, confirmed_service: "yes" }, result: null };
+  const db = fakeDb({ ai_settings: settings, ai_leads: [lead], ai_financing_profiles: [saved] });
+  const said = draft({ reply: "Terima kasih Tuan, saya semak.", financing_updates: { ...FIN_EMPTY, property_price: 700000 } });
+  const r = await respond({ db, llm: scripted(said, draft({ reply: "Untuk RM700,000, anggaran awal menunjukkan ia berpotensi mencabar. Penasihat kami akan bantu semak pilihan lain. Ini bukan keputusan kelulusan.", financing_updates: FIN_EMPTY })),
+    leadId: "L1", message: "rumah 700k boleh?", history: [{ role: "assistant", text: "Hai" }], now: NOW, mode: "live" });
+  assert.equal(r.decision, "reply", JSON.stringify(r.violations));
+  const save = r.actions.find((a) => a.type === "save_financing");
+  assert.equal(save.profile_id, "FP1");
+  assert.equal(save.inputs.age, 60, "earlier answers kept");
+  assert.equal(save.result.outcome, "potentially_challenging");
+  const h = r.actions.find((a) => a.type === "handover");
+  assert.equal(h.reason, "financing");
+  assert.match(h.summary, /Potentially challenging[\s\S]*not an approval/);
+
+  await applyActions(db, { leadId: "L1", contactId: "C1", result: r });
+  assert.ok(db.writes.some((w) => w.op === "patch" && w.path.startsWith("ai_financing_profiles?id=eq.FP1") && w.body.outcome === "potentially_challenging"));
+  assert.ok(db.writes.some((w) => w.op === "post" && w.path === "ai_financing_assessments" && w.body.route === "lppsa" && w.body.rules_version));
+  assert.ok(db.writes.some((w) => w.op === "patch" && w.path.startsWith("ai_leads") && w.body.qualification?.financing_check === "potentially_challenging"));
+});
+
+test("loan engine: the run log keeps no income figures", async () => {
+  const db = fakeDb();
+  const r = await respond({ db, llm: scripted(draft({ financing_updates: LPPSA_SAID }), draft({ financing_updates: LPPSA_SAID })), message: "gaji 4000", now: NOW, mode: "simulate" });
+  await logRun(db, { result: r });
+  const run = db.writes.find((w) => w.path === "ai_agent_runs").body;
+  assert.doesNotMatch(JSON.stringify(run.output), /4000|"inputs"|"result"/, "field names only, no figures");
+  assert.equal(run.output.actions.find((a) => a.type === "save_financing").outcome, "potentially_affordable");
 });

@@ -10,6 +10,8 @@
 //   isFirstReply        the AI's first message in this conversation (must disclose it is an AI)
 //   allowedUrls         exact URLs the AI may share; allowedHosts hostnames always allowed
 //   maxChars            reply length limit
+//   strictAmounts       true when the loan engine is on: instalment / loan figures must come from the engine
+//                       (they are in allowedAmounts), so the free-form "estimate with assumptions" allowance is off
 
 const HEDGE = /(anggaran|anggarkan|indicative|indikatif|dari\s+rm|from\s+rm|bermula|starting|sekitar|around|lebih kurang|approx|approximately|tertakluk|subject to|kira-kira|lebih\s+kurang|estimate|estimated|mungkin)/i;
 const ASSUMPTION = /(faedah|interest|kadar|rate|tempoh|tenure|tahun|years|margin|pinjaman|loan|financing|pembiayaan)/i;
@@ -68,8 +70,9 @@ export function validateReply(reply, ctx = {}) {
   for (const a of extractAmounts(text)) {
     if (near(a.value, allowed)) continue;
     if (near(a.value, indicative) && hedged) continue;
-    if (a.value < 20000 && hedged && assumptions) continue;                // monthly instalment estimate with stated assumptions
+    if (a.value < 20000 && hedged && assumptions && !ctx.strictAmounts) continue; // monthly instalment estimate with stated assumptions
     if (near(a.value, indicative)) add("unlabelled_indicative_price", `${a.raw} is a website (indicative) price but the reply does not say it is indicative.`);
+    else if (ctx.strictAmounts && a.value < 20000 && assumptions) add("uncalculated_amount", `${a.raw} is not a figure from the loan engine; quote only financing_engine figures.`);
     else add("unverified_price", `${a.raw} does not match any verified price, fee or promotion on record.`);
   }
 

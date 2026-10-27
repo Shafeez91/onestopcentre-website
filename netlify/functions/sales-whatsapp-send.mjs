@@ -53,9 +53,12 @@ export default async (req) => {
   }
   if (!r.sent) return json({ error: r.error || "WhatsApp did not accept the message" }, 502);
 
+  // a person replied, so the conversation is theirs: the AI stops until someone presses "Resume AI". The database
+  // trigger on the recorded message already did this (and cancelled the AI's pending work); this repeats it as the
+  // staff member, so it holds even on a database without that trigger.
   const db = userDb(caller);
-  await db.patch(`ai_conversations?id=eq.${enc(conv.id)}`, { unread_count: 0, ...(body.take_over ? { mode: "human", assigned_email: caller.email } : {}) });
-  if (body.take_over && conv.lead?.id) await db.patch(`ai_leads?id=eq.${enc(conv.lead.id)}`, { ai_paused: true, owner_email: caller.email });
+  await db.patch(`ai_conversations?id=eq.${enc(conv.id)}`, { unread_count: 0, mode: "human", assigned_email: caller.email });
+  if (conv.lead?.id) await db.patch(`ai_leads?id=eq.${enc(conv.lead.id)}`, { ai_paused: true, owner_email: caller.email });
   await audit(caller, "whatsapp_send", { table: "ai_messages", id: r.id, conversation_id: conv.id, template: body.template_id || null });
   return json({ ok: true, message_id: r.id });
 };

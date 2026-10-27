@@ -22,7 +22,8 @@ export default async (req) => {
 
   try {
     const db = userDb(caller);
-    const result = await respond({ db, llm: (p) => callClaude(p), reserve: () => db.rpc("ai_reserve_ai_call", {}), leadId, message, history, mode: "simulate" });
+    const result = await respond({ db, llm: (p) => callClaude(p), reserve: () => db.rpc("ai_reserve_ai_call", {}), leadId, message, history, mode: "simulate",
+      financingInputs: body?.financing_inputs && typeof body.financing_inputs === "object" ? body.financing_inputs : null });
     const svc = serviceDb();
     const runId = svc ? await logRun(svc, { result, leadId, channel: "simulate", input: { by: caller.email } }) : null;
     return json({ ...result, run_id: runId, simulated: true });

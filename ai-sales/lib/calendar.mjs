@@ -107,17 +107,21 @@ export const KIND_LABEL = {
 };
 const pin = (map) => (map ? `\n📍 ${map}` : "");
 /** The fixed confirmation sent to the buyer only after the calendar event exists. `map` adds a map link line. */
-export function confirmationText({ kind, start, location, map = "", lang }) {
-  const L = lang === "en" ? "en" : "ms", what = KIND_LABEL[L][kind] || KIND_LABEL[L].showroom_visit, when = fmt(new Date(start), L);
+export function confirmationText({ kind, start, location, map = "", lang, project = "" }) {
+  const L = lang === "en" ? "en" : "ms", what = (KIND_LABEL[L][kind] || KIND_LABEL[L].showroom_visit) + (project ? ` (${project})` : ""), when = fmt(new Date(start), L);
   return (L === "en"
     ? `✅ Your appointment is confirmed: ${what} on ${when}${location ? ` at ${location}` : ""}. Reply to this message if you need to change the time.`
     : `✅ Temujanji anda telah disahkan: ${what} pada ${when}${location ? ` di ${location}` : ""}. Balas mesej ini jika perlu menukar masa.`) + pin(map);
 }
-export function reminderText({ kind, start, location, map = "", lang }) {
-  const L = lang === "en" ? "en" : "ms", what = KIND_LABEL[L][kind] || KIND_LABEL[L].showroom_visit, when = fmt(new Date(start), L);
+/** `ask`: end by asking whether the buyer can still make it (left out once they have confirmed attendance). */
+export function reminderText({ kind, start, location, map = "", lang, project = "", ask = false }) {
+  const L = lang === "en" ? "en" : "ms", what = (KIND_LABEL[L][kind] || KIND_LABEL[L].showroom_visit).toLowerCase() + (project ? ` (${project})` : ""), when = fmt(new Date(start), L);
+  ask = ask && (kind === "showroom_visit" || kind === "property_viewing");
+  const end = L === "en" ? (ask ? "Will you still be able to make it?" : "Reply to this message if you need to change the time.")
+    : (ask ? "Tuan/Puan masih boleh datang?" : "Balas mesej ini jika perlu menukar masa.");
   return (L === "en"
-    ? `Reminder: your ${what.toLowerCase()} is on ${when}${location ? ` at ${location}` : ""}. Reply to this message if you need to change the time.`
-    : `Peringatan: ${what.toLowerCase()} anda pada ${when}${location ? ` di ${location}` : ""}. Balas mesej ini jika perlu menukar masa.`) + pin(map);
+    ? `Reminder: your ${what} is on ${when}${location ? ` at ${location}` : ""}. ${end}`
+    : `Peringatan: ${what} anda pada ${when}${location ? ` di ${location}` : ""}. ${end}`) + pin(map);
 }
 
 const IN_PERSON = new Set(["showroom_visit", "property_viewing"]);

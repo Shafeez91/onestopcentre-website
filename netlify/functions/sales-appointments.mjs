@@ -6,6 +6,7 @@ import { liveDeps } from "../../ai-sales/lib/live.mjs";
 import { sendOutbound, loadSettings } from "../../ai-sales/lib/worker.mjs";
 import { confirmationText, placeFor } from "../../ai-sales/lib/calendar.mjs";
 import { templateParams } from "../../ai-sales/lib/followups.mjs";
+import { confirmAppointmentNow } from "../../ai-sales/lib/automation.mjs";
 
 const enc = encodeURIComponent;
 
@@ -54,15 +55,21 @@ export default async (req) => {
     reminders: [...(appt.reminders || []), { type: "confirmation", at: new Date().toISOString(), by: caller.email }] });
   await audit(caller, "appointment_confirm", { table: "ai_appointments", id: appt.id, calendar_event_id: eventId });
 
-  // tell the buyer on WhatsApp when possible
+  // tell the buyer on WhatsApp when possible: through the confirmation job the database created on confirming,
+  // so the scheduled worker never sends a second one (older databases without jobs: sent directly below)
   let notified = false, note = null;
-  if (body.notify_buyer) {
+  if (!body.notify_buyer) {
+    await deps.db.patch(`ai_automation_jobs?appointment_id=eq.${enc(appt.id)}&kind=eq.appt_confirmation&status=eq.scheduled`, { status: "cancelled", reason: "the advisor chose not to notify the buyer" }).catch(() => {});
+  }
+  const viaJob = body.notify_buyer ? await confirmAppointmentNow(deps, settings, appt.id).catch(() => null) : null;
+  if (viaJob) { notified = viaJob.status === "sent"; note = notified ? null : viaJob.reason || null; }
+  else if (body.notify_buyer) {
     const conv = (await deps.db.get(`ai_conversations?contact_id=eq.${enc(appt.lead.contact_id)}&channel=eq.whatsapp&status=eq.open&select=*`))?.[0];
     const to = c.wa_id || c.phone_e164, lang = c.preferred_language === "en" ? "en" : "ms";
     if (!settings.flags?.whatsapp_outbound || !deps.wa) note = "WhatsApp sending is off or not connected.";
     else if (!conv || !to) note = "The buyer has no WhatsApp conversation yet.";
     else if (inWindow(conv.last_inbound_at, new Date())) {
-      const s = await sendOutbound(deps, { conversation: conv, to, text: confirmationText({ kind: appt.kind, start, location, map, lang }), senderType: "human", senderEmail: caller.email, purpose: "service" });
+      const s = await sendOutbound(deps, { conversation: conv, to, text: confirmationText({ kind: appt.kind, start, location, map, lang }), senderType: "system", senderEmail: caller.email, purpose: "service" });
       notified = s.sent; note = s.error || null;
     } else {
       const t = ((await deps.db.get("ai_message_templates?name=eq.appointment_confirmation&wa_status=eq.approved&active=is.true&select=*")) || []).filter((x) => x.wa_template_name);
@@ -70,7 +77,7 @@ export default async (req) => {
       if (!tpl) note = "More than 24 hours since the buyer's last message and no approved \"appointment_confirmation\" template.";
       else {
         const when = new Intl.DateTimeFormat(tpl.lang === "en" ? "en-MY" : "ms-MY", { timeZone: "Asia/Kuala_Lumpur", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(start);
-        const s = await sendOutbound(deps, { conversation: conv, to, template: { ...tpl, params: templateParams(tpl, { name: c.full_name, appointment: when, location: [location, map].filter(Boolean).join(" ") }) }, senderType: "human", senderEmail: caller.email, purpose: "service" });
+        const s = await sendOutbound(deps, { conversation: conv, to, template: { ...tpl, params: templateParams(tpl, { name: c.full_name, appointment: when, location: [location, map].filter(Boolean).join(" ") }) }, senderType: "system", senderEmail: caller.email, purpose: "service" });
         notified = s.sent; note = s.error || null;
       }
     }

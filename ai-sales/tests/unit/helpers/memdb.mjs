@@ -109,6 +109,14 @@ export function memdb(seed = {}, rpcs = {}) {
       if (name === "ai_send_telegram") { (t.telegram ||= []).push(args); return true; }
       if (name === "ai_claim_jobs") { const due = (t.ai_jobs || []).filter((j) => ["queued", "failed"].includes(j.status)); due.forEach((j) => { j.status = "running"; j.attempts = (j.attempts || 0) + 1; }); return structuredClone(due); }
       if (name === "ai_claim_follow_ups") { const due = (t.ai_follow_up_jobs || []).filter((j) => j.status === "scheduled" && new Date(j.run_at) <= new Date(args.now || Date.now())); due.forEach((j) => { j.status = "processing"; j.attempts = (j.attempts || 0) + 1; }); return structuredClone(due); }
+      if (name === "ai_claim_automation_jobs") {
+        // like the SQL function: due "scheduled" jobs (by t.__now when a test sets a clock), or one job by id; each handed out once
+        const now = new Date(t.__now || Date.now());
+        const due = (t.ai_automation_jobs || []).filter((j) => j.status === "scheduled" && (args.only_id ? j.id === args.only_id : new Date(j.run_at) <= now) && (j.attempts || 0) < 5)
+          .sort((a, b) => String(a.run_at).localeCompare(String(b.run_at))).slice(0, args.max_jobs || 20);
+        due.forEach((j) => { j.status = "processing"; j.attempts = (j.attempts || 0) + 1; });
+        return structuredClone(due);
+      }
       if (name === "ai_follow_up_start") { (t.started ||= []).push(args); return "fu-job"; }
       throw new Error("memdb: unexpected rpc " + name);
     },

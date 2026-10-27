@@ -135,6 +135,7 @@ legend{font-size:.85rem;font-weight:600;color:var(--mute)}
 .switch{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);color:var(--ink)!important}
 .switch input{width:22px;height:22px;min-height:0;margin-top:2px;flex:none;accent-color:var(--acc)}
 .switch small{font-weight:400}
+.form label.switch{flex-direction:row;gap:12px;color:var(--ink)}
 .seg{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
 .seg a{padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink);text-decoration:none;font-size:.88rem}
 .seg a.on{background:var(--navy);border-color:var(--navy);color:#fff}
@@ -265,3 +266,7 @@ dialog::backdrop{background:rgba(6,15,38,.5)}
 .tick.read{color:#2b7de9}.tick.failed{color:var(--bad)}
 .thread .back{display:none}
 @media (max-width:900px){.inbox{grid-template-columns:minmax(0,1fr)}.inbox.has-thread .conv-list{display:none}.inbox:not(.has-thread) .thread{display:none}.thread .back{display:inline}}
+/* inbox: conversation ownership and per-buyer automation switches */
+.note.own{margin:.25rem 0}
+.auto-row{display:flex;flex-wrap:wrap;gap:.25rem 1.25rem;margin:.25rem 0 .5rem}
+.auto-row .check{min-width:0}

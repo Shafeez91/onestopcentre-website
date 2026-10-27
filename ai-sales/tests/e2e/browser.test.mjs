@@ -171,13 +171,14 @@ test("AI test console: sends the conversation, shows the draft, the checker resu
     assert.match(details, /Alert a human — price negotiation/);
     assert.match(details, /unverified_price/);
     const sent = writes.find((w) => w.simulate).simulate;
-    assert.deepEqual(sent, { lead_id: null, history: [], message: "Boleh bagi discount lagi?" });
+    assert.deepEqual(sent, { lead_id: null, history: [], message: "Boleh bagi discount lagi?", financing_inputs: null });
     await page.fill("#msg", "ok terima kasih");
     await page.click("#say button");
     await page.waitForFunction(() => document.querySelectorAll(".msg.ai").length === 2);
     if (process.env.E2E_SHOTS) { await page.click(".msg.ai details summary"); await page.screenshot({ path: path.join(process.env.E2E_SHOTS, "phone-ai-test.png"), fullPage: true }); }
     const second = writes.filter((w) => w.simulate)[1].simulate;
     assert.equal(second.history.length, 2, "previous buyer message and AI reply are sent as history");
+    assert.deepEqual(second.financing_inputs, { route: "bank", age: 35 }, "loan figures from earlier turns are carried forward");
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
@@ -213,15 +214,14 @@ test("WhatsApp inbox: thread with delivery ticks, reply as staff, take over from
     assert.equal(await page.getAttribute(".tick.read", "title"), "Read");
     assert.match(await page.textContent(".msg .err"), /131026 Message undeliverable/);
     assert.ok(writes.some((w) => w.table === "ai_conversations" && w.body?.unread_count === 0), "opening the chat clears the unread count");
-    assert.equal(await page.isChecked("#reply input[name=take_over]"), true, "replying pauses the AI by default");
+    assert.match(await page.textContent("#thread"), /Follow-up pending[\s\S]*Sending a reply here \(or from the WhatsApp app\) hands the chat to you/);
     await page.fill("#reply textarea", "Boleh, saya call petang ini.");
     await page.click("#reply button");
-    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Sent on WhatsApp/.test(t.textContent)));
-    assert.deepEqual(writes.find((w) => w.send).send, { conversation_id: "V1", text: "Boleh, saya call petang ini.", take_over: true });
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Sent on WhatsApp — you are now handling this chat/.test(t.textContent)));
+    assert.deepEqual(writes.find((w) => w.send).send, { conversation_id: "V1", text: "Boleh, saya call petang ini." });
     await page.click("#take");
     await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /You are handling this chat/.test(t.textContent)));
-    assert.ok(writes.some((w) => w.table === "ai_conversations" && w.body?.mode === "human"));
-    assert.ok(writes.some((w) => w.table === "ai_leads" && w.body?.ai_paused === true));
+    assert.deepEqual(writes.find((w) => w.rpc === "ai_take_over").body, { p_conversation: "V1" });
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
@@ -329,5 +329,134 @@ test("date and time fields size like other fields (iPad/iPhone Safari would othe
     await page.waitForSelector("#ff input[name=completion_date]");
     const s = await page.$eval("#ff input[name=completion_date]", (e) => { const cs = getComputedStyle(e), l = getComputedStyle(e.closest("label")); return { appearance: cs.appearance, minWidth: cs.minWidth, labelMin: l.minWidth }; });
     assert.deepEqual(s, { appearance: "none", minWidth: "0px", labelMin: "0px" });
+  } finally { await ctx.close(); }
+});
+
+test("financing check: lead page shows the saved result; the calculator previews and saves a bank check", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  for (const vp of [VIEWPORTS.phone, { width: 1280, height: 900 }]) {
+    const { page, ctx, writes, errors } = await newPage(vp);
+    try {
+      await page.goto(base + "/sales/#/lead/L1");
+      await page.waitForSelector("#fin");
+      const card = await page.textContent("#fin");
+      assert.match(card, /Potentially affordable/);
+      assert.match(card, /RM450,000/);
+      assert.match(card, /not a loan or financing approval/);
+      await page.click("#fin-calc summary");
+      await page.selectOption("#ffin select[name=route]", "bank");
+      for (const [k, v] of Object.entries({ age: "35", basic_salary: "6000", fixed_allowances: "0", mandatory_deductions: "900", commitments_monthly: "1000", credit_card_balance: "5000", property_price: "500000", down_payment: "" })) await page.fill(`#ffin input[name=${k}]`, v);
+      await page.waitForFunction(() => /May be affordable with adjustments/.test(document.querySelector("#fin-preview").textContent));
+      const prev = await page.textContent("#fin-preview");
+      assert.match(prev, /RM397,000/);       // conservative 60% DSR scenario
+      assert.match(prev, /RM2,047/);         // instalment on RM450,000 at 4.2%, 35 years
+      await page.click("#ffin button.pri");
+      await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Financing check saved/.test(t.textContent)));
+      const prof = writes.find((w) => w.table === "ai_financing_profiles" && w.method === "PATCH");
+      assert.equal(prof.body.outcome, "may_be_affordable_with_adjustments");
+      assert.equal(prof.body.source, "advisor");
+      assert.equal(prof.body.inputs.basic_salary, 6000);
+      assert.ok(writes.some((w) => w.table === "ai_financing_assessments" && w.method === "POST" && w.body.route === "bank"));
+      assert.ok(writes.some((w) => w.table === "ai_leads" && w.body?.qualification?.financing_check === "may_be_affordable_with_adjustments"));
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  }
+});
+
+test("financing check is hidden from viewers; settings validate and save the rule set", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage({ width: 1024, height: 900 });
+  try {
+    await page.goto(base + "/sales/#/settings?tab=financing");
+    await page.waitForSelector("#sf input[name=l_rate_tiers]");
+    assert.match(await page.textContent("#sbody"), /LPPSA rules not yet verified/);
+    await page.fill("#sf input[name=l_rate_tiers]", "4@750000, 4.5@900000");
+    await page.click("#sf button.pri");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /last tier has no limit/.test(t.textContent)));
+    await page.fill("#sf input[name=l_rate_tiers]", "4@750000, 4.5");
+    await page.check("#sf input[name=l_verified]");
+    await page.click("#sf button.pri");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Enter the date/.test(t.textContent)));
+    await page.fill("#sf input[name=l_verified_on]", "2026-11-01");
+    await page.fill("#sf input[name=b_rate_pct]", "3.95");
+    await page.click("#sf button.pri");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Financing rules saved/.test(t.textContent)));
+    const w = writes.find((x) => x.table === "ai_settings" && x.body?.financing);
+    assert.equal(w.body.financing.bank.rate_pct, 3.95);
+    assert.deepEqual(w.body.financing.lppsa.rate_tiers, [{ rate_pct: 4, up_to: 750000 }, { rate_pct: 4.5, up_to: null }]);
+    assert.equal(w.body.financing.lppsa.verified, true);
+    assert.equal(w.body.financing.lppsa.verified_on, "2026-11-01");
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+  // a viewer never receives income figures: the card is not rendered and the tables are not queried
+  const v = await newPage({ width: 1024, height: 900 });
+  try {
+    await v.page.route("**/rest/v1/rpc/ai_role", (r) => r.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify("viewer") }));
+    const asked = [];
+    v.page.on("request", (r) => { if (/ai_financing/.test(r.url())) asked.push(r.url()); });
+    await v.page.goto(base + "/sales/#/lead/L1");
+    await v.page.waitForSelector("#view h1");
+    assert.equal(await v.page.$("#fin"), null);
+    assert.deepEqual(asked, []);
+  } finally { await v.ctx.close(); }
+});
+
+test("inbox ownership: Human takeover shown with who and since when; Resume AI asks first; per-buyer automation switches", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const since = new Date(Date.now() - 3600e3).toISOString();
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad, { mutate: (db) => {
+    db.ai_settings[0].flags.whatsapp_outbound = true;
+    Object.assign(db.ai_conversations[0], { mode: "human", takeover_by: "advisor@test.local", human_takeover_at: since, last_human_reply_at: since });
+    db.ai_conversations[0].lead.ai_paused = true; db.ai_automation_jobs = []; } });
+  try {
+    await page.goto(base + "/sales/#/inbox?c=V1");
+    await page.waitForSelector("#back");
+    assert.match(await page.textContent(".conv-list"), /Human takeover/);
+    assert.match(await page.textContent("#thread"), /A person is handling this chat \(advisor@test\.local, since .*\)\. The AI does not reply or follow up until someone presses Resume AI/);
+    page.once("dialog", (d) => d.dismiss());
+    await page.click("#back");
+    assert.ok(!writes.some((w) => w.rpc === "ai_resume_ai"), "cancelled: nothing changes");
+    page.once("dialog", (d) => d.accept());
+    await page.click("#back");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /AI resumed/.test(t.textContent)));
+    assert.deepEqual(writes.find((w) => w.rpc === "ai_resume_ai").body, { p_conversation: "V1" });
+    await page.uncheck("#auto input[name=follow_ups]");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Switched off for this buyer/.test(t.textContent)));
+    const w = writes.find((x) => x.table === "ai_conversations" && x.body?.automation);
+    assert.deepEqual(w.body.automation, { follow_ups: false });
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("follow-up automation page: settings saved and validated; jobs listed with their checks, filtered and cancellable", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.phone);
+  try {
+    await page.goto(base + "/sales/#/followups");
+    await page.waitForSelector("#fauto");
+    const list = await page.textContent("#jlist");
+    assert.match(list, /12-hour follow-up[\s\S]*Pending/);
+    assert.match(list, /Appointment reminder[\s\S]*24 h|1 day before/);
+    assert.match(list, /Cancelled[\s\S]*a person replied/);
+    await page.selectOption("#jstat", "cancelled");
+    assert.doesNotMatch(await page.textContent("#jlist"), /Pending/);
+    await page.selectOption("#jstat", "");
+    page.once("dialog", (d) => d.accept());
+    await page.click("[data-cancel-job]");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Cancelled/.test(t.textContent)));
+    assert.ok(writes.some((w) => w.rpc === "ai_cancel_automation_job"));
+    await page.fill("#fauto input[name=appointment_reminder_minutes]", "1440, 5");
+    await page.click("#fauto button.pri");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /whole minutes from 10/.test(t.textContent)));
+    await page.fill("#fauto input[name=appointment_reminder_minutes]", "120, 1440");
+    await page.fill("#fauto input[name=follow_up_delay_hours]", "8");
+    await page.uncheck("#fauto input[name=human_reminders]");
+    await page.click("#fauto button.pri");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Automation settings saved/.test(t.textContent)));
+    const w = writes.find((x) => x.table === "ai_settings" && x.body?.automation);
+    assert.equal(w.body.automation.follow_up_delay_hours, 8);
+    assert.deepEqual(w.body.automation.appointment_reminder_minutes, [1440, 120]);
+    assert.equal(w.body.automation.human_reminders, false);
+    assert.equal(w.body.flags.module_enabled, true, "other switches kept");
+    assert.ok("handover_alerts" in w.body.notifications && w.body.notifications.telegram_chat_id === "123456789", "Telegram settings kept");
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    assert.ok(overflow <= 1, `no horizontal scroll (${overflow}px)`);
+    assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
