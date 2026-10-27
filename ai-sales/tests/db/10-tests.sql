@@ -723,4 +723,171 @@ do $$ declare c uuid; l uuid; r jsonb; begin
 end $$;
 rollback;
 
+\echo 'T42 buyer messages: a 12-hour follow-up is scheduled from the latest message; a newer message restarts it'
+begin;
+update public.ai_settings set flags = flags || '{"ai_auto_reply": true}';
+do $$ declare r jsonb; r2 jsonb; m timestamptz; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456801', 'Hafiz', 'wamid.S1', 'text', 'Info M Mira?', now() - interval '5 minutes');
+  m := (select created_at from public.ai_messages where id = (r ->> 'message_id')::uuid);
+  assert (select run_at from public.ai_automation_jobs where kind = 'smart_follow_up' and anchor_message_id = (r ->> 'message_id')::uuid) = m + interval '12 hours';
+  assert not exists (select 1 from public.ai_automation_jobs where kind = 'human_reminder'), 'the AI is answering: no human reminder';
+  r2 := public.ai_wa_inbound('60123456801', 'Hafiz', 'wamid.S2', 'text', 'Ada 3 bilik?');
+  assert (select status || '/' || reason from public.ai_automation_jobs where anchor_message_id = (r ->> 'message_id')::uuid) = 'cancelled/superseded by a newer buyer message';
+  assert (select count(*) from public.ai_automation_jobs where kind = 'smart_follow_up' and status = 'scheduled') = 1;
+  -- a redelivered webhook changes nothing
+  perform public.ai_wa_inbound('60123456801', 'Hafiz', 'wamid.S2', 'text', 'Ada 3 bilik?');
+  assert (select count(*) from public.ai_automation_jobs where kind = 'smart_follow_up') = 2;
+  -- per-conversation switch
+  update public.ai_conversations set automation = '{"follow_ups": false}' where id = (r ->> 'conversation_id')::uuid;
+  perform public.ai_wa_inbound('60123456801', 'Hafiz', 'wamid.S3', 'text', 'ok');
+  assert (select count(*) from public.ai_automation_jobs where kind = 'smart_follow_up' and status = 'scheduled') = 0;
+end $$;
+rollback;
+
+\echo 'T43 a person replies: the conversation is theirs — AI replies, follow-ups and queued AI work are cancelled'
+begin;
+update public.ai_settings set flags = flags || '{"ai_auto_reply": true}';
+do $$ declare r jsonb; conv uuid; lid uuid; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456802', 'Aina', 'wamid.H1', 'text', 'Boleh call saya?');
+  conv := (r ->> 'conversation_id')::uuid; lid := (r ->> 'lead_id')::uuid;
+  insert into public.ai_follow_up_jobs (lead_id, run_at, idempotency_key) values (lid, now() + interval '1 day', 'seq-test');
+  insert into public.ai_messages (conversation_id, direction, sender_type, sender_email, body, status) values (conv, 'outbound', 'human', 'advisor@test.local', 'Hi Puan, saya call sekejap lagi', 'queued');
+  assert (select mode || '/' || takeover_by from public.ai_conversations where id = conv) = 'human/advisor@test.local';
+  assert (select human_takeover_at is not null and last_human_reply_at is not null from public.ai_conversations where id = conv);
+  assert (select ai_paused from public.ai_leads where id = lid);
+  assert (select status || '/' || reason from public.ai_automation_jobs where kind = 'smart_follow_up') = 'cancelled/a person replied';
+  assert (select status from public.ai_jobs where id = (r ->> 'job_id')::uuid) = 'done', 'the pending AI reply is cancelled';
+  assert (select status from public.ai_follow_up_jobs where idempotency_key = 'seq-test') = 'cancelled';
+  -- the buyer writes again: no AI follow-up, but a person is reminded if they do not answer
+  r := public.ai_wa_inbound('60123456802', 'Aina', 'wamid.H2', 'text', 'Ok bila?');
+  assert not exists (select 1 from public.ai_automation_jobs where kind = 'smart_follow_up' and status = 'scheduled');
+  assert (select count(*) from public.ai_automation_jobs where kind = 'human_reminder' and status = 'scheduled') = 1;
+  assert (select mode from public.ai_conversations where id = conv) = 'human', 'not handed back by a buyer message';
+  insert into public.ai_messages (conversation_id, direction, sender_type, sender_email, body, status) values (conv, 'outbound', 'human', 'advisor@test.local', 'Petang ni', 'queued');
+  assert (select status || '/' || reason from public.ai_automation_jobs where kind = 'human_reminder') = 'cancelled/a person replied';
+  -- AI and system messages never count as a human reply
+  update public.ai_conversations set mode = 'ai' where id = conv; update public.ai_leads set ai_paused = false where id = lid;
+  insert into public.ai_messages (conversation_id, direction, sender_type, body, status) values (conv, 'outbound', 'ai', 'Baik', 'queued'), (conv, 'outbound', 'system', 'Peringatan', 'queued');
+  assert (select mode from public.ai_conversations where id = conv) = 'ai';
+end $$;
+rollback;
+
+\echo 'T44 Take over and Resume AI: advisors only; resume resolves handovers and drops stale work; the AI owns the next message'
+begin;
+update public.ai_settings set flags = flags || '{"ai_auto_reply": true}';
+do $$ declare r jsonb; conv uuid; lid uuid; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456803', 'Klaus', 'wamid.R1', 'text', 'Hello');
+  conv := (r ->> 'conversation_id')::uuid; lid := (r ->> 'lead_id')::uuid;
+  insert into public.ai_handover_events (lead_id, conversation_id, reason) values (lid, conv, 'negotiation');
+  perform public.t_login('viewer@test.local');
+  begin perform public.ai_take_over(conv); assert false, 'viewer took over'; exception when raise_exception then null; end;
+  begin perform public.ai_resume_ai(conv); assert false, 'viewer resumed'; exception when raise_exception then null; end;
+  perform public.t_login('advisor@test.local');
+  perform public.ai_take_over(conv);
+  assert (select mode || '/' || takeover_by from public.ai_conversations where id = conv) = 'human/advisor@test.local';
+  assert (select status from public.ai_jobs where id = (r ->> 'job_id')::uuid) = 'done';
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456803', 'Klaus', 'wamid.R2', 'text', 'Hello?');
+  perform public.t_login('advisor@test.local');
+  perform public.ai_resume_ai(conv);
+  assert (select mode = 'ai' and ai_resumed_at is not null from public.ai_conversations where id = conv);
+  assert not (select ai_paused from public.ai_leads where id = lid);
+  assert (select status from public.ai_handover_events where lead_id = lid) = 'resolved';
+  assert (select status from public.ai_jobs where id = (r ->> 'job_id')::uuid) = 'done', 'the old message is not answered after resuming';
+  assert (select status from public.ai_automation_jobs where kind = 'human_reminder' and conversation_id = conv) = 'cancelled';
+  assert exists (select 1 from public.ai_audit_logs where action = 'resume_ai' and record_id = conv::text);
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  perform public.ai_wa_inbound('60123456803', 'Klaus', 'wamid.R3', 'text', 'Still there?');
+  assert exists (select 1 from public.ai_automation_jobs where conversation_id = conv and kind = 'smart_follow_up' and status = 'scheduled');
+end $$;
+rollback;
+
+\echo 'T45 appointments: confirmation and reminders scheduled; reschedule replaces them; cancel stops them; late bookings get no stale reminder'
+begin;
+do $$ declare r jsonb; lid uuid; a uuid; t0 timestamptz := date_trunc('minute', now()) + interval '3 days'; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456804', 'Hafiz', 'wamid.A1', 'text', 'Nak datang Sabtu');
+  lid := (r ->> 'lead_id')::uuid;
+  insert into public.ai_appointments (lead_id, kind, status, start_at) values (lid, 'showroom_visit', 'confirmed', t0) returning id into a;
+  assert (select count(*) from public.ai_automation_jobs where appointment_id = a and kind = 'appt_confirmation' and status = 'scheduled') = 1;
+  assert (select array_agg(offset_minutes order by offset_minutes) from public.ai_automation_jobs where appointment_id = a and kind = 'appt_reminder' and status = 'scheduled') = '{120,1440}';
+  assert (select run_at from public.ai_automation_jobs where appointment_id = a and offset_minutes = 1440) = t0 - interval '1 day';
+  assert (select conversation_id from public.ai_automation_jobs where appointment_id = a and offset_minutes = 120) = (r ->> 'conversation_id')::uuid;
+  -- rescheduled: old reminders cancelled, new ones for the new time, a new confirmation
+  update public.ai_appointments set start_at = t0 + interval '1 day' where id = a;
+  assert (select count(*) from public.ai_automation_jobs where appointment_id = a and status = 'cancelled' and reason = 'appointment rescheduled') = 3;
+  assert (select count(*) from public.ai_automation_jobs where appointment_id = a and status = 'scheduled' and ref_time = t0 + interval '1 day') = 3;
+  -- switched off for this appointment, then on again
+  update public.ai_appointments set wa_reminders = false where id = a;
+  assert not exists (select 1 from public.ai_automation_jobs where appointment_id = a and status = 'scheduled');
+  update public.ai_appointments set wa_reminders = true where id = a;
+  assert (select count(*) from public.ai_automation_jobs where appointment_id = a and kind = 'appt_reminder' and status = 'scheduled') = 2;
+  -- cancelled: nothing more goes out
+  update public.ai_appointments set status = 'cancelled' where id = a;
+  assert not exists (select 1 from public.ai_automation_jobs where appointment_id = a and status = 'scheduled');
+  assert exists (select 1 from public.ai_automation_jobs where appointment_id = a and reason = 'appointment cancelled');
+  -- booked 90 minutes ahead: the confirmation only (both reminder times have passed)
+  insert into public.ai_appointments (lead_id, kind, status, start_at) values (lid, 'showroom_visit', 'confirmed', now() + interval '90 minutes') returning id into a;
+  assert (select array_agg(kind) from public.ai_automation_jobs where appointment_id = a) = '{appt_confirmation}';
+  -- a pending request schedules nothing
+  insert into public.ai_appointments (lead_id, kind, status, preferred_text) values (lid, 'showroom_visit', 'pending_confirmation', 'Sabtu') returning id into a;
+  assert not exists (select 1 from public.ai_automation_jobs where appointment_id = a);
+end $$;
+rollback;
+
+\echo 'T46 a person sends the reminder themselves → the automatic one is cancelled; a buyer "ok" after a reminder records attendance'
+begin;
+do $$ declare r jsonb; conv uuid; lid uuid; a uuid; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456805', 'Aina', 'wamid.P1', 'text', 'Ok jumpa esok');
+  conv := (r ->> 'conversation_id')::uuid; lid := (r ->> 'lead_id')::uuid;
+  insert into public.ai_appointments (lead_id, kind, status, start_at) values (lid, 'showroom_visit', 'confirmed', now() + interval '20 hours') returning id into a;
+  assert (select count(*) from public.ai_automation_jobs where appointment_id = a and kind = 'appt_reminder' and status = 'scheduled') = 1, 'only the 2-hour one is still ahead';
+  insert into public.ai_messages (conversation_id, direction, sender_type, sender_email, body, status) values (conv, 'outbound', 'human', 'advisor@test.local', 'Jangan lupa lawatan showroom esok jam 11 ya Puan', 'queued');
+  assert (select status || '/' || reason from public.ai_automation_jobs where appointment_id = a and kind = 'appt_reminder') = 'cancelled/a person already reminded the buyer';
+  -- the confirmation was sent; the buyer answers "ok"
+  update public.ai_automation_jobs set status = 'sent', sent_at = now() where appointment_id = a and kind = 'appt_confirmation';
+  perform public.ai_wa_inbound('60123456805', 'Aina', 'wamid.P2', 'text', 'Ok, insyaAllah datang');
+  assert (select attendance_confirmed_at is not null from public.ai_appointments where id = a);
+end $$;
+rollback;
+
+\echo 'T47 automation jobs: claimed once by concurrent workers, server-only claim, staff can cancel, routine Telegram alerts off'
+begin;
+update public.ai_settings set flags = flags || '{"ai_auto_reply": true}';
+do $$ declare r jsonb; j uuid; n int; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456806', 'Ben', 'wamid.C1', 'text', 'Hi');
+  update public.ai_automation_jobs set run_at = now() - interval '1 minute' where conversation_id = (r ->> 'conversation_id')::uuid returning id into j;
+  select count(*) into n from public.ai_claim_automation_jobs(10);
+  assert n = 1;
+  select count(*) into n from public.ai_claim_automation_jobs(10);
+  assert n = 0, 'a job being processed is not handed out twice';
+  -- the worker died mid-job (restart): after 10 minutes the job is handed out again, nothing is lost
+  alter table public.ai_automation_jobs disable trigger ai_automation_jobs_touch;
+  update public.ai_automation_jobs set updated_at = now() - interval '11 minutes' where id = j;
+  alter table public.ai_automation_jobs enable trigger ai_automation_jobs_touch;
+  select count(*) into n from public.ai_claim_automation_jobs(10, j);
+  assert n = 1, 'stuck job reclaimed';
+  assert not has_function_privilege('authenticated', 'public.ai_claim_automation_jobs(int, uuid)', 'execute');
+  assert not has_function_privilege('anon', 'public.ai_take_over(uuid)', 'execute');
+  assert (select (notifications ->> 'whatsapp_alerts')::boolean from public.ai_settings) = false;
+  assert (select (automation ->> 'follow_up_delay_hours')::int from public.ai_settings) = 12;
+  update public.ai_automation_jobs set status = 'scheduled' where id = j;
+  perform public.t_login('advisor@test.local');
+  assert public.ai_cancel_automation_job(j);
+  assert (select status from public.ai_automation_jobs where id = j) = 'cancelled';
+end $$;
+set local role authenticated;
+select public.t_login('viewer@test.local');
+do $$ begin assert (select count(*) from public.ai_automation_jobs) >= 1, 'viewers can see the job list'; end $$;
+do $$ begin
+  begin update public.ai_automation_jobs set status = 'scheduled'; exception when insufficient_privilege then null; end;
+  assert not exists (select 1 from public.ai_automation_jobs where status = 'scheduled'), 'no direct writes';
+end $$;
+rollback;
+
 \echo 'ALL DB TESTS PASSED'

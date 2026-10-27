@@ -204,6 +204,7 @@ export async function applyActions(db, { leadId, contactId, result, conversation
       if (conversationId) await db.patch(`ai_conversations?id=eq.${encodeURIComponent(conversationId)}`, { mode: "human" });
     } else if (a.type === "cancel_follow_ups") {
       await db.patch(`ai_follow_up_jobs?lead_id=eq.${encodeURIComponent(leadId)}&status=eq.scheduled`, { status: "cancelled", reason: a.reason });
+      await db.patch(`ai_automation_jobs?lead_id=eq.${encodeURIComponent(leadId)}&status=eq.scheduled&kind=eq.smart_follow_up`, { status: "cancelled", reason: a.reason });
     } else if (a.type === "handover") {
       await db.post("ai_handover_events", { lead_id: leadId, conversation_id: conversationId, reason: a.reason, summary: { text: a.summary, next_action: a.next_action, source: "ai", agent_run_id: runId } });
       await db.patch(`ai_leads?id=eq.${encodeURIComponent(leadId)}`, { handover_status: "requested" });

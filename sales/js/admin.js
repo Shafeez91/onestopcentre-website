@@ -3,6 +3,7 @@
 import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, api, loadLookups, projectName, sourceName, flag, keepPlace } from "./core.js";
 import { DEFAULT_SCORING } from "../shared/scoring.mjs";
 import { financingSettings } from "./financing.js";
+import { loadAutomation, automationHtml, bindAutomation } from "./automation.js";
 
 const hasDraftChanges = (f) => f.classList.contains("has-draft");
 
@@ -336,19 +337,22 @@ export async function templates(el, params) {
 
 /* ======================= Follow-up automation ======================= */
 export async function followups(el) {
-  const [seqs, jobs, tpls] = await Promise.all([
+  const [seqs, jobs, tpls, auto] = await Promise.all([
     q(SB.from("ai_follow_up_sequences").select("*").order("name")),
     q(SB.from("ai_follow_up_jobs").select("*, lead:ai_leads(lead_code)").order("run_at", { ascending: false }).limit(100)),
     q(SB.from("ai_message_templates").select("name,wa_status").eq("active", true).order("name")),
+    loadAutomation(),
   ]);
   const tplNames = [...new Set((tpls || []).map((t) => t.name))];
   const m = can("manager");
   el.innerHTML = `<div class="page-head"><h1>Follow-up automation</h1>${m ? `<button class="btn pri" id="ns">＋ New sequence</button>` : ""}</div>
+  ${automationHtml(auto)}
+  <h2>Follow-up sequences (optional, multi-step)</h2>
   <div class="card notice"><div>${flag("follow_ups") ? "<b>Automated follow-ups are on.</b>" : "<b>Automated follow-ups are off</b> — due steps are announced to staff on Telegram instead."} After each AI reply the matching sequence starts (new enquiry, or appointment pending). Within 24 hours of the buyer's last message the AI writes the step from its instruction (checked by the business rules); after that only the step's <b>approved template</b> can be sent, otherwise the step is skipped. Steps are sent only in business hours and always stop on reply, opt-out, booking, a person taking over, or lead closure.</div></div>
   ${(seqs || []).map((s) => `<article class="card entry ${s.active ? "" : "draft"}"><div class="ho-h"><b>${esc(s.name)}</b> ${badge(s.lead_type.replace(/_/g, " "))} ${s.active ? badge("Active", "ok") : badge("Inactive")}</div>
     <ol class="steps">${(s.steps || []).map((st) => `<li><b>after ${esc(st.delay_hours >= 24 ? st.delay_hours / 24 + " day(s)" : st.delay_hours + " h")}</b> ${badge(st.purpose, st.purpose === "marketing" ? "warn" : "")} ${esc(st.instruction || "")}${st.template ? ` <small>template: ${esc(st.template)}</small>` : ""}</li>`).join("")}</ol>
     <p class="note">Stops on: ${esc((s.stop_on || []).join(", ").replace(/_/g, " "))}</p>${m ? `<div class="actions"><button class="link" data-edit="${attr(s.id)}">Edit</button></div>` : ""}</article>`).join("") || empty("No sequences.")}
-  <section class="card"><h2>Recent follow-up jobs</h2>${(jobs || []).length ? `<ul class="list">${jobs.map((j) => `<li>${esc(j.lead?.lead_code || "")} · step ${j.step_index + 1} ${badge(j.status)}<small>${esc(fmtDate(j.run_at))}${j.reason ? " · " + esc(j.reason) : ""}</small></li>`).join("")}</ul>` : empty("No jobs yet — the engine arrives in Phase 4.")}</section>`;
+  <section class="card"><h2>Recent sequence steps</h2>${(jobs || []).length ? `<ul class="list">${jobs.map((j) => `<li>${esc(j.lead?.lead_code || "")} · step ${j.step_index + 1} ${badge(j.status)}<small>${esc(fmtDate(j.run_at))}${j.reason ? " · " + esc(j.reason) : ""}</small></li>`).join("")}</ul>` : empty("No sequence follow-ups yet.")}</section>`;
   const STOPS = ["customer_reply", "opt_out", "appointment_booked", "human_requested", "lead_closed"];
   const edit = (s = { steps: [], stop_on: STOPS }) => {
     const stepRow = (st = {}) => `<div class="steprow"><input name="delay_hours" type="number" min="1" max="2160" value="${attr(st.delay_hours)}" placeholder="Hours" aria-label="Delay in hours" required><select name="purpose" aria-label="Purpose">${opt("service", "Service", st.purpose)}${opt("marketing", "Marketing (needs consent)", st.purpose)}</select><input name="instruction" value="${attr(st.instruction)}" placeholder="What should this message do?" aria-label="Instruction" required><select name="template" aria-label="Template after 24 hours">${opt("", "No template (skip after 24 h)", st.template)}${tplNames.map((n) => opt(n, "Template: " + n, st.template)).join("")}</select><button type="button" class="icon" data-rm aria-label="Remove step">✕</button></div>`;
@@ -367,6 +371,7 @@ export async function followups(el) {
       act(f.querySelector("button[type=submit]"), async () => { if (s.id) await q(SB.from("ai_follow_up_sequences").update(rec).eq("id", s.id).select("id"), { expectRows: true }); else await q(SB.from("ai_follow_up_sequences").insert(rec)); dlg.done(); keepPlace(el, () => followups(el)); }, "Sequence saved"); };
   };
   if (m) { $("#ns", el).onclick = () => edit(); $$("[data-edit]", el).forEach((b) => b.onclick = () => edit((seqs || []).find((x) => x.id === b.dataset.edit))); }
+  bindAutomation(el, auto, () => keepPlace(el, () => followups(el)));
 }
 
 /* ======================= Campaigns ======================= */

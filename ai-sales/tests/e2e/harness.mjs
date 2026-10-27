@@ -72,6 +72,11 @@ export function fixtures() {
     ai_contacts: [contact], ai_activities: [{ id: "a1", lead_id: "L1", kind: "website_enquiry", body: "Berapa harga?", actor: "website", created_at: NOW }],
     ai_tasks: [], ai_appointments: [{ id: "A1", lead_id: "L1", kind: "showroom_visit", status: "pending_confirmation", preferred_text: "Sabtu pagi", start_at: null, reminders: [], created_at: NOW, lead: { id: "L1", lead_code: "OSC-000001", contact } }], ai_lead_interests: [{ lead_id: "L1", project_id: "t1", interest: "enquired" }], ai_consent_current: [], ai_consent_records: [],
     ai_handover_events: [],
+    ai_automation_jobs: [
+      { id: "AJ1", kind: "smart_follow_up", status: "scheduled", run_at: new Date(Date.now() + 6 * 3600e3).toISOString(), conversation_id: "V1", lead: { id: "L1", lead_code: "OSC-000001", contact }, checks: [] },
+      { id: "AJ2", kind: "appt_reminder", status: "sent", offset_minutes: 1440, run_at: NOW, sent_at: NOW, conversation_id: "V1", lead: { id: "L1", lead_code: "OSC-000001", contact },
+        checks: [{ check: "appointment is confirmed", ok: true }, { check: "inside WhatsApp's 24-hour window (free-form message allowed)", ok: true }] },
+      { id: "AJ3", kind: "smart_follow_up", status: "cancelled", reason: "a person replied", run_at: NOW, conversation_id: "V1", lead: { id: "L1", lead_code: "OSC-000001", contact }, checks: [] }],
     ai_financing_profiles: [{ id: "FP1", lead_id: "L1", route: "lppsa", inputs: FIN_INPUTS, result: finResult, outcome: finResult.outcome, source: "ai", updated_by: "ai", updated_at: NOW }],
     ai_financing_assessments: [{ id: "FA1", lead_id: "L1", route: "lppsa", outcome: finResult.outcome, result: finResult, source: "ai", created_by: "ai", created_at: NOW, rules_version: finResult.rules_version }],
     ai_conversations: [{ id: "V1", contact_id: "c1", lead_id: "L1", channel: "whatsapp", mode: "ai", status: "open", last_inbound_at: NOW, unread_count: 2, created_at: NOW, contact, lead: { id: "L1", lead_code: "OSC-000001", ai_paused: false } }],
@@ -118,6 +123,9 @@ export async function newPage(viewport, { signedIn = true, mutate = null } = {})
       if (rpc[1] === "ai_open_lead") return json("L2");
       if (rpc[1] === "ai_telegram_test") return json({ queued: true, status: "sent", error: null });
       if (rpc[1] === "ai_import_website_leads") return json({ imported: 0, skipped_no_contact: 0 });
+      if (rpc[1] === "ai_take_over") return json({ mode: "human" });
+      if (rpc[1] === "ai_resume_ai") return json({ mode: "ai", handovers_resolved: 0 });
+      if (rpc[1] === "ai_cancel_automation_job") return json(true);
       return json([]);
     }
     const t = u.pathname.replace("/rest/v1/", "");

@@ -180,6 +180,7 @@ function world(o = {}) {
     ai_jobs: [{ id: "J1", kind: "wa_reply", payload: { conversation_id: "V1", message_id: "M1" }, status: "queued", attempts: 0, max_attempts: 5 }],
     ai_appointments: [], ai_lead_interests: [], ai_consent_records: [], ai_follow_up_jobs: [], ai_follow_up_sequences: [], ai_message_templates: [],
     ai_project_facts: [], ai_project_prices: [], ai_project_units: [], ai_agent_runs: [], ai_handover_events: [],
+    __now: NOW.toISOString(),
     ...o,
   };
 }
@@ -401,34 +402,232 @@ test("follow-ups: cancelled when a person took over, deferred outside business h
   assert.equal(db.t.ai_follow_up_jobs[0].status, "scheduled", "left for the database to announce to staff");
 });
 
-test("buyer reminder about 24 hours before a confirmed appointment: sent once inside the window, skipped outside without a template", async () => {
-  const appt = { id: "A1", lead_id: "L1", kind: "showroom_visit", status: "confirmed", start_at: new Date(NOW.getTime() + 20 * 3600e3).toISOString(), reminders: [] };
-  let db = memdb(world({ ai_jobs: [], ai_appointments: [appt] })), d = deps(db);
-  let r = await runWorker(d);
-  assert.equal(r.reminders, 1);
-  assert.match(d.wa.sent[0].msg.text, /^Peringatan: lawatan showroom anda pada .* di M Mira Gallery/);
-  r = await runWorker(d);
-  assert.equal(d.wa.sent.length, 1, "only once");
+/* ---------------- conversation ownership, 12-hour follow-up, staff reminders, appointment messages */
+const PAST = NOW.toISOString(); // due at NOW: the in-memory claim uses the test clock (t.__now), decisions use NOW
+const jobOf = (o) => ({ id: "AJ1", status: "scheduled", run_at: PAST, attempts: 0, conversation_id: "V1", lead_id: "L1", ...o });
+const routine = (db) => (db.t.telegram || []).filter((x) => x.p_kind === "whatsapp_message");
 
-  const w = world({ ai_jobs: [], ai_appointments: [structuredClone(appt)] });
-  w.ai_conversations[0].last_inbound_at = ago(3 * 24 * 60);
-  db = memdb(w); d = deps(db);
+test("second message while the AI owns the chat: the AI answers again (no one-reply limit)", async () => {
+  const w = world();
+  w.ai_messages.push({ id: "M0", conversation_id: "V1", direction: "outbound", sender_type: "ai", body: "Hai! Saya pembantu AI.", created_at: ago(0.9), status: "read" },
+                     { id: "M2", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Harga Type A?", created_at: ago(0.5), status: "received" });
+  w.ai_jobs = [{ id: "J2", kind: "wa_reply", payload: { conversation_id: "V1", message_id: "M2" }, status: "queued", attempts: 0, max_attempts: 5 }];
+  const db = memdb(w), d = deps(db, { llm: llmOf(draft({ reply: "Type A bermula RM476,000 (harga indikatif dari laman web, tertakluk pengesahan)." })) });
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 1);
+  assert.match(d.llm.calls[0].messages.at(-1).content, /Harga Type A\?/);
+  assert.equal(routine(db).length, 0, "no Telegram for routine messages");
+});
+
+test("human takeover: buyer messages get no AI reply and no routine Telegram alert", async () => {
+  const w = world(); w.ai_conversations[0].mode = "human"; w.ai_leads[0].ai_paused = true;
+  w.ai_settings[0].notifications = { whatsapp_alerts: false };
+  const db = memdb(w), d = deps(db);
+  await runWorker(d);
+  assert.equal(d.llm.calls.length, 0);
+  assert.equal(d.wa.sent.length, 0);
+  assert.equal((db.t.telegram || []).length, 0);
+});
+
+test("a person takes over while the AI is writing: the AI reply is not sent (checked right before sending)", async () => {
+  const db = memdb(world());
+  const llm = async () => { db.t.ai_conversations[0].mode = "human"; db.t.ai_leads[0].ai_paused = true; return { data: draft(), model: "m", usage: {} }; };
+  const d = deps(db, { llm });
+  const r = await runWorker(d);
+  assert.equal(d.wa.sent.length, 0);
+  assert.deepEqual(r.errors, []);
+  const out = db.t.ai_messages.find((m) => m.direction === "outbound");
+  assert.deepEqual([out.status, out.status_reason], ["skipped", "a person took over before it was sent"]);
+  assert.equal(db.t.ai_jobs[0].status, "done", "not retried");
+  db.t.ai_jobs[0].status = "queued"; // even a retry cannot deliver it
   await runWorker(d);
   assert.equal(d.wa.sent.length, 0);
-  assert.match(db.t.ai_appointments[0].reminders[0].reason, /appointment_reminder/);
+});
 
-  // with the approved template: the buyer is told the project's showroom and its map link
-  const w2 = world({ ai_jobs: [], ai_appointments: [{ ...structuredClone(appt), project_id: "t1", location: null }] });
-  w2.ai_conversations[0].last_inbound_at = ago(3 * 24 * 60);
-  w2.ai_project_facts = [{ project_id: "t1", showroom_address: "M Mira Sales Gallery", showroom_map_url: "https://maps.app.goo.gl/abc" }];
-  w2.ai_message_templates = [{ id: "T2", name: "appointment_reminder", lang: "ms", category: "utility", active: true, wa_status: "approved", wa_template_name: "appointment_reminder",
-    body: "Hai {{1}}, peringatan mesra: temujanji anda pada {{2}} di {{3}}.", variables: ["name", "appointment", "location"] }];
+const quiet = (o = {}) => { // buyer wrote 12 h ago, the AI answered, nothing since
+  const w = world({ ai_jobs: [], ...o });
+  w.ai_messages = [{ id: "M1", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Nak tahu pasal loan LPPSA", created_at: ago(12 * 60), status: "received" },
+                   { id: "M0", conversation_id: "V1", direction: "outbound", sender_type: "ai", purpose: "reply", body: "Boleh, Tuan kerja kerajaan?", created_at: ago(12 * 60 - 1), status: "read" }];
+  w.ai_conversations[0].last_inbound_at = ago(12 * 60);
+  w.ai_automation_jobs = [jobOf({ kind: "smart_follow_up", anchor_message_id: "M1" })];
+  return w;
+};
+
+test("12-hour follow-up: AI-written from the conversation, sent once, every check recorded", async () => {
+  const db = memdb(quiet()), d = deps(db, { llm: llmOf(draft({ reply: "Tuan, kalau masih nak check kelayakan LPPSA, saya boleh bantu kira anggaran." })) });
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 1);
+  assert.match(d.llm.calls[0].messages.at(-1).content, /<follow_up_task>[\s\S]*about 12 hours ago[\s\S]*loan or LPPSA question/);
+  const j = db.t.ai_automation_jobs[0];
+  assert.equal(j.status, "sent");
+  assert.ok(j.sent_at && j.message_id);
+  assert.ok(j.checks.length >= 8 && j.checks.every((c) => c.ok), JSON.stringify(j.checks));
+  const msg = db.t.ai_messages.find((m) => m.id === j.message_id);
+  assert.deepEqual([msg.sender_type, msg.purpose, msg.source_job_id], ["ai", "service", "AJ1"]);
+  assert.ok(db.t.ai_conversations[0].last_follow_up_at);
+  // the job is not handed out again; a redelivered/reclaimed job cannot send twice
+  await runWorker(d);
+  db.t.ai_automation_jobs[0].status = "scheduled";
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 1);
+});
+
+test("12-hour follow-up is cancelled when a person replied, took over, the buyer wrote again or opted out", async () => {
+  const cases = [
+    ["a person already followed up", (w) => { w.ai_messages.push({ id: "H1", conversation_id: "V1", direction: "outbound", sender_type: "human", body: "Saya call Tuan esok", created_at: ago(60), status: "sent" }); }],
+    ["a person is handling this conversation", (w) => { w.ai_conversations[0].mode = "human"; }],
+    ["superseded by a newer buyer message", (w) => { w.ai_messages.push({ id: "M9", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Ok", created_at: ago(30), status: "received" }); }],
+    ["buyer opted out", (w) => { w.ai_consent_records = [{ contact_id: "C1", channel: "whatsapp", purpose: "service", status: "withdrawn", recorded_at: ago(100) }]; }],
+    ["follow-ups switched off for this conversation", (w) => { w.ai_conversations[0].automation = { follow_ups: false }; }],
+  ];
+  for (const [reason, change] of cases) {
+    const w = quiet(); change(w);
+    const db = memdb(w), d = deps(db);
+    await runWorker(d);
+    assert.equal(d.wa.sent.length, 0, reason);
+    assert.equal(d.llm.calls.length, 0, reason);
+    assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], ["cancelled", reason]);
+  }
+});
+
+test("12-hour follow-up: outside business hours it waits; after 24 hours only an approved template; otherwise a person is reminded on Telegram", async () => {
+  const evening = quiet(); evening.ai_automation_jobs[0].run_at = "2026-10-28T11:00:00.000Z"; evening.__now = "2026-10-28T11:00:00.000Z";
+  let db = memdb(evening), d = { ...deps(db), now: () => new Date("2026-10-28T11:00:00Z") }; // Wed 19:00 MYT, closed at 18:00
+  await runWorker(d);
+  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].run_at], ["scheduled", "2026-10-29T01:00:00.000Z"]);
+  assert.equal(d.wa.sent.length, 0);
+
+  const late = () => { const w = quiet(); w.ai_conversations[0].last_inbound_at = ago(30 * 60); w.ai_messages[0].created_at = ago(30 * 60); return w; };
+  db = memdb(late()); d = deps(db);
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 0);
+  assert.equal(db.t.ai_automation_jobs[0].status, "skipped");
+  assert.match(db.t.ai_automation_jobs[0].reason, /no approved follow-up template/);
+  const tg = db.t.telegram.find((x) => x.p_kind === "follow_up_due");
+  assert.match(tg.p_text, /Follow-up needed — no reply for 30 h; more than 24 hours[\s\S]*Aina · OSC-000001[\s\S]*M MIRA[\s\S]*Nak tahu pasal loan LPPSA[\s\S]*#\/inbox\?c=V1/);
+
+  const w = late(); w.ai_message_templates = [{ id: "T9", name: "follow_up", lang: "ms", category: "utility", active: true, wa_status: "approved", wa_template_name: "follow_up_ms", body: "Hai {{1}}, masih berminat dengan {{2}}?", variables: ["name", "project"] }];
+  db = memdb(w); d = deps(db);
+  await runWorker(d);
+  assert.deepEqual(d.wa.sent[0].msg, { template: { name: "follow_up_ms", lang: "ms", params: ["Aina", "M MIRA"] } });
+  assert.equal(d.llm.calls.length, 0);
+
+  db = memdb(quiet()); flags(db, { follow_ups: false }); d = deps(db);
+  await runWorker(d);
+  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], ["skipped", "automatic follow-ups are switched off"]);
+  assert.match(db.t.telegram[0].p_text, /Follow-up needed/);
+});
+
+test("Telegram follow-up reminder: sent when a person has not answered; not when someone replied or the AI answered", async () => {
+  const hw = (o = {}) => { const w = world({ ai_jobs: [], ...o }); w.ai_conversations[0].mode = "human"; w.ai_leads[0].ai_paused = true;
+    w.ai_messages[0].created_at = ago(70); w.ai_automation_jobs = [jobOf({ kind: "human_reminder", anchor_message_id: "M1" })]; return w; };
+  let db = memdb(hw()), d = deps(db);
+  await runWorker(d);
+  assert.equal(db.t.ai_automation_jobs[0].status, "sent");
+  assert.equal(db.t.telegram.length, 1);
+  assert.match(db.t.telegram[0].p_text, /^🔔 Follow-up needed — the buyer is waiting for your reply\n👤 Aina · OSC-000001[\s\S]*🏠 M MIRA\n💬 "Salam, boleh info M Mira\?" — 1\.2 h ago\n📞 https:\/\/wa\.me\/60123456789/);
+  assert.equal(db.t.telegram[0].p_key, "human:M1", "one reminder per unanswered message");
+
+  const w = hw(); w.ai_messages.push({ id: "H1", conversation_id: "V1", direction: "outbound", sender_type: "human", body: "Hi", created_at: ago(10), status: "sent" });
+  db = memdb(w); d = deps(db);
+  await runWorker(d);
+  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason, (db.t.telegram || []).length], ["cancelled", "a person replied", 0]);
+
+  const w2 = hw(); w2.ai_conversations[0].mode = "ai"; w2.ai_leads[0].ai_paused = false;
+  w2.ai_messages.push({ id: "A1", conversation_id: "V1", direction: "outbound", sender_type: "ai", body: "Hai", created_at: ago(60), status: "delivered" });
+  db = memdb(w2); d = deps(db);
+  await runWorker(d);
+  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], ["cancelled", "the AI answered"]);
+});
+
+const APPT = { id: "A1", lead_id: "L1", kind: "showroom_visit", status: "confirmed", project_id: "p1", start_at: new Date(NOW.getTime() + 24 * 3600e3).toISOString(), reminders: [], wa_reminders: true };
+const apptWorld = (job, o = {}) => world({ ai_jobs: [], ai_appointments: [structuredClone(APPT)], ai_automation_jobs: [jobOf({ appointment_id: "A1", ref_time: APPT.start_at, ...job })], ...o });
+
+test("appointment confirmation and reminders: fixed text with place and map; asks once whether they can make it", async () => {
+  const facts = [{ project_id: "p1", showroom_address: "M MIRA Sales Gallery", showroom_map_url: "https://maps.app.goo.gl/abc" }];
+  let db = memdb(apptWorld({ kind: "appt_confirmation" }, { ai_project_facts: facts })), d = deps(db);
+  await runWorker(d);
+  assert.match(d.wa.sent[0].msg.text, /^✅ Temujanji anda telah disahkan: Lawatan showroom \(M MIRA\) pada .* di M MIRA Sales Gallery\..*\n📍 https:\/\/maps\.app\.goo\.gl\/abc$/s);
+  assert.equal(db.t.ai_messages.at(-1).sender_type, "system");
+
+  db = memdb(apptWorld({ kind: "appt_reminder", offset_minutes: 1440 }, { ai_project_facts: facts })); d = deps(db);
+  await runWorker(d);
+  assert.match(d.wa.sent[0].msg.text, /^Peringatan: lawatan showroom \(M MIRA\) anda pada .* di M MIRA Sales Gallery\. Tuan\/Puan masih boleh datang\?/);
+  assert.equal(db.t.ai_appointments[0].reminders[0].type, "wa_1440m");
+
+  // the buyer already confirmed they are coming: the 2-hour reminder does not ask again
+  const w = apptWorld({ kind: "appt_reminder", offset_minutes: 120 }); w.ai_appointments[0].attendance_confirmed_at = ago(60);
+  db = memdb(w); d = deps(db);
+  await runWorker(d);
+  assert.doesNotMatch(d.wa.sent[0].msg.text, /masih boleh datang/);
+
+  // a person handling the chat does not stop an appointment reminder (it is an operational message)
+  const w2 = apptWorld({ kind: "appt_reminder", offset_minutes: 120 }); w2.ai_conversations[0].mode = "human"; w2.ai_leads[0].ai_paused = true;
   db = memdb(w2); d = deps(db);
   await runWorker(d);
   assert.equal(d.wa.sent.length, 1);
-  const p = d.wa.sent[0].msg.template.params;
-  assert.equal(p.length, 3);
-  assert.equal(p[2], "M Mira Sales Gallery https://maps.app.goo.gl/abc");
+});
+
+test("appointment reminders: cancelled, rescheduled, switched off or outside the window without a template — not sent, with the reason", async () => {
+  const cases = [
+    ["appointment cancelled", (w) => { w.ai_appointments[0].status = "cancelled"; }, "cancelled"],
+    ["appointment rescheduled", (w) => { w.ai_appointments[0].start_at = new Date(NOW.getTime() + 48 * 3600e3).toISOString(); }, "cancelled"],
+    ["reminders switched off for this appointment", (w) => { w.ai_appointments[0].wa_reminders = false; }, "cancelled"],
+    ["appointment reminders switched off for this conversation", (w) => { w.ai_conversations[0].automation = { appointment_reminders: false }; }, "cancelled"],
+    ["buyer opted out", (w) => { w.ai_consent_records = [{ contact_id: "C1", channel: "any", purpose: "service", status: "withdrawn", recorded_at: ago(5) }]; }, "cancelled"],
+    ['outside the 24-hour window and no approved "appointment_reminder" template', (w) => { w.ai_conversations[0].last_inbound_at = ago(3 * 24 * 60); }, "skipped"],
+  ];
+  for (const [reason, change, status] of cases) {
+    const w = apptWorld({ kind: "appt_reminder", offset_minutes: 1440 }); change(w);
+    const db = memdb(w), d = deps(db);
+    await runWorker(d);
+    assert.equal(d.wa.sent.length, 0, reason);
+    assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], [status, reason]);
+  }
+  // with the approved template outside the window: name, time and the place
+  const w = apptWorld({ kind: "appt_reminder", offset_minutes: 1440 }, { ai_message_templates: [{ id: "T2", name: "appointment_reminder", lang: "ms", category: "utility", active: true, wa_status: "approved", wa_template_name: "appointment_reminder", body: "Hai {{1}}, temujanji {{2}} di {{3}}.", variables: ["name", "appointment", "location"] }] });
+  w.ai_conversations[0].last_inbound_at = ago(3 * 24 * 60);
+  const db = memdb(w), d = deps(db);
+  await runWorker(d);
+  assert.deepEqual(d.wa.sent[0].msg.template.params, ["Aina", d.wa.sent[0].msg.template.params[1], "M Mira Gallery"]);
+});
+
+test("AI booking confirmation goes through its job: sent once, the scheduled worker does not repeat it", async () => {
+  const w = world(); w.ai_agent_runs = [];
+  w.ai_messages.unshift({ id: "M0", conversation_id: "V1", direction: "outbound", sender_type: "ai", body: "Hai, saya pembantu AI", created_at: ago(5), status: "sent" });
+  // stands in for the database trigger: confirming the appointment creates its confirmation job
+  const db = memdb(w, { ai_claim_automation_jobs: undefined });
+  const patch = db.patch.bind(db);
+  db.patch = async (path, body) => { const r = await patch(path, body);
+    if (path.startsWith("ai_appointments") && body.status === "confirmed") { const a = db.t.ai_appointments[0]; (db.t.ai_automation_jobs ||= []).push(jobOf({ id: "CJ", kind: "appt_confirmation", appointment_id: a.id, ref_time: a.start_at })); }
+    return r; };
+  flags(db, { calendar_booking: true });
+  const d = deps(db, { llm: llmOf(pickSlot(SLOT.id)), cal: calOf() });
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 2);
+  assert.match(d.wa.sent[1].msg.text, /^✅ Temujanji anda telah disahkan/);
+  assert.equal(db.t.ai_automation_jobs[0].status, "sent");
+  db.t.__now = "2030-01-01T00:00:00Z";
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 2, "not sent twice");
+});
+
+test("a job that could not run on time is dropped, not sent late", async () => {
+  const w = quiet(); w.ai_automation_jobs[0].run_at = new Date(NOW.getTime() - 7 * 3600e3).toISOString();
+  const db = memdb(w), d = deps(db);
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 0);
+  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], ["cancelled", "too late to send (7 h after it was due)"]);
+  assert.equal((db.t.telegram || []).length, 0, "no burst of Telegram reminders either");
+});
+
+test("Resume AI: once a person hands the chat back, the AI answers the buyer's next message", async () => {
+  const w = world(); Object.assign(w.ai_conversations[0], { mode: "ai", ai_resumed_at: ago(5), human_takeover_at: ago(60) });
+  w.ai_messages.unshift({ id: "H0", conversation_id: "V1", direction: "outbound", sender_type: "human", body: "Saya serahkan pada pembantu AI kami", created_at: ago(6), status: "sent" });
+  const db = memdb(w), d = deps(db);
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 1);
+  assert.equal(db.t.ai_messages.at(-1).sender_type, "ai");
 });
 
 test("retention clean-up runs once a day at 03:00 Malaysia time, and not from the webhook", async () => {

@@ -227,7 +227,8 @@ export async function leadDetail(el, id) {
     <section class="card"><h2>Appointments</h2>
       <p class="note">Advisor-recorded. AI-booked appointments are only marked confirmed after the calendar confirms them (Phase 4).</p>
       ${(appts || []).length ? `<ul class="list">${appts.map((a) => `<li><b>${esc(kindLabel(a.kind))}</b> ${apptBadge(a.status)} ${a.project_id ? "· " + esc(projectName(a.project_id)) : ""}<small>${a.start_at ? esc(fmtDate(a.start_at)) : "Preferred: " + esc(a.preferred_text || "—")}${a.advisor_email ? " · " + esc(a.advisor_email) : ""}</small>
-        ${can("advisor") ? `<select data-appt="${attr(a.id)}" aria-label="Change status">${Object.entries(APPT).map(([k, v]) => opt(k, v[0], a.status)).join("")}</select>` : ""}</li>`).join("")}</ul>` : empty("No appointments.")}
+        ${can("advisor") ? `<select data-appt="${attr(a.id)}" aria-label="Change status">${Object.entries(APPT).map(([k, v]) => opt(k, v[0], a.status)).join("")}</select>` : ""}
+        ${a.status === "confirmed" ? `<small>WhatsApp confirmation &amp; reminders: ${a.wa_reminders === false ? "off" : "on"}${a.attendance_confirmed_at ? " · buyer confirmed they are coming" : ""}${can("advisor") ? ` <button class="link" data-wa-rem="${attr(a.id)}" data-on="${a.wa_reminders === false ? "1" : ""}">${a.wa_reminders === false ? "Turn on" : "Turn off"}</button>` : ""}</small>` : ""}</li>`).join("")}</ul>` : empty("No appointments.")}
       ${can("advisor") ? `<details><summary>Add appointment</summary><form id="fa" class="form two">
         <label>Type<select name="kind">${Object.entries(KIND).map(([k, v]) => opt(k, v)).join("")}</select></label>
         <label>Project<select name="project_id">${projectOptions(lead.primary_project_id)}</select></label>
@@ -236,6 +237,7 @@ export async function leadDetail(el, id) {
         <label>Advisor<select name="advisor_email">${teamOptions(S.email)}</select></label>
         <label class="full">Buyer's preferred time (if not fixed)<input name="preferred_text" placeholder="e.g. Sabtu petang"></label>
         <label class="full">Location<input name="location" placeholder="Showroom address or call link"></label>
+        <label class="check full"><input type="checkbox" name="wa_reminders" checked> When confirmed, send the buyer a WhatsApp confirmation and reminders</label>
         <div class="actions full"><button class="btn">Save appointment</button></div></form></details>` : ""}
     </section>
 
@@ -308,10 +310,13 @@ export async function leadDetail(el, id) {
       if (d.status === "confirmed" && !d.start_at) return toast("A confirmed appointment needs a start time.", "err");
       if (!d.start_at && !d.preferred_text) return toast("Enter a start time or the buyer's preferred time.", "err");
       act(fa.querySelector("button"), async () => {
-        await q(SB.from("ai_appointments").insert({ lead_id: id, kind: d.kind, project_id: d.project_id, start_at: fromLocalInput(d.start_at), end_at: fromLocalInput(d.end_at), status: d.status, advisor_email: d.advisor_email, preferred_text: d.preferred_text, location: d.location, calendar_provider: "manual" }));
+        await q(SB.from("ai_appointments").insert({ lead_id: id, kind: d.kind, project_id: d.project_id, start_at: fromLocalInput(d.start_at), end_at: fromLocalInput(d.end_at), status: d.status, advisor_email: d.advisor_email, preferred_text: d.preferred_text, location: d.location, calendar_provider: "manual", wa_reminders: d.wa_reminders !== false }));
         await SB.from("ai_activities").insert({ lead_id: id, contact_id: c.id, kind: "appointment", body: `${kindLabel(d.kind)} · ${d.status.replace(/_/g, " ")}${d.start_at ? " · " + fmtDate(fromLocalInput(d.start_at)) : ""}` });
         clearDraft(fa); reload();
       }, "Appointment saved"); };
+    $$("[data-wa-rem]", el).forEach((b) => b.onclick = () => act(b, async () => {
+      await q(SB.from("ai_appointments").update({ wa_reminders: !!b.dataset.on }).eq("id", b.dataset.waRem).select("id"), { expectRows: true }); reload();
+    }, b.dataset.on ? "WhatsApp reminders on for this appointment" : "WhatsApp reminders off for this appointment"));
     $$("[data-appt]", el).forEach((s) => s.onchange = () => act(null, async () => {
       await q(SB.from("ai_appointments").update({ status: s.value }).eq("id", s.dataset.appt).select("id"), { expectRows: true }); reload();
     }, "Appointment updated"));
@@ -447,50 +452,78 @@ const TICK = { queued: ["…", "Sending"], sent: ["✓", "Sent"], delivered: ["�
 const WINDOW_MS = 24 * 3600e3 - 60e3;
 const SENDER = (m) => (m.direction === "inbound" ? "" : m.sender_type === "ai" ? "AI assistant" : m.sender_type === "system" ? "Automatic" : m.provider === "whatsapp_app" ? "Sent from the WhatsApp app" : m.sender_email || "Staff");
 
+/** Who owns a conversation right now: closed, a person (takeover), the AI with a follow-up scheduled, or the AI. */
+export function ownership(c, pendingFollowUp = false) {
+  if (c.status === "closed" || c.lead?.closed_at) return ["Closed", ""];
+  if (c.mode !== "ai" || c.lead?.ai_paused) return ["Human takeover", "warn"];
+  if (pendingFollowUp) return ["Follow-up pending", "ok"];
+  return ["AI active", "ok"];
+}
+
 export async function inbox(el, params) {
   const sel = params?.get("c") || "";
-  const rows = (await q(SB.from("ai_conversations").select("*, contact:ai_contacts(full_name,phone_e164,wa_id), lead:ai_leads(id,lead_code,ai_paused)").eq("status", "open").order("last_inbound_at", { ascending: false, nullsFirst: false }).limit(200))) || [];
+  const rows = (await q(SB.from("ai_conversations").select("*, contact:ai_contacts(full_name,phone_e164,wa_id), lead:ai_leads(id,lead_code,ai_paused,closed_at)").eq("status", "open").order("last_inbound_at", { ascending: false, nullsFirst: false }).limit(200))) || [];
+  // scheduled 12-hour follow-ups (the list still works on a database without automation jobs)
+  let pending = new Set();
+  try { pending = new Set(((await q(SB.from("ai_automation_jobs").select("conversation_id").eq("status", "scheduled").eq("kind", "smart_follow_up").limit(500))) || []).map((j) => j.conversation_id)); } catch { /* not installed yet */ }
   const on = flag("whatsapp_outbound");
   el.innerHTML = `<div class="page-head"><h1>WhatsApp inbox</h1><p class="sub">${rows.length} open conversation${rows.length === 1 ? "" : "s"}</p></div>
   ${on ? "" : `<div class="card notice"><div><b>WhatsApp sending is off.</b> Messages from buyers still arrive here once WhatsApp is connected (Integrations), but nothing is sent until an owner switches on "WhatsApp sending" in Settings → Feature switches.</div></div>`}
-  <div class="inbox${sel ? " has-thread" : ""}"><ul class="conv-list card">${rows.length ? rows.map((c) => `<li class="${c.id === sel ? "on" : ""}"><a href="#/inbox?c=${attr(c.id)}"><b>${esc(contactName(c.contact))}</b>
-      ${c.mode === "ai" && !c.lead?.ai_paused ? badge("AI", "ok") : badge("Human")} ${c.unread_count ? badge(String(c.unread_count), "alert") : ""}<small>${esc(c.lead?.lead_code || "")} · ${esc(ago(c.last_inbound_at || c.created_at))}</small></a></li>`).join("") : `<li>${empty("No WhatsApp conversations yet.")}</li>`}</ul>
+  <div class="inbox${sel ? " has-thread" : ""}"><ul class="conv-list card">${rows.length ? rows.map((c) => { const [label, kind] = ownership(c, pending.has(c.id)); return `<li class="${c.id === sel ? "on" : ""}"><a href="#/inbox?c=${attr(c.id)}"><b>${esc(contactName(c.contact))}</b>
+      ${badge(label, kind)} ${c.unread_count ? badge(String(c.unread_count), "alert") : ""}<small>${esc(c.lead?.lead_code || "")} · ${esc(ago(c.last_inbound_at || c.created_at))}</small></a></li>`; }).join("") : `<li>${empty("No WhatsApp conversations yet.")}</li>`}</ul>
     <section class="thread card" id="thread">${sel ? "" : `<p class="note">Choose a conversation.</p>`}</section></div>`;
-  if (sel) await thread($("#thread", el), rows.find((c) => c.id === sel), () => keepPlace(el, () => inbox(el, params)));
+  if (sel) await thread($("#thread", el), rows.find((c) => c.id === sel), pending.has(sel), () => keepPlace(el, () => inbox(el, params)));
 }
 
-async function thread(box, c, reload) {
+async function thread(box, c, pendingFollowUp, reload) {
   if (!c) { box.innerHTML = empty("Conversation not found or closed."); return; }
   const msgs = (await q(SB.from("ai_messages").select("id,direction,sender_type,sender_email,provider,body,media,status,status_reason,template_name,created_at").eq("conversation_id", c.id).order("created_at", { ascending: false }).limit(200))) || [];
   msgs.reverse();
   const adv = can("advisor");
   const aiOn = c.mode === "ai" && !c.lead?.ai_paused;
+  const [label, kind] = ownership(c, pendingFollowUp);
+  const auto = c.automation || {};
   const open = c.last_inbound_at && Date.now() - new Date(c.last_inbound_at) < WINDOW_MS;
   const tpls = adv && !open ? (await q(SB.from("ai_message_templates").select("id,name,lang,category").eq("wa_status", "approved").eq("active", true).not("wa_template_name", "is", null).order("name"))) || [] : [];
   box.innerHTML = `<div class="ho-h"><div><a class="link back" href="#/inbox">← All</a> <b>${esc(contactName(c.contact))}</b> <small>+${esc(c.contact?.wa_id || c.contact?.phone_e164 || "")}</small>
       ${c.lead ? `<a href="#/lead/${attr(c.lead.id)}"><small>${esc(c.lead.lead_code)}</small></a>` : ""}</div>
-    <div>${aiOn ? badge("AI is answering", "ok") : badge("A person is handling this chat")} ${adv ? (aiOn ? `<button class="btn" id="take">Take over</button>` : `<button class="btn" id="back">Hand back to AI</button>`) : ""}</div></div>
+    <div>${badge(label, kind)} ${adv ? (aiOn ? `<button class="btn" id="take">Take over</button>` : `<button class="btn" id="back">Resume AI</button>`) : ""}</div></div>
+    <p class="note own">${aiOn
+      ? "The AI answers this buyer until a person replies. Sending a reply here (or from the WhatsApp app) hands the chat to you."
+      : `A person is handling this chat${c.takeover_by ? ` (${esc(c.takeover_by)}` + (c.human_takeover_at ? `, since ${esc(fmtDate(c.human_takeover_at))})` : ")") : ""}. The AI does not reply or follow up until someone presses <b>Resume AI</b>.`}
+      ${c.last_human_reply_at ? ` Last staff reply ${esc(ago(c.last_human_reply_at))}.` : ""}${c.last_follow_up_at ? ` Last automatic follow-up ${esc(ago(c.last_follow_up_at))}.` : ""}</p>
+    ${adv ? `<form id="auto" class="auto-row"><label class="check"><input type="checkbox" name="follow_ups"${auto.follow_ups === false ? "" : " checked"}> Automatic follow-up</label>
+      <label class="check"><input type="checkbox" name="appointment_reminders"${auto.appointment_reminders === false ? "" : " checked"}> Appointment reminders</label></form>` : ""}
     <div class="chat" id="msgs">${msgs.map((m) => `<div class="msg ${m.direction === "inbound" ? "buyer" : "ai"}"><div class="bubble">${esc(m.body || (m.media || []).map((x) => "[" + x.type + "]").join(" ") || "")}</div>
-      <small class="meta">${esc(SENDER(m))}${m.template_name ? " · template " + esc(m.template_name) : ""} · ${esc(fmtDate(m.created_at))}${m.direction === "outbound" ? ` <span class="tick ${esc(m.status)}" title="${attr(TICK[m.status]?.[1] || m.status)}">${esc(TICK[m.status]?.[0] || "")}</span>${m.status === "failed" && m.status_reason ? ` <span class="err">${esc(m.status_reason)}</span>` : ""}` : ""}</small></div>`).join("") || empty("No messages yet.")}</div>
+      <small class="meta">${esc(SENDER(m))}${m.template_name ? " · template " + esc(m.template_name) : ""} · ${esc(fmtDate(m.created_at))}${m.direction === "outbound" ? ` <span class="tick ${esc(m.status)}" title="${attr(TICK[m.status]?.[1] || m.status)}">${esc(TICK[m.status]?.[0] || "")}</span>${["failed", "skipped"].includes(m.status) && m.status_reason ? ` <span class="err">${esc(m.status_reason)}</span>` : ""}` : ""}</small></div>`).join("") || empty("No messages yet.")}</div>
     ${adv ? (open ? `<form id="reply" class="say"><label class="sr" for="rtext">Reply</label><textarea id="rtext" name="text" rows="2" maxlength="4096" required placeholder="Reply on WhatsApp as ${attr(S.email)}…"></textarea>
-        <label class="check"><input type="checkbox" name="take_over"${aiOn ? " checked" : ""}> Pause the AI for this buyer</label><button class="btn pri" data-busy="Sending…"${on() ? "" : " disabled"}>Send</button></form>`
+        <button class="btn pri" data-busy="Sending…"${on() ? "" : " disabled"}>Send</button></form>`
       : `<div class="card notice"><div>More than 24 hours since the buyer's last message, so WhatsApp only allows an <b>approved template</b> now.</div></div>
         ${tpls.length ? `<form id="tform" class="say"><label class="sr" for="tsel">Template</label><select id="tsel" name="template_id">${tpls.map((t) => opt(t.id, `${t.name} (${t.lang.toUpperCase()}, ${t.category})`)).join("")}</select><button class="btn pri" data-busy="Sending…"${on() ? "" : " disabled"}>Send template</button></form>` : `<p class="note">No approved templates yet — add them under Templates &amp; objections once Meta approves them.</p>`}`) : ""}`;
   const list = $("#msgs", box); list.scrollTop = list.scrollHeight;
   if (adv && c.unread_count) q(SB.from("ai_conversations").update({ unread_count: 0 }).eq("id", c.id)).catch(() => {});
-  const setMode = (ai) => act(ai ? $("#back", box) : $("#take", box), async () => {
-    await q(SB.from("ai_conversations").update({ mode: ai ? "ai" : "human", assigned_email: ai ? null : S.email }).eq("id", c.id).select("id"), { expectRows: true });
-    if (c.lead) await q(SB.from("ai_leads").update({ ai_paused: !ai, ...(ai ? {} : { owner_email: S.email }) }).eq("id", c.lead.id).select("id"), { expectRows: true });
-    reload();
-  }, ai ? "The AI answers this buyer again." : "You are handling this chat. The AI will not reply.");
+  // ownership changes go through the database functions, which also cancel or drop the AI's pending work
+  const setMode = (ai) => {
+    if (ai && !confirm("Resume AI for this buyer? The AI will answer their next message and may follow up automatically.")) return;
+    act(ai ? $("#back", box) : $("#take", box), async () => {
+      await q(SB.rpc(ai ? "ai_resume_ai" : "ai_take_over", { p_conversation: c.id }));
+      reload();
+    }, ai ? "AI resumed — it answers this buyer's next message." : "You are handling this chat. The AI will not reply.");
+  };
   if ($("#take", box)) $("#take", box).onclick = () => setMode(false);
   if ($("#back", box)) $("#back", box).onclick = () => setMode(true);
+  const af = $("#auto", box);
+  if (af) af.onchange = (e) => act(null, async () => {
+    const next = { ...auto, [e.target.name]: e.target.checked };
+    await q(SB.from("ai_conversations").update({ automation: next }).eq("id", c.id).select("id"), { expectRows: true });
+    Object.assign(auto, next);
+  }, e.target.checked ? "Switched on for this buyer" : "Switched off for this buyer");
   const send = (form, payload, msg) => { form.onsubmit = (e) => { e.preventDefault();
     act(form.querySelector("button"), async () => { await api("/api/sales/whatsapp/send", { method: "POST", body: JSON.stringify({ conversation_id: c.id, ...payload() }) }); clearDraft(form); reload(); }, msg); }; };
-  // an unsent reply survives Take over / Hand back and switching chats
-  if ($("#reply", box)) { const f = $("#reply", box); guardForm(f, "reply:" + c.id); send(f, () => ({ text: f.text.value, take_over: f.take_over.checked }), "Sent on WhatsApp");
+  // an unsent reply survives Take over / Resume AI and switching chats
+  if ($("#reply", box)) { const f = $("#reply", box); guardForm(f, "reply:" + c.id); send(f, () => ({ text: f.text.value }), "Sent on WhatsApp — you are now handling this chat");
     f.text.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); f.requestSubmit(); } }); }
-  if ($("#tform", box)) { const f = $("#tform", box); send(f, () => ({ template_id: f.template_id.value, take_over: true }), "Template sent"); }
+  if ($("#tform", box)) { const f = $("#tform", box); send(f, () => ({ template_id: f.template_id.value }), "Template sent"); }
   function on() { return flag("whatsapp_outbound"); }
 }
 

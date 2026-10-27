@@ -3,14 +3,18 @@
 //
 //   wa_reply jobs   → AI reply on WhatsApp (or a staff alert when the AI is off/paused), CRM updates, calendar booking
 //   follow-up steps → consent / hours / 24-hour-window rules, AI-written or approved-template message, next step
-//   appointments    → WhatsApp reminder to the buyer about 24 hours before a confirmed appointment
+//   automation jobs → 12-hour follow-ups, staff follow-up reminders, appointment confirmations and reminders
+//                     (scheduled by database triggers; see automation.mjs)
 //
 // deps: { db (service-role adapter), llm, wa: { send(to, msg) } | null, cal: { slots(settings, now), book(details) } | null, now() }
 import { respond, applyActions, logRun, composeFollowUp } from "./orchestrator.mjs";
 import { isOptOut, wantsHuman, detectLanguage, fixedReply } from "../../sales/shared/guard.mjs";
-import { inWindow } from "./whatsapp.mjs";
-import { decideFollowUp, consentState, renderTemplate, templateParams } from "./followups.mjs";
-import { confirmationText, reminderText, placeFor } from "./calendar.mjs";
+import { decideFollowUp, consentState, templateParams } from "./followups.mjs";
+import { confirmationText, placeFor } from "./calendar.mjs";
+import { sendOutbound } from "./outbound.mjs";
+import { runAutomation, confirmAppointmentNow, automationOf } from "./automation.mjs";
+
+export { sendOutbound };
 
 const enc = encodeURIComponent;
 const MAX_HISTORY = 30;
@@ -21,32 +25,6 @@ export async function loadSettings(db) { return (await db.get("ai_settings?id=eq
 /** Staff alert on Telegram (database sender: deduplicated, never raises). */
 async function alertStaff(db, kind, ref, key, text) {
   try { await db.rpc("ai_send_telegram", { p_kind: kind, p_ref: ref, p_key: key, p_text: text }); } catch { /* alerts must not break the job */ }
-}
-
-/**
- * Sends one WhatsApp message and records it. `sourceJobId` makes the send idempotent for retried jobs.
- * Returns { sent, id, error }.
- */
-export async function sendOutbound(deps, { conversation, to, text, template = null, senderType, senderEmail = null, purpose, runId = null, sourceJobId = null }) {
-  const { db, wa } = deps;
-  const body = template ? renderTemplate(template.body, template.params) : text;
-  const row = { conversation_id: conversation.id, direction: "outbound", sender_type: senderType, sender_email: senderEmail, body, template_name: template?.wa_template_name || null,
-    provider: "whatsapp_cloud", status: "queued", purpose, agent_run_id: runId, source_job_id: sourceJobId };
-  let rec = (await db.post("ai_messages" + (sourceJobId ? "?on_conflict=source_job_id" : ""), row, { prefer: "return=representation" + (sourceJobId ? ",resolution=ignore-duplicates" : "") }))?.[0];
-  if (!rec && sourceJobId) {
-    rec = (await db.get(`ai_messages?source_job_id=eq.${enc(sourceJobId)}&select=id,status`))?.[0];
-    if (rec && rec.status !== "queued" && rec.status !== "failed") return { sent: true, id: rec.id, duplicate: true };
-  }
-  if (!wa) { await db.patch(`ai_messages?id=eq.${enc(rec.id)}`, { status: "failed", status_reason: "WhatsApp is not configured" }); return { sent: false, id: rec.id, error: "WhatsApp is not configured" }; }
-  try {
-    const wamid = await wa.send(to, template ? { template: { name: template.wa_template_name, lang: template.lang, params: template.params } } : { text });
-    await db.patch(`ai_messages?id=eq.${enc(rec.id)}`, { status: "sent", provider_message_id: wamid, status_reason: null });
-    await db.patch(`ai_conversations?id=eq.${enc(conversation.id)}`, { last_outbound_at: deps.now().toISOString() });
-    return { sent: true, id: rec.id, wamid };
-  } catch (e) {
-    await db.patch(`ai_messages?id=eq.${enc(rec.id)}`, { status: "failed", status_reason: String(e?.message || e).slice(0, 500) });
-    return { sent: false, id: rec.id, error: e?.message || String(e), kind: e?.kind };
-  }
 }
 
 const historyOf = (msgs) => msgs.filter((m) => m.body).map((m) => ({ role: m.direction === "inbound" ? "user" : "assistant", text: m.body }));
@@ -60,10 +38,11 @@ export async function processReplyJob(deps, job, settings) {
   if (!conv) return { status: "done", note: "conversation not found" };
 
   // a retried job only re-sends the reply it already wrote: no second AI call, no duplicate CRM actions
-  const prior = (await db.get(`ai_messages?source_job_id=eq.${enc(job.id)}&select=id,status,body`))?.[0];
+  const prior = (await db.get(`ai_messages?source_job_id=eq.${enc(job.id)}&select=id,status,body,sender_type`))?.[0];
   if (prior) {
     if (!["queued", "failed"].includes(prior.status)) return { status: "done", note: "already sent" };
-    const s = await sendOutbound(deps, { conversation: conv, to: conv.contact?.wa_id || conv.contact?.phone_e164, text: prior.body, senderType: "ai", purpose: "reply", sourceJobId: job.id });
+    const s = await sendOutbound(deps, { conversation: conv, to: conv.contact?.wa_id || conv.contact?.phone_e164, text: prior.body, senderType: prior.sender_type || "ai", purpose: "reply", sourceJobId: job.id });
+    if (s.blocked) return { status: "done", note: "not sent: " + s.error };
     if (!s.sent && s.kind !== "config") throw new Error("WhatsApp send failed: " + s.error);
     return { status: "done", resent: s.sent };
   }
@@ -86,12 +65,13 @@ export async function processReplyJob(deps, job, settings) {
   const guard = isOptOut(message) || wantsHuman(message);
 
   if (!aiOn && !guard) {
-    if (settings.notifications?.whatsapp_alerts !== false) {
+    // Telegram is not a copy of the inbox: a person is reminded later only if nobody answers (human_reminder job)
+    if (settings.notifications?.whatsapp_alerts === true) {
       const hour = deps.now().toISOString().slice(0, 13);
       await alertStaff(db, "whatsapp_message", conv.id, `wa:${conv.id}:${hour}`,
         `💬 New WhatsApp message${conv.mode !== "ai" || lead?.ai_paused ? " (a person is handling this buyer)" : " (AI auto-reply is off)"}\n👤 ${nameOf(contact) || "(no name)"} · +${to}${lead?.lead_code ? " · " + lead.lead_code : ""}\n"${message.slice(0, 500)}"\nhttps://onestopcentreproperty.com/sales/#/inbox`);
     }
-    return { status: "done", note: "AI not answering this conversation; staff alerted" };
+    return { status: "done", note: "AI not answering this conversation" };
   }
 
   let result;
@@ -114,14 +94,17 @@ export async function processReplyJob(deps, job, settings) {
   let sent = null;
   if (result.reply && result.decision !== "paused") {
     if (canSend) {
-      sent = await sendOutbound(deps, { conversation: conv, to, text: result.reply, senderType: "ai", purpose: "reply", runId, sourceJobId: job.id });
-      if (sent.sent) {
+      // fixed replies to STOP / "talk to a person" are system messages: sent even while a person handles the chat
+      sent = await sendOutbound(deps, { conversation: conv, to, text: result.reply, senderType: guard ? "system" : "ai", purpose: "reply", runId, sourceJobId: job.id });
+      if (sent.blocked) {
+        // a person took over while the AI was writing: their conversation, nothing more to do
+      } else if (sent.sent) {
         await db.patch(`ai_conversations?id=eq.${enc(conv.id)}`, { unread_count: 0 });
         if (!lead.first_response_at) await db.patch(`ai_leads?id=eq.${enc(lead.id)}`, { first_response_at: deps.now().toISOString() });
       } else {
         await alertStaff(db, "whatsapp_message", conv.id, `wa-fail:${job.id}`, `⚠️ The AI reply to ${nameOf(contact) || "+" + to} could not be sent: ${sent.error}\nReply personally: https://onestopcentreproperty.com/sales/#/inbox`);
       }
-    } else {
+    } else if (settings.notifications?.whatsapp_alerts === true) {
       await alertStaff(db, "whatsapp_message", conv.id, `wa-draft:${job.id}`, `💬 WhatsApp from ${nameOf(contact) || "+" + to}: "${message.slice(0, 300)}"\nAI draft (not sent — WhatsApp sending is off):\n${result.reply.slice(0, 600)}`);
     }
   }
@@ -136,7 +119,7 @@ export async function processReplyJob(deps, job, settings) {
     const pendingAppt = (await db.get(`ai_appointments?lead_id=eq.${enc(lead.id)}&status=eq.pending_confirmation&select=id&limit=1`))?.length;
     try { await db.rpc("ai_follow_up_start", { p_lead: lead.id, p_lead_type: pendingAppt ? "appointment_pending" : "new_enquiry" }); } catch { /* no sequence configured */ }
   }
-  if (sent && !sent.sent && sent.kind !== "config") throw new Error("WhatsApp send failed: " + sent.error); // retried; the reply row prevents a double send
+  if (sent && !sent.sent && !sent.blocked && sent.kind !== "config") throw new Error("WhatsApp send failed: " + sent.error); // retried; the reply row prevents a double send
   return { status: "done", decision: result.decision, sent: !!sent?.sent };
 }
 
@@ -153,7 +136,12 @@ export async function bookAppointment(deps, { ref, conv, to, contact, lead, sett
       summary: `${appt.kind.replace(/_/g, " ")} · ${nameOf(contact) || "+" + to} (${lead.lead_code || ""})`, description: `Booked by the AI assistant on WhatsApp.\nBuyer: ${nameOf(contact) || ""} +${to}\nhttps://onestopcentreproperty.com/sales/#/lead/${lead.id}${map ? "\nMap: " + map : ""}`, location });
     await db.patch(`ai_appointments?id=eq.${enc(appt.id)}`, { status: "confirmed", calendar_provider: "google", calendar_event_id: eventId, location: location || null,
       reminders: [...(appt.reminders || []), { type: "confirmation", at: deps.now().toISOString() }] });
-    if (canSend) await sendOutbound(deps, { conversation: conv, to, text: confirmationText({ kind: appt.kind, start: appt.start_at, location, map, lang }), senderType: "system", purpose: "reply", sourceJobId: null });
+    // the confirmation goes out through its automation job (created by the database when the status changed), so the
+    // scheduled worker can never send it a second time; without a job (older database) it is sent directly
+    const viaJob = await confirmAppointmentNow(deps, settings, appt.id);
+    if (!viaJob && canSend && automationOf(settings).appointment_confirmations !== false) {
+      await sendOutbound(deps, { conversation: conv, to, text: confirmationText({ kind: appt.kind, start: appt.start_at, location, map, lang }), senderType: "system", purpose: "reply", sourceJobId: null });
+    }
     return { booked: true, eventId };
   } catch (e) {
     const taken = e?.kind === "taken";
@@ -215,47 +203,10 @@ export async function processFollowUp(deps, fj, settings) {
   return outcome;
 }
 
-/* ---------------------------------------------------------------- buyer reminders */
-export async function processReminders(deps, settings) {
-  const { db } = deps;
-  const now = deps.now();
-  const from = new Date(now.getTime() + 2 * 3600e3).toISOString(), to24 = new Date(now.getTime() + 24 * 3600e3).toISOString();
-  const appts = (await db.get(`ai_appointments?status=eq.confirmed&start_at=gt.${enc(from)}&start_at=lte.${enc(to24)}&select=*,lead:ai_leads(id,contact_id,ai_paused)`)) || [];
-  let n = 0;
-  for (const a of appts) {
-    if ((a.reminders || []).some((r) => r.type === "wa_24h")) continue;
-    // just booked: the confirmation message is enough for now (checked again on later runs)
-    if ((a.reminders || []).some((r) => r.type === "confirmation" && now - new Date(r.at) < 12 * 3600e3)) continue;
-    const conv = (await db.get(`ai_conversations?contact_id=eq.${enc(a.lead.contact_id)}&channel=eq.whatsapp&status=eq.open&select=*,contact:ai_contacts(id,full_name,phone_e164,wa_id,preferred_language)`))?.[0];
-    const consent = consentState((await db.get(`ai_consent_current?contact_id=eq.${enc(a.lead.contact_id)}&select=channel,purpose,status`)) || []);
-    const mark = (status, reason) => db.patch(`ai_appointments?id=eq.${enc(a.id)}`, { reminders: [...(a.reminders || []), { type: "wa_24h", status, reason: reason || null, at: now.toISOString() }] });
-    const to = conv?.contact?.wa_id || conv?.contact?.phone_e164;
-    if (!conv || !to) { await mark("skipped", "no WhatsApp conversation"); continue; }
-    if (consent.service === "withdrawn") { await mark("skipped", "buyer opted out"); continue; }
-    const lang = conv.contact?.preferred_language === "en" ? "en" : "ms";
-    // the place given at confirmation; the map link only when that is still the project's showroom
-    const place = await placeFor(db, a, settings);
-    const location = a.location || place.location, map = location === place.location ? place.map : "";
-    let s;
-    if (inWindow(conv.last_inbound_at, now)) {
-      s = await sendOutbound(deps, { conversation: conv, to, text: reminderText({ kind: a.kind, start: a.start_at, location, map, lang }), senderType: "system", purpose: "service" });
-    } else {
-      const tpls = ((await db.get("ai_message_templates?name=eq.appointment_reminder&wa_status=eq.approved&active=is.true&select=*")) || []).filter((t) => t.wa_template_name);
-      const t = tpls.find((x) => x.lang === lang) || tpls[0];
-      if (!t) { await mark("skipped", "outside the 24-hour window and no approved \"appointment_reminder\" template"); continue; }
-      const when = new Intl.DateTimeFormat(t.lang === "en" ? "en-MY" : "ms-MY", { timeZone: "Asia/Kuala_Lumpur", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(a.start_at));
-      s = await sendOutbound(deps, { conversation: conv, to, template: { ...t, params: templateParams(t, { name: conv.contact?.full_name, appointment: when, location: [location, map].filter(Boolean).join(" ") }) }, senderType: "system", purpose: "service" });
-    }
-    await mark(s.sent ? "sent" : "failed", s.error);
-    if (s.sent) n++;
-  }
-  return n;
-}
-
 /* ---------------------------------------------------------------- runner */
 export async function runWorker(deps, { maxJobs = 10, followUps = true, reminders = true } = {}) {
   const { db } = deps;
-  const out = { replies: 0, follow_ups: 0, reminders: 0, errors: [] };
+  const out = { replies: 0, follow_ups: 0, automation: 0, errors: [] };
   const settings = await loadSettings(db);
   const f = flagsOf(settings);
   if (!f.module) return { ...out, note: "module switched off in settings" };
@@ -280,8 +231,13 @@ export async function runWorker(deps, { maxJobs = 10, followUps = true, reminder
       catch (e) { await db.patch(`ai_follow_up_jobs?id=eq.${enc(fj.id)}`, { status: fj.attempts >= 5 ? "failed" : "scheduled", reason: String(e?.message || e).slice(0, 300) }); out.errors.push(String(e?.message || e)); }
     }
   }
-  if (reminders && f.whatsapp_outbound && deps.wa) {
-    try { out.reminders = await processReminders(deps, settings); } catch (e) { out.errors.push(String(e?.message || e)); }
+  // follow-ups, staff reminders, appointment confirmations and reminders: every job decides for itself (and records why)
+  if (reminders) {
+    try {
+      const r = await runAutomation(deps, settings, { max: 20 });
+      out.automation = r.length; out.automation_sent = r.filter((x) => x.status === "sent").length;
+      r.filter((x) => x.status === "failed").forEach((x) => out.errors.push(`${x.kind}: ${x.reason}`));
+    } catch (e) { out.errors.push("automation: " + (e?.message || e)); }
   }
   // retention (privacy policy §6): once a day at 03:00 Malaysia time — the scheduled run at minute 0 or 1
   const t = deps.now();
