@@ -9,5 +9,5 @@ fail=0
 echo "== 1/4 Existing website regression (protected files + edge function)"; node --test "ai-sales/tests/regression/*.test.mjs" || fail=1
 echo "== 2/4 Unit tests (scoring, phone, CSV, chunking, server functions)"; node --test "ai-sales/tests/unit/*.test.mjs" || fail=1
 echo "== 3/4 Database migration tests (throwaway local Postgres)"; ai-sales/tests/db/run-db-tests.sh || fail=1
-echo "== 4/4 Browser tests (phone / iPad / desktop)"; node --test --test-timeout=180000 ai-sales/tests/e2e/browser.test.mjs || fail=1
+echo "== 4/4 Browser tests (flows on phone / iPad / desktop + layout audit at 12 widths)"; node --test --test-timeout=300000 ai-sales/tests/e2e/browser.test.mjs ai-sales/tests/e2e/layout.test.mjs || fail=1
 [ $fail = 0 ] && echo "ALL SUITES PASSED" || { echo "SOME SUITES FAILED"; exit 1; }

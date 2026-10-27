@@ -1,6 +1,6 @@
 // AI Sales dashboard — settings & flags, pipeline stages, team, integrations, templates & objections,
 // follow-up sequences, campaigns, reports, and consent/security/audit.
-import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, api, loadLookups, projectName, sourceName, flag } from "./core.js";
+import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, api, loadLookups, projectName, sourceName, flag, keepPlace } from "./core.js";
 import { DEFAULT_SCORING } from "../shared/scoring.mjs";
 
 const hasDraftChanges = (f) => f.classList.contains("has-draft");
@@ -185,7 +185,7 @@ export async function stages(el) {
     ${m ? `<button class="btn" type="submit">Save</button><button class="icon" type="button" data-up="${i}" aria-label="Move up"${i ? "" : " disabled"}>↑</button><button class="icon" type="button" data-down="${i}" aria-label="Move down"${i < rows.length - 1 ? "" : " disabled"}>↓</button>` : ""}</form></li>`).join("")}</ol>
   ${m ? `<form id="ns" class="inline"><input name="name" required placeholder="New stage name" aria-label="New stage name"><select name="kind" aria-label="Kind">${opt("open", "Open stage")}${opt("won", "Closes as won")}${opt("lost", "Closes as lost")}</select><button class="btn pri">Add stage</button></form>` : ""}
   <p class="note">Stages in use cannot be deleted — deactivate them instead. Moving a lead into a Won or Lost stage closes it.</p></section>`;
-  const reload = async () => { await loadLookups(); stages(el); };
+  const reload = async () => { await loadLookups(); await keepPlace(el, () => stages(el)); };
   if (!m) return;
   $$("form[data-stage]", el).forEach((f) => f.onsubmit = (e) => { e.preventDefault(); const v = formData(f);
     act(f.querySelector("button[type=submit]"), async () => { await q(SB.from("ai_pipeline_stages").update({ name: v.name, active: v.active }).eq("id", f.dataset.stage).select("id"), { expectRows: true }); reload(); }, "Stage saved"); });
@@ -217,7 +217,7 @@ export async function team(el) {
     <label>Role<select name="role">${["advisor", "manager", "viewer", "owner"].map((r) => opt(r, r)).join("")}</select></label><label class="check"><input type="checkbox" name="invite" checked> Email an invitation to set a password</label>
     <div class="actions full"><button class="btn pri">Add member</button></div></form>` : ""}</section>`;
   if (!own) return;
-  const reload = async () => { await loadLookups(); team(el); };
+  const reload = async () => { await loadLookups(); await keepPlace(el, () => team(el)); };
   $$("[data-role]", el).forEach((s) => s.onchange = () => act(null, async () => { await q(SB.from("ai_team_members").update({ role: s.value }).eq("email", s.dataset.role).select("email"), { expectRows: true }); reload(); }, "Role updated"));
   $$("[data-active]", el).forEach((c) => c.onchange = () => act(null, async () => { await q(SB.from("ai_team_members").update({ active: c.checked }).eq("email", c.dataset.active).select("email"), { expectRows: true }); reload(); }, c.checked ? "Activated" : "Deactivated — they lose access immediately"));
   const invite = async (email, role, name) => { const r = await api("/api/sales/team/invite", { method: "POST", body: JSON.stringify({ email, role, display_name: name }) }); toast(r.invited ? "Invitation sent to " + email : r.note || "Saved", r.invited ? "ok" : "warn"); };
@@ -253,7 +253,7 @@ export async function integrations(el) {
     <div id="wacr"></div>` : ""}</section>
   <section class="card"><h2>Google Calendar</h2>
     <p class="note">Share the calendar with the service account email (permission: "Make changes to events"), then set <code>GOOGLE_SERVICE_ACCOUNT_EMAIL</code>, <code>GOOGLE_PRIVATE_KEY</code> and <code>GOOGLE_CALENDAR_ID</code> in Netlify. Free slots come from that calendar inside your business hours.</p></section>`;
-  const wf = $("#wac", el), out = $("#wacr", el); // captured now: the page is built off-screen, then moved into view
+  const wf = $("#wac", el), out = $("#wacr", el);
   if (wf) {
     const run = (btn, action) => act(btn, async () => {
       let r;
@@ -304,7 +304,7 @@ export async function templates(el, params) {
       <div class="actions full"><button class="btn pri">Save</button></div></form>`, { wide: true });
       const f = $("#fo", dlg); guardForm(f, "obj:" + (o.id || "new"));
       f.onsubmit = (e) => { e.preventDefault(); const v = formData(f); const rec = { ...v, examples: String(v.examples || "").split("\n").map((s) => s.trim()).filter(Boolean) };
-        act(f.querySelector("button"), async () => { if (o.id) await q(SB.from("ai_objections").update(rec).eq("id", o.id).select("id"), { expectRows: true }); else await q(SB.from("ai_objections").insert(rec)); clearDraft(f); dlg.done(); templates(el, params); }, "Saved"); }; };
+        act(f.querySelector("button"), async () => { if (o.id) await q(SB.from("ai_objections").update(rec).eq("id", o.id).select("id"), { expectRows: true }); else await q(SB.from("ai_objections").insert(rec)); clearDraft(f); dlg.done(); keepPlace(el, () => templates(el, params)); }, "Saved"); }; };
     if (m) { $("#no", body).onclick = () => edit(); $$("[data-edit]", body).forEach((b) => b.onclick = () => edit(rows.find((r) => r.id === b.dataset.edit))); }
     return;
   }
@@ -327,7 +327,7 @@ export async function templates(el, params) {
       v.variables = String(v.variables || "").split(",").map((x) => x.trim()).filter(Boolean);
       const n = Math.max(0, ...[...String(v.body).matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1])));
       if (n !== v.variables.length) return toast(`The text uses ${n} variable${n === 1 ? "" : "s"}; list exactly ${n} in "Variables".`, "err");
-      act(f.querySelector("button"), async () => { if (t.id) await q(SB.from("ai_message_templates").update(v).eq("id", t.id).select("id"), { expectRows: true }); else await q(SB.from("ai_message_templates").insert(v)); clearDraft(f); dlg.done(); templates(el, params); }, "Saved"); }; };
+      act(f.querySelector("button"), async () => { if (t.id) await q(SB.from("ai_message_templates").update(v).eq("id", t.id).select("id"), { expectRows: true }); else await q(SB.from("ai_message_templates").insert(v)); clearDraft(f); dlg.done(); keepPlace(el, () => templates(el, params)); }, "Saved"); }; };
   if (m) { $("#nt", body).onclick = () => edit(); $$("[data-edit]", body).forEach((b) => b.onclick = () => edit(rows.find((r) => r.id === b.dataset.edit))); }
 }
 
@@ -361,7 +361,7 @@ export async function followups(el) {
       const steps = $$(".steprow", box).map((r) => ({ delay_hours: Number(r.querySelector("[name=delay_hours]").value), purpose: r.querySelector("[name=purpose]").value, instruction: r.querySelector("[name=instruction]").value.trim(), ...(r.querySelector("[name=template]").value ? { template: r.querySelector("[name=template]").value } : {}) }));
       const stop_on = STOPS.filter((x) => x === "opt_out" || f.querySelector(`[name=stop_${x}]`).checked);
       const rec = { name: f.name.value.trim(), lead_type: f.lead_type.value, steps, stop_on, active: f.active.checked };
-      act(f.querySelector("button[type=submit]"), async () => { if (s.id) await q(SB.from("ai_follow_up_sequences").update(rec).eq("id", s.id).select("id"), { expectRows: true }); else await q(SB.from("ai_follow_up_sequences").insert(rec)); dlg.done(); followups(el); }, "Sequence saved"); };
+      act(f.querySelector("button[type=submit]"), async () => { if (s.id) await q(SB.from("ai_follow_up_sequences").update(rec).eq("id", s.id).select("id"), { expectRows: true }); else await q(SB.from("ai_follow_up_sequences").insert(rec)); dlg.done(); keepPlace(el, () => followups(el)); }, "Sequence saved"); };
   };
   if (m) { $("#ns", el).onclick = () => edit(); $$("[data-edit]", el).forEach((b) => b.onclick = () => edit((seqs || []).find((x) => x.id === b.dataset.edit))); }
 }
@@ -380,7 +380,7 @@ export async function campaigns(el) {
   <section class="card"><h2>Lead sources</h2><ul class="list">${S.sources.map((s) => `<li>${esc(s.name)} ${badge(s.channel)} <small>${leads.filter((l) => l.source_id === s.id).length} leads</small></li>`).join("")}</ul>
   ${m ? `<form id="nsrc" class="inline"><input name="name" required placeholder="New source name" aria-label="Source name"><select name="channel" aria-label="Channel">${["website", "whatsapp", "facebook", "instagram", "google", "tiktok", "portal", "referral", "walk_in", "event", "other"].map((c) => opt(c, c)).join("")}</select><button class="btn">Add source</button></form>` : ""}</section>`;
   if (!m) return;
-  const reload = async () => { await loadLookups(); campaigns(el); };
+  const reload = async () => { await loadLookups(); await keepPlace(el, () => campaigns(el)); };
   const edit = (c = {}) => { const dlg = modal(c.id ? "Edit campaign" : "New campaign", `<form id="fcp" class="form two">
     <label class="full">Name<input name="name" required value="${attr(c.name)}"></label>
     <label>Source<select name="source_id">${opt("", "—", c.source_id)}${S.sources.map((s) => opt(s.id, s.name, c.source_id)).join("")}</select></label>
@@ -463,7 +463,7 @@ export async function audit(el, params) {
     return;
   }
   body.innerHTML = `<section class="card"><h2>Retention rules</h2><ul class="checks"><li>Webhook payloads: deleted after 90 days.</li><li>AI run inputs/outputs: removed after 180 days (the decision log is kept).</li><li>Finished background jobs: deleted after 30 days.</li><li>Contacts: kept until erased on request (PDPA). Erasure is done from the lead page by an owner.</li></ul>
-    ${can("owner") ? `<button class="btn" id="purge">Run retention clean-up now</button>` : ""}<p class="note">The clean-up also runs daily once the Phase 4 scheduler is deployed.</p></section>`;
+    ${can("owner") ? `<button class="btn" id="purge">Run retention clean-up now</button>` : ""}<p class="note">The clean-up also runs automatically every day at about 3 am (Malaysia time).</p></section>`;
   const pb = $("#purge", body);
-  if (pb) pb.onclick = () => act(pb, async () => { const r = await q(SB.rpc("ai_purge_expired")); toast(`Clean-up done: ${r.webhook_events_deleted} webhook events, ${r.agent_runs_trimmed} AI runs trimmed`); });
+  if (pb) pb.onclick = () => confirm("Permanently delete data past its retention period now?") && act(pb, async () => { const r = await q(SB.rpc("ai_purge_expired")); toast(`Clean-up done: ${r.webhook_events_deleted} webhook events, ${r.agent_runs_trimmed} AI runs trimmed`); });
 }
