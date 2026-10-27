@@ -244,7 +244,7 @@ export async function processReminders(deps, settings) {
       const t = tpls.find((x) => x.lang === lang) || tpls[0];
       if (!t) { await mark("skipped", "outside the 24-hour window and no approved \"appointment_reminder\" template"); continue; }
       const when = new Intl.DateTimeFormat(t.lang === "en" ? "en-MY" : "ms-MY", { timeZone: "Asia/Kuala_Lumpur", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(a.start_at));
-      s = await sendOutbound(deps, { conversation: conv, to, template: { ...t, params: templateParams(t, { name: conv.contact?.full_name, appointment: when }) }, senderType: "system", purpose: "service" });
+      s = await sendOutbound(deps, { conversation: conv, to, template: { ...t, params: templateParams(t, { name: conv.contact?.full_name, appointment: when, location: [location, map].filter(Boolean).join(" ") }) }, senderType: "system", purpose: "service" });
     }
     await mark(s.sent ? "sent" : "failed", s.error);
     if (s.sent) n++;

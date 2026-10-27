@@ -116,6 +116,10 @@ test("consent state and template helpers", () => {
   assert.deepEqual(consentState([{ channel: "any", purpose: "marketing", status: "granted" }, { channel: "whatsapp", purpose: "marketing", status: "withdrawn" }]), { service: null, marketing: "withdrawn" });
   assert.equal(renderTemplate("Hi {{1}}, about {{2}}", ["Aina", "M Mira"]), "Hi Aina, about M Mira");
   assert.deepEqual(templateParams({ lang: "ms", variables: ["name", "project"] }, {}), ["tuan/puan", "projek kami"]);
+  const appt = { lang: "en", variables: ["name", "appointment", "location"] };
+  assert.deepEqual(templateParams(appt, { name: "Aina", appointment: "Sat, 1 Nov, 11:00 am", location: "M Mira Sales Gallery https://maps.app.goo.gl/abc" }),
+    ["Aina", "Sat, 1 Nov, 11:00 am", "M Mira Sales Gallery https://maps.app.goo.gl/abc"]);
+  assert.equal(templateParams(appt, { name: "Aina", appointment: "x" })[2], "the place our advisor will confirm", "never an empty variable (Meta rejects those)");
 });
 
 /* ================================================================ Google Calendar */
@@ -412,6 +416,19 @@ test("buyer reminder about 24 hours before a confirmed appointment: sent once in
   await runWorker(d);
   assert.equal(d.wa.sent.length, 0);
   assert.match(db.t.ai_appointments[0].reminders[0].reason, /appointment_reminder/);
+
+  // with the approved template: the buyer is told the project's showroom and its map link
+  const w2 = world({ ai_jobs: [], ai_appointments: [{ ...structuredClone(appt), project_id: "t1", location: null }] });
+  w2.ai_conversations[0].last_inbound_at = ago(3 * 24 * 60);
+  w2.ai_project_facts = [{ project_id: "t1", showroom_address: "M Mira Sales Gallery", showroom_map_url: "https://maps.app.goo.gl/abc" }];
+  w2.ai_message_templates = [{ id: "T2", name: "appointment_reminder", lang: "ms", category: "utility", active: true, wa_status: "approved", wa_template_name: "appointment_reminder",
+    body: "Hai {{1}}, peringatan mesra: temujanji anda pada {{2}} di {{3}}.", variables: ["name", "appointment", "location"] }];
+  db = memdb(w2); d = deps(db);
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 1);
+  const p = d.wa.sent[0].msg.template.params;
+  assert.equal(p.length, 3);
+  assert.equal(p[2], "M Mira Sales Gallery https://maps.app.goo.gl/abc");
 });
 
 test("retention clean-up runs once a day at 03:00 Malaysia time, and not from the webhook", async () => {
