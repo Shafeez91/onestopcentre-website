@@ -1,6 +1,6 @@
 // AI Sales dashboard — overview, leads/CRM, lead detail, pipeline, appointments, handover queue, inbox.
 import { SB, S, can, $, $$, esc, attr, fmtDate, ago, q, act, toast, guardForm, clearDraft, formData, modal, tempBadge, badge, opt, empty, ro,
-  projectName, stageName, sourceName, projectPriceFrom, toLocalInput, fromLocalInput, flag, errText, api } from "./core.js";
+  projectName, stageName, sourceName, projectPriceFrom, toLocalInput, fromLocalInput, flag, errText, api, keepPlace } from "./core.js";
 import { normalizePhone, formatPhone } from "../shared/phone.mjs";
 import { scoreLead } from "../shared/scoring.mjs";
 
@@ -249,14 +249,14 @@ export async function leadDetail(el, id) {
     ${(handovers || []).length ? `<section class="card"><h2>Human handover</h2><ul class="list">${handovers.map((h) => `<li>${esc(h.reason)} ${badge(h.status, h.status === "open" ? "alert" : "")}<small>${esc(fmtDate(h.created_at))}${h.accepted_by ? " · " + esc(h.accepted_by) : ""}</small></li>`).join("")}</ul></section>` : ""}
 
     <section class="card"><h2>Timeline</h2>
-      ${can("advisor") ? `<form id="fn" class="form"><textarea name="body" rows="2" required placeholder="Add a note or call summary…"></textarea><div class="actions"><select name="kind" aria-label="Type">${opt("note", "Note")}${opt("call", "Call")}</select><button class="btn">Add</button></div></form>` : ""}
+      ${can("advisor") ? `<form id="fn" class="form"><textarea name="body" rows="2" required aria-label="Note or call summary" placeholder="Add a note or call summary…"></textarea><div class="actions"><select name="kind" aria-label="Type">${opt("note", "Note")}${opt("call", "Call")}</select><button class="btn">Add</button></div></form>` : ""}
       ${(acts || []).length ? `<ol class="timeline">${acts.map((a) => `<li class="k-${attr(a.kind)}"><div><b>${esc(a.kind.replace(/_/g, " "))}</b> <small>${esc(fmtDate(a.created_at))} · ${esc(a.actor)}</small></div>${a.body ? `<p>${esc(a.body)}</p>` : ""}</li>`).join("")}</ol>` : empty("No activity yet.")}
     </section>
     ${can("owner") ? `<section class="card danger"><h2>Personal data (PDPA)</h2><p class="note">Erasing anonymises this contact, their messages and notes, and removes them from the audit trail. Consent history is kept as proof. This cannot be undone.</p><button class="btn danger" id="erase">Erase personal data…</button></section>` : ""}
    </div>
   </div>`;
 
-  const reload = () => leadDetail(el, id);
+  const reload = () => keepPlace(el, () => leadDetail(el, id));
   const fc = $("#fc", el), fl = $("#fl", el), fq = $("#fq", el);
   [[fc, "contact"], [fl, "lead"], [fq, "qual"]].forEach(([f, k]) => can("advisor") && guardForm(f, `lead:${id}:${k}`));
 
@@ -385,7 +385,7 @@ export async function appointments(el, params) {
     <td data-label="Buyer"><a href="#/lead/${attr(a.lead?.id)}">${esc(contactName(a.lead?.contact))}</a><small>${esc(a.lead?.lead_code || "")}</small></td><td data-label="Project">${esc(projectName(a.project_id)) || "—"}</td>
     <td data-label="Advisor">${esc(a.advisor_email || "—")}</td><td data-label="Status">${apptBadge(a.status)}${a.calendar_event_id ? `<small>On Google Calendar</small>` : ""}${a.notes ? `<small>${esc(a.notes)}</small>` : ""}</td>
     <td>${adv && ["pending_confirmation", "rescheduled"].includes(a.status) && !a.calendar_event_id ? `<button class="btn" data-confirm="${attr(a.id)}">Confirm…</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : empty("No appointments.")}`;
-  $$("[data-confirm]", el).forEach((b) => b.onclick = () => confirmAppointment(rows.find((a) => a.id === b.dataset.confirm), () => appointments(el, params)));
+  $$("[data-confirm]", el).forEach((b) => b.onclick = () => confirmAppointment(rows.find((a) => a.id === b.dataset.confirm), () => keepPlace(el, () => appointments(el, params))));
 }
 
 function confirmAppointment(a, done) {
@@ -448,7 +448,7 @@ export async function inbox(el, params) {
   <div class="inbox${sel ? " has-thread" : ""}"><ul class="conv-list card">${rows.length ? rows.map((c) => `<li class="${c.id === sel ? "on" : ""}"><a href="#/inbox?c=${attr(c.id)}"><b>${esc(contactName(c.contact))}</b>
       ${c.mode === "ai" && !c.lead?.ai_paused ? badge("AI", "ok") : badge("Human")} ${c.unread_count ? badge(String(c.unread_count), "alert") : ""}<small>${esc(c.lead?.lead_code || "")} · ${esc(ago(c.last_inbound_at || c.created_at))}</small></a></li>`).join("") : `<li>${empty("No WhatsApp conversations yet.")}</li>`}</ul>
     <section class="thread card" id="thread">${sel ? "" : `<p class="note">Choose a conversation.</p>`}</section></div>`;
-  if (sel) await thread($("#thread", el), rows.find((c) => c.id === sel), () => inbox(el, params));
+  if (sel) await thread($("#thread", el), rows.find((c) => c.id === sel), () => keepPlace(el, () => inbox(el, params)));
 }
 
 async function thread(box, c, reload) {
@@ -478,8 +478,9 @@ async function thread(box, c, reload) {
   if ($("#take", box)) $("#take", box).onclick = () => setMode(false);
   if ($("#back", box)) $("#back", box).onclick = () => setMode(true);
   const send = (form, payload, msg) => { form.onsubmit = (e) => { e.preventDefault();
-    act(form.querySelector("button"), async () => { await api("/api/sales/whatsapp/send", { method: "POST", body: JSON.stringify({ conversation_id: c.id, ...payload() }) }); reload(); }, msg); }; };
-  if ($("#reply", box)) { const f = $("#reply", box); send(f, () => ({ text: f.text.value, take_over: f.take_over.checked }), "Sent on WhatsApp");
+    act(form.querySelector("button"), async () => { await api("/api/sales/whatsapp/send", { method: "POST", body: JSON.stringify({ conversation_id: c.id, ...payload() }) }); clearDraft(form); reload(); }, msg); }; };
+  // an unsent reply survives Take over / Hand back and switching chats
+  if ($("#reply", box)) { const f = $("#reply", box); guardForm(f, "reply:" + c.id); send(f, () => ({ text: f.text.value, take_over: f.take_over.checked }), "Sent on WhatsApp");
     f.text.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); f.requestSubmit(); } }); }
   if ($("#tform", box)) { const f = $("#tform", box); send(f, () => ({ template_id: f.template_id.value, take_over: true }), "Template sent"); }
   function on() { return flag("whatsapp_outbound"); }

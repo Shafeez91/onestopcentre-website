@@ -82,7 +82,7 @@ function shell() {
   side.addEventListener("click", (e) => { if (e.target.closest("a")) setMenu(false); });
 }
 
-let renderSeq = 0;
+let renderSeq = 0, shownPath = null;
 async function route() {
   const view = $("#view");
   if (!view) return;
@@ -92,20 +92,33 @@ async function route() {
   const nav = NAV_OF[name] || (ROUTES[name] ? name : "overview");
   $$("[data-nav]").forEach((a) => a.classList.toggle("on", a.dataset.nav === nav));
   const seq = ++renderSeq;
-  view.innerHTML = `<div class="loading"><span class="spin"></span> Loading…</div>`;
-  const tmp = document.createElement("div");
+  // a new page starts at the top; a tab or filter change on the same page keeps the current content and scroll
+  // position until the new content is ready (blanking it first collapsed the page and threw the reader to the top).
+  // Opening a chat in the inbox counts as a new page, so the conversation starts at its top.
+  const samePage = path === shownPath && name !== "inbox" && view.firstElementChild && !view.querySelector(".loading");
+  if (!samePage) { view.innerHTML = `<div class="loading"><span class="spin"></span> Loading…</div>`; window.scrollTo(0, 0); }
+  else view.setAttribute("aria-busy", "true");
+  // the page is built off-screen in its own container, which then goes on screen as a whole. Pages keep a reference
+  // to this container and re-render into it after a save, so it must stay the live element (moving only its
+  // children left saves refreshing a detached copy: "Saved" appeared but the screen did not change)
+  const page = document.createElement("div");
+  page.className = "page";
   try {
-    await fn(tmp, new URLSearchParams(qs || ""), id && decodeURIComponent(id));
+    await fn(page, new URLSearchParams(qs || ""), id && decodeURIComponent(id));
     if (seq !== renderSeq) return; // a newer navigation won
-    view.replaceChildren(...tmp.childNodes);
+    const y = window.scrollY;
+    view.replaceChildren(page);
+    shownPath = path;
+    if (samePage) window.scrollTo(0, y);
   } catch (e) {
     console.error(e);
     if (seq !== renderSeq) return;
     view.innerHTML = `<div class="card error"><h2>Could not load this page</h2><p>${esc(errText(e))}</p><button class="btn" id="retry">Retry</button></div>`;
     $("#retry").onclick = () => route();
+    shownPath = null;
   }
-  view.focus({ preventScroll: true });
-  view.scrollTop = 0;
+  view.removeAttribute("aria-busy");
+  if (!samePage) view.focus({ preventScroll: true });
 }
 
 async function boot() {

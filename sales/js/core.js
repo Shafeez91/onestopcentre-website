@@ -137,6 +137,19 @@ export function discardDraft(form) { clearDraft(form); }
 export function markDirty(v) { S.dirty = v; }
 export function hasUnsaved() { return $$("form.has-draft").length > 0; }
 
+/**
+ * Re-renders a page in place after a save without moving the reader: keeps the scroll position and re-opens the
+ * sections that were open (rebuilding the page closes every <details>, the page gets shorter and the browser jumps).
+ */
+export async function keepPlace(el, render) {
+  const key = (d) => (d.querySelector("summary")?.textContent || "").replace(/\d+/g, "#").trim();
+  const open = new Set($$("details", el).filter((d) => d.open).map(key));
+  const y = window.scrollY;
+  await render();
+  $$("details", el).forEach((d) => { if (open.has(key(d))) d.open = true; });
+  window.scrollTo(0, y);
+}
+
 /* ---------- modal ---------- */
 export function modal(title, bodyHtml, { wide = false } = {}) {
   const dlg = document.createElement("dialog");

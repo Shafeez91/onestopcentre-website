@@ -1,7 +1,7 @@
 // AI Sales dashboard — property database (verified facts, units, prices, promotions) and knowledge base.
 // public.projects (the website listings) is read-only here; listing edits stay in the existing website admin.
 import { parseCSV, chunkText } from "../shared/text.mjs";
-import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, projectName } from "./core.js";
+import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, projectName, keepPlace } from "./core.js";
 
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
 const projectOptions = (sel, blank = "— General (all projects) —") => opt("", blank, sel) + S.projects.map((p) => opt(p.id, p.name, sel)).join("");
@@ -103,7 +103,7 @@ export async function property(el, id) {
         <div class="actions full"><button class="btn">Add unit</button></div></form>
         <datalist id="types-${attr(id)}">${(d.types || []).filter((x) => x && x.name).map((x) => `<option value="${attr(x.name)}">`).join("")}</datalist></details>
         <details><summary>Import units from CSV</summary><p class="note">Columns: unit_no, unit_type, tower, floor, size_sqft, bedrooms, bathrooms, status, list_price. Existing unit numbers are updated.</p>
-        <form id="fuc" class="form"><input type="file" name="file" accept=".csv,text/csv" required><label>Source<input name="source" required placeholder="e.g. Availability chart 26 Oct"></label><div class="actions"><button class="btn">Import</button></div></form></details>` : ""}
+        <form id="fuc" class="form"><label>Units CSV file<input type="file" name="file" accept=".csv,text/csv" required></label><label>Source<input name="source" required placeholder="e.g. Availability chart 26 Oct"></label><div class="actions"><button class="btn">Import</button></div></form></details>` : ""}
     </section>
 
     <section class="card"><h2>Verified prices</h2>
@@ -118,7 +118,7 @@ export async function property(el, id) {
         <p class="note full">Saving a new price keeps the old one in history automatically.</p>
         <div class="actions full"><button class="btn">Save price</button></div></form></details>
         <details><summary>Import prices from CSV</summary><p class="note">Columns: unit_type, price_myr, price_kind (list/nett/promo/from), effective_from (YYYY-MM-DD).</p>
-        <form id="fpc" class="form"><input type="file" name="file" accept=".csv,text/csv" required><label>Source<input name="source" required></label><div class="actions"><button class="btn">Import</button></div></form></details>` : ""}
+        <form id="fpc" class="form"><label>Prices CSV file<input type="file" name="file" accept=".csv,text/csv" required></label><label>Source<input name="source" required></label><div class="actions"><button class="btn">Import</button></div></form></details>` : ""}
     </section>
 
     <section class="card"><h2>Promotions</h2>
@@ -136,7 +136,7 @@ export async function property(el, id) {
     </section>
    </div>
   </div>`;
-  const reload = () => property(el, id);
+  const reload = () => keepPlace(el, () => property(el, id));
   if (!can("manager")) return;
   const ff = $("#ff", el);
   guardForm(ff, `prop:${id}:facts`);
@@ -245,7 +245,7 @@ async function docsTab(el, proj) {
     <td data-label="Project">${esc(projectName(d.project_id)) || "All"}</td><td data-label="Text">${badge(d.extract_status.replace("_", " "), d.extract_status === "failed" ? "alert" : d.extract_status === "extracted" ? "ok" : "")}${d.extract_error ? `<small>${esc(d.extract_error)}</small>` : ""}</td>
     <td data-label="Entries"><a href="#/knowledge?tab=entries&doc=${attr(d.id)}">${c.filter((x) => x.approved).length} approved / ${c.length}</a></td>
     <td><button class="link" data-dl="${attr(d.storage_path)}">Open</button>${can("manager") ? ` <button class="link" data-share="${attr(d.id)}" data-v="${d.share_with_customers ? "0" : "1"}">${d.share_with_customers ? "Stop sharing" : "Allow sharing"}</button> <button class="link danger" data-deldoc="${attr(d.id)}" data-path="${attr(d.storage_path)}">Delete</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>` : empty("No documents uploaded yet.")}`;
-  const reload = () => docsTab(el, proj);
+  const reload = () => keepPlace(el, () => docsTab(el, proj));
   $$("[data-dl]", el).forEach((b) => b.onclick = () => act(b, async () => { const { data, error } = await SB.storage.from("ai-docs").createSignedUrl(b.dataset.dl, 300); if (error) throw error; window.open(data.signedUrl, "_blank", "noopener"); }));
   if (!can("manager")) return;
   $$("[data-share]", el).forEach((b) => b.onclick = () => act(b, async () => { await q(SB.from("ai_documents").update({ share_with_customers: b.dataset.v === "1" }).eq("id", b.dataset.share).select("id"), { expectRows: true }); reload(); }, "Saved"));
@@ -302,7 +302,7 @@ async function entriesTab(el, proj, docId) {
   ${rows.length ? rows.map((r) => `<article class="card entry ${r.approved ? "" : "draft"}"><div class="ho-h"><b>${esc(r.title || "Untitled")}</b> ${r.approved ? badge("Approved", "ok") : badge("Draft", "warn")} ${r.lang ? badge(r.lang.toUpperCase()) : ""} <small>${esc(projectName(r.project_id) || "All projects")}</small></div>
     <pre class="content">${esc(r.content)}</pre>
     ${can("manager") ? `<div class="actions">${r.approved ? `<button class="link" data-ap="${attr(r.id)}" data-v="0">Unapprove</button>` : `<button class="link" data-ap="${attr(r.id)}" data-v="1">Approve</button>`} <button class="link" data-edit="${attr(r.id)}">Edit</button> <button class="link danger" data-del="${attr(r.id)}">Delete</button></div>` : ""}</article>`).join("") : empty("No knowledge entries.")}`;
-  const reload = () => entriesTab(el, proj, docId);
+  const reload = () => keepPlace(el, () => entriesTab(el, proj, docId));
   if (!can("manager")) return;
   const ke = $("#ke", el);
   guardForm(ke, "kb:new");
@@ -328,7 +328,7 @@ async function faqsTab(el, proj) {
     <label class="check full"><input type="checkbox" name="approved"> Approved for AI use</label><div class="actions full"><button class="btn pri">Save FAQ</button></div></form></details>` : ""}
   ${rows.length ? rows.map((r) => `<article class="card entry ${r.approved ? "" : "draft"}"><div class="ho-h"><b>${esc(r.question)}</b> ${r.approved ? badge("Approved", "ok") : badge("Draft", "warn")} ${badge(r.lang.toUpperCase())} <small>${esc(projectName(r.project_id) || "General")}</small></div><p>${esc(r.answer)}</p>
     ${can("manager") ? `<div class="actions"><button class="link" data-ap="${attr(r.id)}" data-v="${r.approved ? 0 : 1}">${r.approved ? "Unapprove" : "Approve"}</button> <button class="link danger" data-del="${attr(r.id)}">Delete</button></div>` : ""}</article>`).join("") : empty("No FAQs yet.")}`;
-  const reload = () => faqsTab(el, proj);
+  const reload = () => keepPlace(el, () => faqsTab(el, proj));
   if (!can("manager")) return;
   const f = $("#fq", el); guardForm(f, "faq:new");
   f.onsubmit = (e) => { e.preventDefault(); const v = formData(f); act(f.querySelector("button"), async () => { await q(SB.from("ai_faqs").insert({ ...v, approved: !!v.approved, approved_by: v.approved ? S.email : null })); clearDraft(f); reload(); }, "FAQ saved"); };
