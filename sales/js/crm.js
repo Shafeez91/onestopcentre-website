@@ -388,13 +388,17 @@ export async function appointments(el, params) {
   $$("[data-confirm]", el).forEach((b) => b.onclick = () => confirmAppointment(rows.find((a) => a.id === b.dataset.confirm), () => keepPlace(el, () => appointments(el, params))));
 }
 
-function confirmAppointment(a, done) {
+async function confirmAppointment(a, done) {
   const ap = S.settings?.business?.appointments || {};
+  // in person: the project's showroom by default (same rule as the server); calls have no place
+  const inPerson = ["showroom_visit", "property_viewing"].includes(a.kind);
+  const facts = inPerson && a.project_id ? ((await q(SB.from("ai_project_facts").select("showroom_address").eq("project_id", a.project_id).limit(1))) || [])[0] : null;
+  const where = a.location || (inPerson ? facts?.showroom_address || ap.location || "" : "");
   const dlg = modal("Confirm appointment", `<form id="fc" class="form two">
     <p class="note full">${esc(kindLabel(a.kind))} · ${esc(contactName(a.lead?.contact))}${a.preferred_text ? ` · buyer asked for <i>${esc(a.preferred_text)}</i>` : ""}</p>
     <label>Date and time<input name="start" type="datetime-local" required value="${attr(toLocalInput(a.start_at))}"></label>
     <label>Duration (minutes)<input name="duration_minutes" type="number" min="15" max="480" step="15" value="${attr(ap.duration_minutes || 60)}"></label>
-    <label class="full">Location<input name="location" maxlength="300" value="${attr(a.location || ap.location || "")}" placeholder="e.g. M MIRA sales gallery, Jalan …"></label>
+    <label class="full">Location<input name="location" maxlength="300" value="${attr(where)}" placeholder="${inPerson ? "e.g. M MIRA sales gallery, Jalan …" : "Not needed for a call"}"></label>
     <label>Advisor<select name="advisor_email">${teamOptions(a.advisor_email || S.email)}</select></label>
     <label class="check"><input type="checkbox" name="notify_buyer" checked> Send the buyer a WhatsApp confirmation</label>
     <div class="full"><button type="button" class="btn" id="slots" data-busy="Checking calendar…">Show free calendar slots</button><div class="samples" id="slotlist"></div></div>

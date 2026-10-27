@@ -424,3 +424,17 @@ test("retention clean-up runs once a day at 03:00 Malaysia time, and not from th
   await runWorker(at("2026-10-27T19:00:30Z"), { reminders: false }); // webhook-triggered runs skip it
   assert.equal(purged.length, 1);
 });
+
+test("appointment place: the project's showroom and map for visits, the default otherwise, nothing for calls", async () => {
+  const { placeFor, reminderText } = await import("../../lib/calendar.mjs");
+  const settings = { business: { appointments: { location: "One Stop Centre, Wangsa Maju" } } };
+  const facts = { p1: { showroom_address: "M Mira Sales Gallery, Jalan Wangsa Delima 6", showroom_map_url: "https://maps.app.goo.gl/abc" }, p2: { showroom_address: null, showroom_map_url: "https://maps.app.goo.gl/x" } };
+  const db = { get: async (path) => { const id = /project_id=eq\.([^&]+)/.exec(path)[1]; return facts[id] ? [facts[id]] : []; } };
+  assert.deepEqual(await placeFor(db, { kind: "showroom_visit", project_id: "p1" }, settings), { location: facts.p1.showroom_address, map: "https://maps.app.goo.gl/abc" });
+  assert.deepEqual(await placeFor(db, { kind: "property_viewing", project_id: "p2" }, settings), { location: "One Stop Centre, Wangsa Maju", map: "" }, "no address: default place, and not the project's map");
+  assert.deepEqual(await placeFor(db, { kind: "showroom_visit", project_id: null }, settings), { location: "One Stop Centre, Wangsa Maju", map: "" });
+  assert.deepEqual(await placeFor(db, { kind: "phone_call", project_id: "p1" }, settings), { location: "", map: "" });
+  const c = confirmationText({ kind: "showroom_visit", start: "2026-10-29T03:00:00Z", location: facts.p1.showroom_address, map: "https://maps.app.goo.gl/abc", lang: "en" });
+  assert.match(c, /at M Mira Sales Gallery, Jalan Wangsa Delima 6\. Reply to this message.*\n📍 https:\/\/maps\.app\.goo\.gl\/abc$/s);
+  assert.doesNotMatch(reminderText({ kind: "phone_call", start: "2026-10-29T03:00:00Z", location: "", lang: "ms" }), / di |📍/);
+});

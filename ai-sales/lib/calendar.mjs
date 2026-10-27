@@ -105,16 +105,29 @@ export const KIND_LABEL = {
   ms: { showroom_visit: "Lawatan showroom", property_viewing: "Lawatan hartanah", phone_call: "Panggilan telefon", video_call: "Panggilan video", financing_discussion: "Perbincangan pembiayaan" },
   en: { showroom_visit: "Showroom visit", property_viewing: "Property viewing", phone_call: "Phone call", video_call: "Video call", financing_discussion: "Financing discussion" },
 };
-/** The fixed confirmation sent to the buyer only after the calendar event exists. */
-export function confirmationText({ kind, start, location, lang }) {
+const pin = (map) => (map ? `\n📍 ${map}` : "");
+/** The fixed confirmation sent to the buyer only after the calendar event exists. `map` adds a map link line. */
+export function confirmationText({ kind, start, location, map = "", lang }) {
   const L = lang === "en" ? "en" : "ms", what = KIND_LABEL[L][kind] || KIND_LABEL[L].showroom_visit, when = fmt(new Date(start), L);
-  return L === "en"
+  return (L === "en"
     ? `✅ Your appointment is confirmed: ${what} on ${when}${location ? ` at ${location}` : ""}. Reply to this message if you need to change the time.`
-    : `✅ Temujanji anda telah disahkan: ${what} pada ${when}${location ? ` di ${location}` : ""}. Balas mesej ini jika perlu menukar masa.`;
+    : `✅ Temujanji anda telah disahkan: ${what} pada ${when}${location ? ` di ${location}` : ""}. Balas mesej ini jika perlu menukar masa.`) + pin(map);
 }
-export function reminderText({ kind, start, location, lang }) {
+export function reminderText({ kind, start, location, map = "", lang }) {
   const L = lang === "en" ? "en" : "ms", what = KIND_LABEL[L][kind] || KIND_LABEL[L].showroom_visit, when = fmt(new Date(start), L);
-  return L === "en"
+  return (L === "en"
     ? `Reminder: your ${what.toLowerCase()} is on ${when}${location ? ` at ${location}` : ""}. Reply to this message if you need to change the time.`
-    : `Peringatan: ${what.toLowerCase()} anda pada ${when}${location ? ` di ${location}` : ""}. Balas mesej ini jika perlu menukar masa.`;
+    : `Peringatan: ${what.toLowerCase()} anda pada ${when}${location ? ` di ${location}` : ""}. Balas mesej ini jika perlu menukar masa.`) + pin(map);
+}
+
+const IN_PERSON = new Set(["showroom_visit", "property_viewing"]);
+/**
+ * Where an appointment takes place: for a showroom visit or viewing, the project's showroom address and map link
+ * (Property projects → Verified facts), else the default location from Settings. Calls have no place.
+ */
+export async function placeFor(db, appt, settings) {
+  if (!IN_PERSON.has(appt.kind)) return { location: "", map: "" };
+  const f = appt.project_id ? (await db.get(`ai_project_facts?project_id=eq.${encodeURIComponent(appt.project_id)}&select=showroom_address,showroom_map_url`))?.[0] : null;
+  if (f?.showroom_address) return { location: f.showroom_address, map: f.showroom_map_url || "" };
+  return { location: settings.business?.appointments?.location || "", map: "" };
 }
