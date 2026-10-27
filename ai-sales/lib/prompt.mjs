@@ -170,6 +170,7 @@ export function renderContext(ctx) {
       brochure_url: p.brochure || null,   // the PDF uploaded in the website CMS; share this when a buyer asks for the brochure
       map_url: p.mapUrl || null,
       layouts_INDICATIVE: p.layouts,
+      listing_details_INDICATIVE: p.listing,
       facilities: p.facilities, nearby: p.nearby,
       verified_facts: p.facts ? { ...p.facts, label: label(true, p.factsFresh) } : null,
       verified_prices: p.prices.map((x) => ({ key: `price:${p.id}:${x.unit_type}`, layout: x.unit_type, kind: x.price_kind, price: `RM${Number(x.price_myr).toLocaleString("en-MY")}`, since: x.effective_from, label: label(true, x.fresh) })),

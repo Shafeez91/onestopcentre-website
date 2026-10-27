@@ -73,6 +73,15 @@ export async function loadContext(db, { leadId = null, message = "", history = [
       layouts: arr(d.types).filter((t) => t && t.name).map((t) => ({ layout: clean(t.name), size_sqft: clean(t.size), bedrooms: clean(t.beds), bathrooms: clean(t.baths), price_from: clean(t.price) || null })),
       websitePrices: [...arr(d.types).map((t) => t && t.price), d.p].map(num).filter((n) => n && n >= 10000),
       maintPsfWebsite: num(d.maintPsf),
+      // other public listing details (indicative, as shown on the website)
+      listing: Object.fromEntries(Object.entries({
+        maintenance_fee_psf: num(d.maintPsf) ? `RM${num(d.maintPsf)} psf` : null,
+        size_range: clean(d.z), lease_years: clean(d.lease), floors: clean(d.height), furnishing: clean(d.furn),
+        furnished_items: arr(d.furnList).filter((x) => typeof x === "string" && x).slice(0, 15),
+        highlights: arr(d.hl).filter((x) => typeof x === "string" && x).slice(0, 8),
+        address: clean(d.address), description: clean(d.desc).slice(0, 800),
+        surroundings: typeof d.nearby === "string" ? clean(d.nearby).slice(0, 1500) : "",
+      }).filter(([, v]) => v !== null && v !== "" && !(Array.isArray(v) && !v.length))),
       facilities: arr(d.facilities).filter((x) => typeof x === "string" && x).slice(0, 15),
       nearby: Object.fromEntries(Object.entries(obj(d.near)).map(([k, v]) => [k, arr(v).filter((x) => x && x.n).slice(0, 5).map((x) => [x.n, x.d].filter(Boolean).join(" "))]).filter(([, v]) => v.length)),
       facts: factFields, factsFresh: !!f?.verified_at && now - new Date(f.verified_at) <= priceMaxMs,
