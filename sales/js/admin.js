@@ -232,9 +232,9 @@ export async function team(el) {
 
 /* ======================= Integrations ======================= */
 export async function integrations(el) {
-  const rows = (await q(SB.from("ai_integration_accounts").select("*").order("provider"))) || [];
   let h = null, herr = "";
   try { h = await api("/api/sales/health"); } catch (x) { herr = x.message; }
+  const rows = (await q(SB.from("ai_integration_accounts").select("*").order("provider"))) || []; // after the health check, which refreshes them
   const yes = (v) => v ? badge("Set", "ok") : badge("Missing", "warn");
   const NAMES = { whatsapp_cloud: "WhatsApp Business Platform (Meta Cloud API)", anthropic: "Anthropic Claude (LLM)", google_calendar: "Google Calendar", openai: "OpenAI", twilio_whatsapp: "Twilio WhatsApp", telegram: "Telegram alerts" };
   el.innerHTML = `<div class="page-head"><h1>Integrations</h1><p class="sub">Secrets are only ever stored as Netlify environment variables. This page shows whether they are set, never their values.</p></div>

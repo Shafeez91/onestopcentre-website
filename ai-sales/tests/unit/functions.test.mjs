@@ -90,3 +90,24 @@ test("invite: without the service key the role is still saved and the owner is t
   assert.equal(b.invited, false);
   assert.match(b.note, /SUPABASE_SERVICE_ROLE_KEY/);
 });
+
+test("health: account labels follow what actually happened (latest AI call, calendar settings)", async () => {
+  const { syncAccounts } = await import("../../../netlify/functions/sales-health.mjs");
+  const run = (runs) => { const patches = []; const db = { get: async () => runs, patch: async (path, body) => { patches.push([path, body]); } }; return { db, patches }; };
+  const on = { llm_anthropic: true, google_calendar_id: false, google_service_account: false };
+  let t = run([{ created_at: "2026-10-27T01:36:19Z", error: null }]);
+  await syncAccounts(t.db, on);
+  assert.deepEqual(t.patches[0], ["ai_integration_accounts?provider=eq.anthropic", { status: "healthy", last_checked_at: "2026-10-27T01:36:19Z", last_error: null }]);
+  assert.deepEqual(t.patches[1], ["ai_integration_accounts?provider=eq.google_calendar", { status: "not_configured" }]);
+  t = run([{ created_at: "2026-10-27T02:00:00Z", error: "Anthropic API 401: invalid x-api-key" }]);
+  await syncAccounts(t.db, on);
+  assert.equal(t.patches[0][1].status, "error");
+  assert.match(t.patches[0][1].last_error, /invalid x-api-key/);
+  t = run([]);
+  await syncAccounts(t.db, { ...on, google_calendar_id: true, google_service_account: true });
+  assert.equal(t.patches[0][1].status, "configured", "key set but no AI call yet");
+  assert.deepEqual(t.patches[1], ["ai_integration_accounts?provider=eq.google_calendar&status=eq.not_configured", { status: "configured" }], "never overwrites a real calendar result");
+  t = run([]);
+  await syncAccounts(t.db, { ...on, llm_anthropic: false });
+  assert.equal(t.patches[0][1].status, "not_configured");
+});
