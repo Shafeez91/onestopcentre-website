@@ -144,11 +144,16 @@ test("Telegram settings: validates input, saves the reminder timings and sends a
     await page.click("#sf button[type=submit]");
     await page.waitForSelector(".toast.err");
     await page.fill("#sf input[name=appointment_reminder_minutes]", "120, 1440, 30");
+    assert.equal(await page.locator("#sf input[name=whatsapp_alerts]").count(), 0, "no per-WhatsApp-message alert option");
+    assert.equal(await page.isChecked("#sf input[name=cat_new_website_lead]"), true, "the three alert types are on by default");
+    await page.uncheck("#sf input[name=cat_appointment_notification]");
     await page.click("#sf button[type=submit]");
     await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /saved/.test(t.textContent)));
     const w = writes.find((x) => x.table === "ai_settings" && x.body && x.body.notifications);
     assert.deepEqual(w.body.notifications.appointment_reminder_minutes, [1440, 120, 30]);
     assert.equal(w.body.notifications.telegram_chat_id, "123456789");
+    assert.deepEqual(w.body.notifications.categories, { new_website_lead: true, human_followup_reminder: true, appointment_notification: false });
+    assert.ok(!("cat_new_website_lead" in w.body.notifications) && !("whatsapp_alerts" in w.body.notifications));
     await page.click("#tgtest");
     await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Test message sent/.test(t.textContent)));
     assert.ok(writes.some((x) => x.rpc === "ai_telegram_test"));

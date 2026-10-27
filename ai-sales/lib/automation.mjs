@@ -48,6 +48,16 @@ export async function alertHuman(deps, { conv, reason, key, lastMessage = null }
   } catch { return false; }
 }
 
+/** Same reminder for a conversation by id, with the buyer's latest message (used when a reply could not be delivered). */
+export async function alertHumanAbout(deps, conversationId, reason, key) {
+  try {
+    const conv = await loadConv(deps.db, conversationId);
+    if (!conv) return false;
+    const last = (await deps.db.get(`ai_messages?conversation_id=eq.${enc(conversationId)}&direction=eq.inbound&order=created_at.desc&limit=1&select=id,body,created_at`))?.[0] || null;
+    return await alertHuman(deps, { conv, reason, key, lastMessage: last });
+  } catch { return false; }
+}
+
 /* ---------------------------------------------------------------- smart follow-up */
 async function smartFollowUp(deps, job, settings, ck) {
   const { db } = deps, now = deps.now(), A = automationOf(settings), f = settings.flags || {};

@@ -238,14 +238,14 @@ test("live reply: a failed send is retried with the same text, without a second 
   assert.equal(d.llm.calls.length, 1);
 });
 
-test("AI auto-reply off: nothing is sent, the AI is not called, staff get a Telegram alert", async () => {
+test("AI auto-reply off: nothing is sent, the AI is not called, and no Telegram alert for the message", async () => {
   const db = memdb(world()); flags(db, { ai_auto_reply: false });
+  db.t.ai_settings[0].notifications = { whatsapp_alerts: true }; // even the old switch cannot bring per-message alerts back
   const d = deps(db);
   await runWorker(d);
   assert.equal(d.llm.calls.length, 0);
   assert.equal(d.wa.sent.length, 0);
-  assert.equal(db.t.telegram.length, 1);
-  assert.match(db.t.telegram[0].p_text, /New WhatsApp message \(AI auto-reply is off\)[\s\S]*Aina[\s\S]*boleh info M Mira/);
+  assert.equal((db.t.telegram || []).length, 0);
 });
 
 test("STOP is honoured even while a person handles the chat: consent withdrawn, follow-ups cancelled, confirmation sent", async () => {
@@ -303,13 +303,33 @@ test("media the AI cannot read: polite holding reply and a handover, no AI call"
   assert.match(db.t.ai_handover_events[0].summary.text, /audio/);
 });
 
-test("WhatsApp sending switched off: the AI drafts, staff see the draft on Telegram, nothing goes to the buyer", async () => {
+test("WhatsApp sending switched off: the AI drafts, nothing goes to the buyer, no Telegram alert", async () => {
   const db = memdb(world()); flags(db, { whatsapp_outbound: false });
   const d = deps(db);
   await runWorker(d);
   assert.equal(d.llm.calls.length, 1);
   assert.equal(d.wa.sent.length, 0);
-  assert.match(db.t.telegram[0].p_text, /AI draft \(not sent/);
+  assert.equal((db.t.telegram || []).length, 0);
+});
+
+test("Telegram: AI replies send nothing; an undelivered reply gives ONE follow-up reminder per buyer per day", async () => {
+  const db = memdb(world()), d = deps(db);
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 1);
+  assert.equal((db.t.telegram || []).length, 0, "a normal AI reply is not announced");
+
+  const fail = Object.assign(new Error("WhatsApp refused the message (400)"), { kind: "rejected" });
+  const w = world(); w.ai_messages.push({ id: "M2", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Hello?", created_at: ago(0.5), status: "received" });
+  w.ai_jobs.push({ id: "J2", kind: "wa_reply", payload: { conversation_id: "V1", message_id: "M2" }, status: "queued", attempts: 0, max_attempts: 5 });
+  const db2 = memdb(w, { ai_send_telegram: (a, t) => { const seen = (t.telegram ||= []).some((x) => x.p_key === a.p_key); if (!seen) t.telegram.push(a); return !seen; } });
+  const d2 = { ...deps(db2), wa: { send: async () => { throw fail; } } };
+  await runWorker(d2);                                      // J1 superseded by J2; J2's reply fails
+  db2.t.ai_jobs.forEach((j) => { if (j.status === "failed") j.status = "queued"; });
+  await runWorker(d2);                                      // retried, fails again
+  assert.equal(db2.t.telegram.length, 1, "one reminder, not one per failure");
+  assert.equal(db2.t.telegram[0].p_kind, "follow_up_due");
+  assert.match(db2.t.telegram[0].p_text, /^🔔 Follow-up needed — the AI's reply could not be delivered \(WhatsApp refused the message \(400\)\)\n👤 Aina · OSC-000001[\s\S]*💬 "Hello\?"[\s\S]*#\/inbox\?c=V1/);
+  assert.ok(!db2.t.telegram.some((x) => x.p_kind === "whatsapp_message"));
 });
 
 const SLOT = { id: "2026-10-29T11:00", start: "2026-10-29T03:00:00.000Z", end: "2026-10-29T04:00:00.000Z", label_ms: "Kha, 29 Okt, 11:00 PG", label_en: "Thu, 29 Oct, 11:00 am" };

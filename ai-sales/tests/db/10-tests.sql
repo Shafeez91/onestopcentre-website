@@ -121,10 +121,13 @@ rollback;
 
 \echo 'T09 website enquiries import into the CRM idempotently and public.leads is untouched'
 begin;
+-- enquiries from before automatic filing (T50 covers new ones, filed as they arrive)
+alter table public.leads disable trigger ai_leads_website_notify;
 insert into public.leads (name, phone, email, project, message, consent) values
   ('Farid', '012-999 8888', null, 'Test Residence', 'Berapa harga?', true),
   ('Mei Ling', null, 'mei@example.test', 'Unknown Project', 'Price list please', true),
   ('No Contact', null, '-', null, 'hi', true);
+alter table public.leads enable trigger ai_leads_website_notify;
 create temp table t_before on commit drop as select * from public.leads;
 grant select on t_before to authenticated;
 set local role authenticated;
@@ -303,8 +306,12 @@ rollback;
 do $$ begin
   assert (select count(*) from pg_policies where schemaname = 'public' and tablename in ('projects','settings','leads','admins')) = 8;
   assert (select count(*) from pg_policies where schemaname = 'storage' and policyname not like 'ai-docs%') = 2;
-  assert (select count(*) from pg_trigger t join pg_class c on c.oid = t.tgrelid where c.relname in ('projects','settings','leads') and not t.tgisinternal) = 3,
-    'no new triggers on existing tables';
+  -- the website's own triggers are kept; its enquiry alert (leads_notify) is deliberately replaced by
+  -- ai_leads_website_notify (files the enquiry in the CRM, alerts only for a new lead — migration 10)
+  assert (select string_agg(c.relname || '.' || t.tgname, ',' order by c.relname, t.tgname) from pg_trigger t join pg_class c on c.oid = t.tgrelid
+           where c.relname in ('projects','settings','leads') and not t.tgisinternal)
+         = 'leads.ai_leads_website_notify,leads.leads_guard,projects.projects_touch,settings.settings_touch', 'only the agreed change on existing tables';
+  assert exists (select 1 from pg_proc where proname = 'notify_new_lead'), 'old alert function kept for rollback';
 end $$;
 
 \echo 'T21 Telegram: new appointment sends one alert with buyer, time and link; no duplicates on re-save'
@@ -621,7 +628,7 @@ do $$ declare r jsonb; h uuid; begin
   insert into public.ai_handover_events (lead_id, conversation_id, reason, summary)
   values ((r ->> 'lead_id')::uuid, (r ->> 'conversation_id')::uuid, 'customer_request', '{"text":"Buyer asked for a person","next_action":"Call her"}') returning id into h;
   assert (select count(*) from public.ai_notifications where kind = 'handover' and ref_id = h::text) = 1;
-  assert (select count(*) from net.calls where body ->> 'text' like '%Buyer needs a person — customer request%Dina%Next: Call her%') = 1;
+  assert (select count(*) from net.calls where body ->> 'text' like '%Follow-up needed — customer request%Dina%Next: Call her%#/inbox?c=%') = 1;
   update public.ai_settings set notifications = notifications || '{"handover_alerts": false}';
   insert into public.ai_handover_events (lead_id, reason) values ((r ->> 'lead_id')::uuid, 'complaint');
   assert (select count(*) from public.ai_notifications where kind = 'handover') = 1, 'switched off';
@@ -874,7 +881,7 @@ do $$ declare r jsonb; j uuid; n int; begin
   assert n = 1, 'stuck job reclaimed';
   assert not has_function_privilege('authenticated', 'public.ai_claim_automation_jobs(int, uuid)', 'execute');
   assert not has_function_privilege('anon', 'public.ai_take_over(uuid)', 'execute');
-  assert (select (notifications ->> 'whatsapp_alerts')::boolean from public.ai_settings) = false;
+  assert coalesce((select (notifications ->> 'whatsapp_alerts')::boolean from public.ai_settings), false) = false;
   assert (select (automation ->> 'follow_up_delay_hours')::int from public.ai_settings) = 12;
   update public.ai_automation_jobs set status = 'scheduled' where id = j;
   perform public.t_login('advisor@test.local');
@@ -887,6 +894,115 @@ do $$ begin assert (select count(*) from public.ai_automation_jobs) >= 1, 'viewe
 do $$ begin
   begin update public.ai_automation_jobs set status = 'scheduled'; exception when insufficient_privilege then null; end;
   assert not exists (select 1 from public.ai_automation_jobs where status = 'scheduled'), 'no direct writes';
+end $$;
+rollback;
+
+\echo 'T48 Telegram: only the three categories get through; per-WhatsApp-message alerts are blocked wherever they come from'
+begin;
+do $$ declare n0 bigint := (select count(*) from net.calls); begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  -- a legacy handler trying to announce a WhatsApp message
+  assert not public.ai_send_telegram('whatsapp_message', 'x', 'wa:legacy:1', '💬 New WhatsApp message');
+  assert (select count(*) from net.calls) = n0, 'nothing sent';
+  assert (select status || '/' || error from public.ai_notifications where dedupe_key = 'blocked:wa:legacy:1') like 'skipped/blocked: not one of the Telegram categories%';
+  assert not public.ai_send_telegram('anything_else', 'x', 'k:2', 'x');
+  -- approved categories are sent once per key
+  assert public.ai_send_telegram('follow_up_due', 'x', 'fu:1', '🔔 Follow-up needed');
+  assert not public.ai_send_telegram('follow_up_due', 'x', 'fu:1', '🔔 Follow-up needed'), 'same key: once';
+  assert public.ai_send_telegram('appointment_reminder', 'x', 'ap:1', '⏰');
+  assert (select count(*) from net.calls) = n0 + 2;
+  -- a category switched off
+  update public.ai_settings set notifications = jsonb_set(notifications, '{categories,appointment_notification}', 'false');
+  assert not public.ai_send_telegram('appointment_change', 'x', 'ap:2', '📅');
+  assert (select error from public.ai_notifications where dedupe_key = 'blocked:ap:2') like '%"appointment_notification" category is switched off';
+  assert not ((select notifications from public.ai_settings) ? 'whatsapp_alerts'), 'old switch removed';
+  assert not has_function_privilege('authenticated', 'public.ai_send_telegram(text,text,text,text)', 'execute');
+end $$;
+rollback;
+
+\echo 'T49 WhatsApp messages (new buyer, returning buyer, repeats, redelivery) and AI replies never reach Telegram'
+begin;
+update public.ai_settings set flags = flags || '{"ai_auto_reply": true}';
+do $$ declare n0 bigint := (select count(*) from net.calls); r jsonb; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456901', 'New Buyer', 'wamid.T1', 'text', 'Hi');
+  perform public.ai_wa_inbound('60123456901', 'New Buyer', 'wamid.T2', 'text', 'Info M Mira?');
+  perform public.ai_wa_inbound('60123456901', 'New Buyer', 'wamid.T2', 'text', 'Info M Mira?');   -- redelivered
+  perform public.ai_wa_inbound('60123456901', 'New Buyer', 'wamid.T3', 'image', '[image]');
+  insert into public.ai_messages (conversation_id, direction, sender_type, body, status) values ((r ->> 'conversation_id')::uuid, 'outbound', 'ai', 'Hai!', 'sent');
+  update public.ai_leads set qualification = '{"purpose":"own_stay"}' where id = (r ->> 'lead_id')::uuid;
+  assert (select count(*) from net.calls) = n0, 'no Telegram for WhatsApp traffic';
+  assert (select count(*) from public.ai_notifications where status = 'sent' and created_at >= now()) = 0;
+end $$;
+rollback;
+
+\echo 'T50 website enquiry: filed in the CRM at once and announced once as a NEW lead; repeats and existing leads are not'
+begin;
+do $$ declare n0 bigint := (select count(*) from net.calls); lid uuid; w uuid; begin
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  set local role anon;
+  insert into public.leads (name, phone, email, project, message, consent) values ('Ahmad', '012-777 8888', 'a@example.test', 'Test Residence', 'Nak tahu harga', true);
+  reset role;
+  assert (select count(*) from net.calls) = n0 + 1, 'exactly one alert (the old website trigger no longer fires)';
+  select a.lead_id into lid from public.ai_activities a where a.kind = 'website_enquiry' and a.body = 'Nak tahu harga';
+  assert lid is not null, 'filed in the CRM straight away';
+  assert (select primary_project_id from public.ai_leads where id = lid) = 't1';
+  assert (select body ->> 'text' from net.calls order by id desc limit 1) like '🆕 NEW WEBSITE LEAD%Ahmad · OSC-%012-777 8888%a@example.test%Test Residence%Nak tahu harga%Website enquiry form%Open lead: https://onestopcentreproperty.com/sales/#/lead/' || lid || '%wa.me/60127778888%';
+  -- the same person submits again (double submit, or another project): the CRM keeps one open lead → no new-lead alert
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  set local role anon;
+  insert into public.leads (name, phone, project, message, consent) values ('Ahmad', '0127778888', 'Test Heights', 'Yang ni pula', true);
+  reset role;
+  assert (select count(*) from net.calls) = n0 + 1;
+  assert (select count(*) from public.ai_activities where lead_id = lid and kind = 'website_enquiry') = 2, 'recorded on the existing lead';
+  -- an update to a website enquiry is not a new lead
+  update public.leads set status = 'contacted' where name = 'Ahmad';
+  assert (select count(*) from net.calls) = n0 + 1;
+  -- the import button later does not file them twice
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  assert (public.ai_import_website_leads(100) ->> 'imported')::int = 0;
+  -- a buyer whose earlier lead was closed gets a new lead, and an alert
+  update public.ai_leads set closed_at = now() where id = lid;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  set local role anon;
+  insert into public.leads (name, phone, project, consent) values ('Ahmad', '0127778888', 'Test Residence', true);
+  reset role;
+  assert (select count(*) from net.calls) = n0 + 2;
+  -- website lead alerts can be switched off on their own
+  update public.ai_settings set notifications = jsonb_set(notifications, '{categories,new_website_lead}', 'false');
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  set local role anon;
+  insert into public.leads (name, phone, consent) values ('Siti', '0139998888', true);
+  reset role;
+  assert (select count(*) from net.calls) = n0 + 2;
+end $$;
+rollback;
+
+\echo 'T51 handovers: one alert per buyer while it waits; a person replying takes it, so the next one alerts again'
+begin;
+do $$ declare n0 bigint := (select count(*) from net.calls); r jsonb; lid uuid; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456902', 'Lim', 'wamid.HV1', 'text', 'nak discount');
+  lid := (r ->> 'lead_id')::uuid;
+  insert into public.ai_handover_events (lead_id, conversation_id, reason, summary) values (lid, (r ->> 'conversation_id')::uuid, 'negotiation', '{"text":"asked for discount"}');
+  insert into public.ai_handover_events (lead_id, conversation_id, reason) values (lid, (r ->> 'conversation_id')::uuid, 'low_confidence');
+  insert into public.ai_handover_events (lead_id, conversation_id, reason) values (lid, (r ->> 'conversation_id')::uuid, 'other');
+  assert (select count(*) from net.calls) = n0 + 1, 'one alert for the waiting buyer';
+  insert into public.ai_messages (conversation_id, direction, sender_type, sender_email, body, status) values ((r ->> 'conversation_id')::uuid, 'outbound', 'human', 'advisor@test.local', 'Hi Lim', 'queued');
+  assert (select count(*) from public.ai_handover_events where lead_id = lid and status = 'accepted' and accepted_by = 'advisor@test.local') = 3;
+  insert into public.ai_handover_events (lead_id, conversation_id, reason) values (lid, (r ->> 'conversation_id')::uuid, 'customer_request');
+  assert (select count(*) from net.calls) = n0 + 2, 'a new request after the person replied is announced';
+end $$;
+rollback;
+
+\echo 'T52 appointment alerts show the showroom map link'
+begin;
+do $$ declare r jsonb; a public.ai_appointments; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456903', 'Aina', 'wamid.MP1', 'text', 'Sabtu ok');
+  insert into public.ai_project_facts (project_id, showroom_address, showroom_map_url) values ('t1', 'Test Gallery, Cheras', 'https://maps.app.goo.gl/x');
+  insert into public.ai_appointments (lead_id, kind, status, start_at, project_id, location) values ((r ->> 'lead_id')::uuid, 'showroom_visit', 'confirmed', now() + interval '2 days', 't1', 'Test Gallery, Cheras') returning * into a;
+  assert public.ai_appt_text(a) like '%📍 Test Gallery, Cheras%🗺 https://maps.app.goo.gl/x%#/lead/%';
 end $$;
 rollback;
 
