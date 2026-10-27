@@ -412,3 +412,16 @@ test("brochure: the project's brochure link from the website CMS is given to the
   assert.match(llm.calls[0].system, /asks for a brochure, send the project's brochure_url/);
   assert.equal(r.decision, "reply", JSON.stringify(r.violations));
 });
+
+test("website listing details (maintenance fee, furnishing, highlights, surroundings) reach the AI as indicative", async () => {
+  const db = fakeDb({ projects: [{ id: "t3", slug: "m-mira", data: { n: "M MIRA", maintPsf: "0.38", furn: "Partially Furnished", furnList: ["Air-conditioners"], hl: ["Low Density 633 Units Only"],
+    lease: "99", height: "40", z: "800 sqft - 1050 sqft", address: "M MIRA", desc: "", nearby: "650m – Sri Rampai LRT Station", types: [{ name: "Type A", price: "RM476,000" }] } }] });
+  const llm = scripted(draft({ reply: "Hai, saya pembantu AI. Yuran penyelenggaraan M MIRA dianggarkan RM0.38 psf (indikatif, tertakluk pengesahan).", facts_used: [] }));
+  const r = await respond({ db, llm, message: "Berapa maintenance fee M Mira?", now: NOW, mode: "simulate" });
+  const ctx = llm.calls[0].messages.at(-1).content;
+  assert.match(ctx, /"listing_details_INDICATIVE":\{"maintenance_fee_psf":"RM0.38 psf","size_range":"800 sqft - 1050 sqft","lease_years":"99","floors":"40","furnishing":"Partially Furnished","furnished_items":\["Air-conditioners"\],"highlights":\["Low Density 633 Units Only"\],"address":"M MIRA","surroundings":"650m – Sri Rampai LRT Station"\}/);
+  assert.equal(r.decision, "reply", JSON.stringify(r.violations));
+  // an unlabelled fee is still caught
+  const bad = await respond({ db, llm: scripted(draft({ reply: "Hai, saya pembantu AI. Maintenance fee M MIRA RM0.38 psf." }), draft({ reply: "Hai, saya pembantu AI. Maintenance fee M MIRA RM0.38 psf." })), message: "maintenance?", now: NOW, mode: "simulate" });
+  assert.equal(bad.attempts[0].violations[0].code, "unlabelled_indicative_price");
+});
