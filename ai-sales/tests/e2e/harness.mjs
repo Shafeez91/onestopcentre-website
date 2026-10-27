@@ -62,7 +62,7 @@ export function fixtures() {
     ai_settings: [{ id: 1, flags: { module_enabled: true, website_lead_import: true, ai_auto_reply: false, whatsapp_outbound: false, follow_ups: false, calendar_booking: false },
       persona: { name: "OSC Property Assistant", tone: "Friendly", greeting_en: "Hi", greeting_ms: "Hai", allow_manglish: true }, business: { timezone: "Asia/Kuala_Lumpur", hours: { mon: ["09:00", "18:00"], sun: null }, inventory_max_age_hours: 72, price_max_age_days: 30, max_marketing_messages_per_week: 2 },
       scoring: { weights: { readiness: 25, budget: 20, suitability: 15, timeline: 15, engagement: 15, financing: 10 }, thresholds: { hot: 70, warm: 45, nurture: 20 } }, ai: { provider: "anthropic", model: "", confidence_threshold: 0.7, max_reply_chars: 700 }, compliance: { pdpa_notice_en: "x", pdpa_notice_ms: "y" },
-      notifications: { telegram_enabled: true, telegram_chat_id: "123456789", appointment_changes: true, appointment_reminder_minutes: [1440, 120], task_reminders: true, task_lead_minutes: 30, daily_digest: true, digest_hour: 8 } }],
+      notifications: { telegram_enabled: true, telegram_chat_id: "123456789", whatsapp_alerts: true, appointment_changes: true, appointment_reminder_minutes: [1440, 120], task_reminders: true, task_lead_minutes: 30, daily_digest: true, digest_hour: 8 } }],
     ai_pipeline_stages: stages,
     ai_lead_sources: [{ id: "src1", name: "Website enquiry form", channel: "website", active: true }],
     ai_campaigns: [], ai_team_members: [{ email: "advisor@test.local", role: "advisor", active: true }],

@@ -133,18 +133,23 @@ export async function settings(el, params) {
     const n = st.notifications || {};
     let log = [];
     if (can("manager")) { try { log = (await q(SB.from("ai_notifications").select("kind,status,error,created_at,message").order("created_at", { ascending: false }).limit(30))) || []; } catch { log = []; } }
-    const KIND = { appointment_change: "Appointment alert", appointment_reminder: "Appointment reminder", task_reminder: "Follow-up reminder", follow_up_due: "Follow-up step due", daily_digest: "Daily digest", test: "Test", ai_cap: "AI daily limit", handover: "Buyer needs a person", whatsapp_message: "WhatsApp message" };
+    const KIND = { appointment_change: "Appointment alert", appointment_reminder: "Appointment reminder", task_reminder: "Follow-up reminder", follow_up_due: "Follow-up needed", daily_digest: "Daily digest", test: "Test", ai_cap: "AI daily limit", handover: "Buyer needs a person", whatsapp_message: "WhatsApp message (blocked)", website_lead: "New website lead" };
+    const cat = n.categories || {};
     body.innerHTML = `<h2>Telegram notifications</h2>
-      <p class="note">Sent to staff only, through the same Telegram bot that already alerts you about website enquiries. Checked every 5 minutes. Messages include the buyer's name and phone number, so use a private chat or a staff-only group.</p>
+      <p class="note">Telegram is for business alerts only — <b>never one per WhatsApp message</b>. Exactly three kinds of alert exist; anything else is blocked by the database (and listed below as "skipped"). Messages include the buyer's name and phone number, so use a private chat or a staff-only group.</p>
       <form id="sf" class="form two">
       <label class="switch full"><input type="checkbox" name="telegram_enabled"${n.telegram_enabled ? " checked" : ""}${dis}><span><b>Send Telegram notifications</b><small>Master switch for everything on this page.</small></span></label>
       <label class="full">Telegram chat ID<input name="telegram_chat_id" value="${attr(n.telegram_chat_id)}" inputmode="numeric" placeholder="e.g. 8821015679, or -100… for a group"${dis}></label>
+      <h3 class="full">The three alert types</h3>
+      <label class="switch full"><input type="checkbox" name="cat_new_website_lead"${cat.new_website_lead !== false ? " checked" : ""}${dis}><span><b>1 · New website leads</b><small>Once per genuinely new lead from the website enquiry form, with a link to the lead. An enquiry from someone who already has an open lead is added to that lead without a new alert.</small></span></label>
+      <label class="switch full"><input type="checkbox" name="cat_human_followup_reminder"${cat.human_followup_reminder !== false ? " checked" : ""}${dis}><span><b>2 · Follow-up reminders</b><small>A buyer needs a person: asked for one or the AI handed over (once while it waits), no reply from you after the set time, a follow-up task due, a reply that could not be delivered (once a day), the daily AI limit, and the daily digest below.</small></span></label>
+      <label class="switch full"><input type="checkbox" name="cat_appointment_notification"${cat.appointment_notification !== false ? " checked" : ""}${dis}><span><b>3 · Appointments</b><small>Booked, confirmed, rescheduled or cancelled, and the reminders below — with the showroom and map link.</small></span></label>
+      <h3 class="full">Details</h3>
       <label class="switch full"><input type="checkbox" name="appointment_changes"${n.appointment_changes ? " checked" : ""}${dis}><span><b>Appointment alerts</b><small>Instantly when an appointment is requested, confirmed, rescheduled, cancelled or a buyer doesn't show up.</small></span></label>
       <label class="full">Appointment reminders (minutes before, comma-separated)<input name="appointment_reminder_minutes" value="${attr((n.appointment_reminder_minutes || []).join(", "))}" placeholder="1440, 120 = 24 h and 2 h before"${dis}></label>
       <label class="switch full"><input type="checkbox" name="task_reminders"${n.task_reminders ? " checked" : ""}${dis}><span><b>Follow-up reminders</b><small>For every open follow-up task with a due time (and follow-up sequence steps while automatic sending is off).</small></span></label>
       <label>Remind this many minutes before a follow-up is due<input name="task_lead_minutes" type="number" min="0" max="1440" value="${attr(n.task_lead_minutes ?? 30)}"${dis}></label><span></span>
-      <label class="switch full"><input type="checkbox" name="handover_alerts"${n.handover_alerts !== false ? " checked" : ""}${dis}><span><b>Buyer needs a person</b><small>Instantly when the AI hands a buyer over (asked for a person, negotiation, complaint, unsure…) or a staff member flags one.</small></span></label>
-      <label class="switch full"><input type="checkbox" name="whatsapp_alerts"${n.whatsapp_alerts !== false ? " checked" : ""}${dis}><span><b>WhatsApp messages the AI does not answer</b><small>When AI auto-reply is off or a person has taken over the chat (at most one alert per chat per hour).</small></span></label>
+      <label class="switch full"><input type="checkbox" name="handover_alerts"${n.handover_alerts !== false ? " checked" : ""}${dis}><span><b>Buyer needs a person</b><small>When the AI hands a buyer over (asked for a person, negotiation, complaint, unsure…) or a staff member flags one — once while the buyer waits, not for every message.</small></span></label>
       <label class="switch"><input type="checkbox" name="daily_digest"${n.daily_digest ? " checked" : ""}${dis}><span><b>Daily digest</b><small>Today's appointments, follow-ups due, overdue, hot leads.</small></span></label>
       <label>Digest time (hour, Malaysia time)<input name="digest_hour" type="number" min="0" max="23" value="${attr(n.digest_hour ?? 8)}"${dis}></label>
       ${own ? `<div class="actions full"><button class="btn pri" type="submit">Save</button><button class="btn" type="button" id="tgtest" data-busy="Sending…">Send test message</button></div>` : ""}</form>
@@ -156,7 +161,10 @@ export async function settings(el, params) {
         const mins = String(v.appointment_reminder_minutes || "").split(/[,\s]+/).filter(Boolean).map(Number);
         if (mins.some((m) => !Number.isInteger(m) || m < 1 || m > 20160)) return toast("Reminder minutes must be whole numbers between 1 and 20160 (14 days).", "err");
         if (v.telegram_enabled && !/^-?\d{5,20}$/.test(v.telegram_chat_id || "")) return toast("Enter a valid Telegram chat ID (numbers only).", "err");
-        act(f.querySelector("button[type=submit]"), () => save("notifications", { ...n, ...v, appointment_reminder_minutes: [...new Set(mins)].sort((a, b) => b - a), task_lead_minutes: v.task_lead_minutes ?? 30, digest_hour: v.digest_hour ?? 8 }, f), "Notification settings saved");
+        const { cat_new_website_lead, cat_human_followup_reminder, cat_appointment_notification, ...rest } = v;
+        const categories = { new_website_lead: cat_new_website_lead, human_followup_reminder: cat_human_followup_reminder, appointment_notification: cat_appointment_notification };
+        const { whatsapp_alerts, ...keep } = n;
+        act(f.querySelector("button[type=submit]"), () => save("notifications", { ...keep, ...rest, categories, appointment_reminder_minutes: [...new Set(mins)].sort((a, b) => b - a), task_lead_minutes: v.task_lead_minutes ?? 30, digest_hour: v.digest_hour ?? 8 }, f), "Notification settings saved");
       };
       $("#tgtest", body).onclick = (e) => act(e.currentTarget, async () => {
         if (hasDraftChanges(f)) throw new Error("Save your changes first, then send the test.");

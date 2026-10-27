@@ -59,3 +59,19 @@ insert into auth.users (id, email, email_confirmed_at) values
   ('00000000-0000-0000-0000-000000000005', 'stranger@test.local', now()),
   ('00000000-0000-0000-0000-000000000006', 'manager@test.local', now());
 insert into public.admins (email) values ('owner@test.local');
+
+-- The website's own Telegram alert for enquiries (as in production on 2026-10-27)
+create function public.notify_new_lead() returns trigger language plpgsql security definer set search_path to 'public', 'extensions' as $$
+declare
+  tg_token text := (select trim(decrypted_secret) from vault.decrypted_secrets where name = 'telegram_bot_token' limit 1);
+  tg_chat  text := '8821015679';
+  msg text;
+begin
+  if coalesce(tg_token,'') = '' then return new; end if;
+  msg := '🔔 New enquiry' || chr(10) || '👤 ' || coalesce(nullif(new.name,''), '(no name)');
+  perform net.http_post(url := 'https://api.telegram.org/bot' || tg_token || '/sendMessage',
+    body := jsonb_build_object('chat_id', tg_chat, 'text', msg, 'disable_web_page_preview', true), headers := '{"Content-Type":"application/json"}'::jsonb);
+  return new;
+exception when others then return new;
+end $$;
+create trigger leads_notify after insert on public.leads for each row execute function notify_new_lead();

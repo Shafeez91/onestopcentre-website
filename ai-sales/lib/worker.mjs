@@ -12,7 +12,7 @@ import { isOptOut, wantsHuman, detectLanguage, fixedReply } from "../../sales/sh
 import { decideFollowUp, consentState, templateParams } from "./followups.mjs";
 import { confirmationText, placeFor } from "./calendar.mjs";
 import { sendOutbound } from "./outbound.mjs";
-import { runAutomation, confirmAppointmentNow, automationOf } from "./automation.mjs";
+import { runAutomation, confirmAppointmentNow, automationOf, alertHumanAbout } from "./automation.mjs";
 
 export { sendOutbound };
 
@@ -21,11 +21,6 @@ const MAX_HISTORY = 30;
 const flagsOf = (settings) => ({ module: settings?.flags?.module_enabled !== false, ...settings?.flags });
 
 export async function loadSettings(db) { return (await db.get("ai_settings?id=eq.1&select=*"))?.[0] || {}; }
-
-/** Staff alert on Telegram (database sender: deduplicated, never raises). */
-async function alertStaff(db, kind, ref, key, text) {
-  try { await db.rpc("ai_send_telegram", { p_kind: kind, p_ref: ref, p_key: key, p_text: text }); } catch { /* alerts must not break the job */ }
-}
 
 const historyOf = (msgs) => msgs.filter((m) => m.body).map((m) => ({ role: m.direction === "inbound" ? "user" : "assistant", text: m.body }));
 const nameOf = (c) => c?.full_name || null;
@@ -64,15 +59,8 @@ export async function processReplyJob(deps, job, settings) {
   const aiOn = f.module && f.ai_auto_reply && conv.mode === "ai" && !lead?.ai_paused && !lead?.closed_at;
   const guard = isOptOut(message) || wantsHuman(message);
 
-  if (!aiOn && !guard) {
-    // Telegram is not a copy of the inbox: a person is reminded later only if nobody answers (human_reminder job)
-    if (settings.notifications?.whatsapp_alerts === true) {
-      const hour = deps.now().toISOString().slice(0, 13);
-      await alertStaff(db, "whatsapp_message", conv.id, `wa:${conv.id}:${hour}`,
-        `💬 New WhatsApp message${conv.mode !== "ai" || lead?.ai_paused ? " (a person is handling this buyer)" : " (AI auto-reply is off)"}\n👤 ${nameOf(contact) || "(no name)"} · +${to}${lead?.lead_code ? " · " + lead.lead_code : ""}\n"${message.slice(0, 500)}"\nhttps://onestopcentreproperty.com/sales/#/inbox`);
-    }
-    return { status: "done", note: "AI not answering this conversation" };
-  }
+  // no Telegram for WhatsApp messages: a person is reminded only if nobody answers (human_reminder job)
+  if (!aiOn && !guard) return { status: "done", note: "AI not answering this conversation" };
 
   let result;
   if (!readable && !guard) {
@@ -102,10 +90,9 @@ export async function processReplyJob(deps, job, settings) {
         await db.patch(`ai_conversations?id=eq.${enc(conv.id)}`, { unread_count: 0 });
         if (!lead.first_response_at) await db.patch(`ai_leads?id=eq.${enc(lead.id)}`, { first_response_at: deps.now().toISOString() });
       } else {
-        await alertStaff(db, "whatsapp_message", conv.id, `wa-fail:${job.id}`, `⚠️ The AI reply to ${nameOf(contact) || "+" + to} could not be sent: ${sent.error}\nReply personally: https://onestopcentreproperty.com/sales/#/inbox`);
+        // the buyer was not answered: one follow-up reminder per buyer per day, however many replies fail
+        await alertHumanAbout(deps, conv.id, `the AI's reply could not be delivered (${String(sent.error).slice(0, 120)})`, `undelivered:${conv.id}:${deps.now().toISOString().slice(0, 10)}`);
       }
-    } else if (settings.notifications?.whatsapp_alerts === true) {
-      await alertStaff(db, "whatsapp_message", conv.id, `wa-draft:${job.id}`, `💬 WhatsApp from ${nameOf(contact) || "+" + to}: "${message.slice(0, 300)}"\nAI draft (not sent — WhatsApp sending is off):\n${result.reply.slice(0, 600)}`);
     }
   }
 
@@ -219,7 +206,7 @@ export async function runWorker(deps, { maxJobs = 10, followUps = true, reminder
     } catch (e) {
       const dead = job.attempts >= job.max_attempts;
       await db.patch(`ai_jobs?id=eq.${enc(job.id)}`, { status: dead ? "dead" : "failed", last_error: String(e?.message || e).slice(0, 500), run_at: new Date(deps.now().getTime() + 60e3 * job.attempts ** 2).toISOString() });
-      if (dead) await alertStaff(db, "whatsapp_message", job.id, `job-dead:${job.id}`, `⚠️ A WhatsApp message could not be answered after ${job.attempts} tries: ${String(e?.message || e).slice(0, 300)}\nhttps://onestopcentreproperty.com/sales/#/inbox`);
+      if (dead && job.payload?.conversation_id) await alertHumanAbout(deps, job.payload.conversation_id, `a WhatsApp message could not be answered after ${job.attempts} tries`, `undelivered:${job.payload.conversation_id}:${deps.now().toISOString().slice(0, 10)}`);
       out.errors.push(String(e?.message || e));
     }
   }
