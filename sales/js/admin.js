@@ -310,7 +310,7 @@ export async function templates(el, params) {
   }
   const rows = (await q(SB.from("ai_message_templates").select("*").order("name").order("lang"))) || [];
   body.innerHTML = `<div class="card notice"><div>Messages sent outside WhatsApp's 24-hour customer-service window must use a template <b>approved by Meta</b>. Record the approved template name here once Meta approves it.
-    Templates with these names are used automatically: <b>appointment_reminder</b> (variables: name, appointment) and <b>appointment_confirmation</b> (name, appointment). Follow-up steps can name any other template.</div></div>
+    Templates with these names are used automatically: <b>appointment_reminder</b> and <b>appointment_confirmation</b> (variables: name, appointment, location — the location is the project's showroom with its map link). Follow-up steps can name any other template.</div></div>
   ${m ? `<div class="actions"><button class="btn pri" id="nt">＋ Add template</button></div>` : ""}
   ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Lang</th><th>Category</th><th>WhatsApp status</th><th>Text</th><th></th></tr></thead><tbody>${rows.map((t) => `<tr><td data-label="Name"><b>${esc(t.name)}</b>${t.active ? "" : badge("Inactive")}</td><td data-label="Lang">${esc(t.lang.toUpperCase())}</td><td data-label="Category">${esc(t.category)}</td>
     <td data-label="WhatsApp">${badge(t.wa_status.replace("_", " "), t.wa_status === "approved" ? "ok" : t.wa_status === "rejected" ? "alert" : "")}${t.wa_template_name ? `<small>${esc(t.wa_template_name)}</small>` : ""}</td><td data-label="Text"><small>${esc(t.body.slice(0, 140))}${t.body.length > 140 ? "…" : ""}</small></td><td>${m ? `<button class="link" data-edit="${attr(t.id)}">Edit</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : empty("No templates yet.")}`;
@@ -320,7 +320,7 @@ export async function templates(el, params) {
     <label>WhatsApp status<select name="wa_status">${["not_submitted", "pending", "approved", "rejected", "paused"].map((c) => opt(c, c.replace("_", " "), t.wa_status)).join("")}</select></label>
     <label class="full">Approved WhatsApp template name<input name="wa_template_name" value="${attr(t.wa_template_name)}"></label>
     <label class="full">Text (use {{1}}, {{2}} for variables)<textarea name="body" rows="5" required>${esc(t.body)}</textarea></label>
-    <label class="full">Variables, in order ({{1}}, {{2}}…) — any of: name, project, appointment<input name="variables" value="${attr((t.variables || []).join(", "))}" placeholder="e.g. name, project" pattern="\\s*(name|project|appointment)(\\s*,\\s*(name|project|appointment))*\\s*"></label>
+    <label class="full">Variables, in order ({{1}}, {{2}}…) — any of: name, project, appointment, location<input name="variables" value="${attr((t.variables || []).join(", "))}" placeholder="e.g. name, appointment, location" pattern="\\s*(name|project|appointment|location)(\\s*,\\s*(name|project|appointment|location))*\\s*"></label>
     <label class="check full"><input type="checkbox" name="active"${t.active !== false ? " checked" : ""}> Active</label><div class="actions full"><button class="btn pri">Save</button></div></form>`, { wide: true });
     const f = $("#ftp", dlg); guardForm(f, "tpl:" + (t.id || "new"));
     f.onsubmit = (e) => { e.preventDefault(); const v = formData(f);

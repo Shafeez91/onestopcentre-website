@@ -70,7 +70,7 @@ export default async (req) => {
       if (!tpl) note = "More than 24 hours since the buyer's last message and no approved \"appointment_confirmation\" template.";
       else {
         const when = new Intl.DateTimeFormat(tpl.lang === "en" ? "en-MY" : "ms-MY", { timeZone: "Asia/Kuala_Lumpur", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(start);
-        const s = await sendOutbound(deps, { conversation: conv, to, template: { ...tpl, params: templateParams(tpl, { name: c.full_name, appointment: when }) }, senderType: "human", senderEmail: caller.email, purpose: "service" });
+        const s = await sendOutbound(deps, { conversation: conv, to, template: { ...tpl, params: templateParams(tpl, { name: c.full_name, appointment: when, location: [location, map].filter(Boolean).join(" ") }) }, senderType: "human", senderEmail: caller.email, purpose: "service" });
         notified = s.sent; note = s.error || null;
       }
     }

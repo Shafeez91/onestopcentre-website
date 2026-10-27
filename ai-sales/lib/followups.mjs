@@ -81,9 +81,10 @@ export function decideFollowUp({ step, lead, conversation, consent, marketingSen
 export const renderTemplate = (body, params = []) => String(body || "").replace(/\{\{(\d+)\}\}/g, (_, n) => String(params[Number(n) - 1] ?? ""));
 
 /** Template parameters from the template's declared variables (name, project, …). */
-export function templateParams(tpl, { name, project, appointment } = {}) {
+export function templateParams(tpl, { name, project, appointment, location } = {}) {
   const vars = Array.isArray(tpl?.variables) ? tpl.variables : [];
   const lang = tpl?.lang === "en" ? "en" : "ms";
-  const fallback = { name: lang === "en" ? "there" : "tuan/puan", project: lang === "en" ? "our projects" : "projek kami" };
-  return vars.map((v) => ({ name: name || fallback.name, project: project || fallback.project, appointment: appointment || "" })[v] ?? "");
+  const fallback = { name: lang === "en" ? "there" : "tuan/puan", project: lang === "en" ? "our projects" : "projek kami",
+    location: lang === "en" ? "the place our advisor will confirm" : "lokasi yang akan disahkan oleh penasihat kami" };
+  return vars.map((v) => ({ name: name || fallback.name, project: project || fallback.project, appointment: appointment || "", location: location || fallback.location })[v] ?? "");
 }
