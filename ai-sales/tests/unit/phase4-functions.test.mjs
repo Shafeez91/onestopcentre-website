@@ -162,6 +162,13 @@ test("appointment confirm without a calendar: confirmed manually by the advisor,
   // slots need a calendar
   r = await appointments(new Request("https://onestopcentreproperty.com/api/sales/appointments/slots", { headers: auth }));
   assert.equal(r.status, 501);
+  // a visit for a project with a recorded showroom goes there (an empty location field means "the usual place")
+  appt.project_id = "t1";
+  route(/\/rest\/v1\/ai_project_facts/, () => Response.json([{ showroom_address: "M Mira Sales Gallery", showroom_map_url: "https://maps.app.goo.gl/abc" }]));
+  calls.length = 0;
+  r = await appointments(post("/api/sales/appointments/confirm", { appointment_id: "A1", start_at: start, location: "", notify_buyer: false }, auth));
+  assert.equal(r.status, 200);
+  assert.equal(calls.find((c) => c.u.includes("/rest/v1/ai_appointments") && c.method === "PATCH").body.location, "M Mira Sales Gallery");
 });
 
 test("calendar key from Supabase Vault when GOOGLE_PRIVATE_KEY is not in Netlify", async () => {

@@ -4,7 +4,7 @@ import { json, getCaller, hasRole, moduleEnabled, disabled, userDb, audit } from
 import { inWindow } from "../../ai-sales/lib/whatsapp.mjs";
 import { liveDeps } from "../../ai-sales/lib/live.mjs";
 import { sendOutbound, loadSettings } from "../../ai-sales/lib/worker.mjs";
-import { confirmationText } from "../../ai-sales/lib/calendar.mjs";
+import { confirmationText, placeFor } from "../../ai-sales/lib/calendar.mjs";
 import { templateParams } from "../../ai-sales/lib/followups.mjs";
 
 const enc = encodeURIComponent;
@@ -35,7 +35,10 @@ export default async (req) => {
   if (isNaN(start) || start < new Date()) return json({ error: "Choose a date and time in the future." }, 400);
   const dur = Math.max(15, Math.min(480, Number(body.duration_minutes || settings.business?.appointments?.duration_minutes || 60)));
   const end = new Date(start.getTime() + dur * 60e3);
-  const location = String(body.location ?? settings.business?.appointments?.location ?? "").slice(0, 300);
+  // an empty location means "the usual place": the project's showroom (with its map link) or the default location
+  const place = await placeFor(deps.db, appt, settings);
+  const location = (String(body.location ?? "").trim() || place.location).slice(0, 300);
+  const map = location === place.location ? place.map : "";
   const c = appt.lead?.contact || {};
 
   let eventId = null;
@@ -43,7 +46,7 @@ export default async (req) => {
     try {
       eventId = await deps.cal.book({ start: start.toISOString(), end: end.toISOString(), location,
         summary: `${appt.kind.replace(/_/g, " ")} · ${c.full_name || "+" + (c.wa_id || c.phone_e164 || "")} (${appt.lead?.lead_code || ""})`,
-        description: `Confirmed by ${caller.email}.\nhttps://onestopcentreproperty.com/sales/#/lead/${appt.lead?.id}` });
+        description: `Confirmed by ${caller.email}.\nhttps://onestopcentreproperty.com/sales/#/lead/${appt.lead?.id}${map ? "\nMap: " + map : ""}` });
     } catch (e) { return json({ error: e.message }, e.kind === "taken" ? 409 : e.kind === "config" ? 501 : 502); }
   }
   await db.patch(`ai_appointments?id=eq.${enc(appt.id)}`, { status: "confirmed", start_at: start.toISOString(), end_at: end.toISOString(), location: location || null,
@@ -59,7 +62,7 @@ export default async (req) => {
     if (!settings.flags?.whatsapp_outbound || !deps.wa) note = "WhatsApp sending is off or not connected.";
     else if (!conv || !to) note = "The buyer has no WhatsApp conversation yet.";
     else if (inWindow(conv.last_inbound_at, new Date())) {
-      const s = await sendOutbound(deps, { conversation: conv, to, text: confirmationText({ kind: appt.kind, start, location, lang }), senderType: "human", senderEmail: caller.email, purpose: "service" });
+      const s = await sendOutbound(deps, { conversation: conv, to, text: confirmationText({ kind: appt.kind, start, location, map, lang }), senderType: "human", senderEmail: caller.email, purpose: "service" });
       notified = s.sent; note = s.error || null;
     } else {
       const t = ((await deps.db.get("ai_message_templates?name=eq.appointment_confirmation&wa_status=eq.approved&active=is.true&select=*")) || []).filter((x) => x.wa_template_name);

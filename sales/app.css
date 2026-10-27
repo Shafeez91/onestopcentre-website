@@ -62,6 +62,7 @@ header.top{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:
 .back{font-size:.85rem;text-decoration:none;color:var(--mute)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:16px;box-shadow:var(--sh)}
 .card.notice{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;background:var(--warn-bg);border-color:transparent;box-shadow:none;color:var(--ink)}
+.card.notice.good{background:var(--ok-bg)}
 .card.danger{border-color:var(--bad)}
 .card.error{border-color:var(--bad)}
 details>summary{cursor:pointer;color:var(--acc);font-weight:600;margin:.5rem 0}

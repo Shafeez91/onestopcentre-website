@@ -10,7 +10,7 @@ import { respond, applyActions, logRun, composeFollowUp } from "./orchestrator.m
 import { isOptOut, wantsHuman, detectLanguage, fixedReply } from "../../sales/shared/guard.mjs";
 import { inWindow } from "./whatsapp.mjs";
 import { decideFollowUp, consentState, renderTemplate, templateParams } from "./followups.mjs";
-import { confirmationText, reminderText } from "./calendar.mjs";
+import { confirmationText, reminderText, placeFor } from "./calendar.mjs";
 
 const enc = encodeURIComponent;
 const MAX_HISTORY = 30;
@@ -146,14 +146,14 @@ export async function bookAppointment(deps, { ref, conv, to, contact, lead, sett
   const q = ref.id ? `id=eq.${enc(ref.id)}` : `idempotency_key=eq.${enc(ref.key)}`;
   const appt = (await db.get(`ai_appointments?${q}&select=*`))?.[0];
   if (!appt || appt.status !== "pending_confirmation" || !appt.start_at) return { booked: false };
-  const location = settings.business?.appointments?.location || "";
+  const { location, map } = await placeFor(db, appt, settings);
   const lang = contact?.preferred_language === "en" ? "en" : detectLanguage(appt.preferred_text || "", "ms");
   try {
     const eventId = await deps.cal.book({ start: appt.start_at, end: appt.end_at || new Date(new Date(appt.start_at).getTime() + 3600e3).toISOString(),
-      summary: `${appt.kind.replace(/_/g, " ")} · ${nameOf(contact) || "+" + to} (${lead.lead_code || ""})`, description: `Booked by the AI assistant on WhatsApp.\nBuyer: ${nameOf(contact) || ""} +${to}\nhttps://onestopcentreproperty.com/sales/#/lead/${lead.id}`, location });
+      summary: `${appt.kind.replace(/_/g, " ")} · ${nameOf(contact) || "+" + to} (${lead.lead_code || ""})`, description: `Booked by the AI assistant on WhatsApp.\nBuyer: ${nameOf(contact) || ""} +${to}\nhttps://onestopcentreproperty.com/sales/#/lead/${lead.id}${map ? "\nMap: " + map : ""}`, location });
     await db.patch(`ai_appointments?id=eq.${enc(appt.id)}`, { status: "confirmed", calendar_provider: "google", calendar_event_id: eventId, location: location || null,
       reminders: [...(appt.reminders || []), { type: "confirmation", at: deps.now().toISOString() }] });
-    if (canSend) await sendOutbound(deps, { conversation: conv, to, text: confirmationText({ kind: appt.kind, start: appt.start_at, location, lang }), senderType: "system", purpose: "reply", sourceJobId: null });
+    if (canSend) await sendOutbound(deps, { conversation: conv, to, text: confirmationText({ kind: appt.kind, start: appt.start_at, location, map, lang }), senderType: "system", purpose: "reply", sourceJobId: null });
     return { booked: true, eventId };
   } catch (e) {
     const taken = e?.kind === "taken";
@@ -233,10 +233,12 @@ export async function processReminders(deps, settings) {
     if (!conv || !to) { await mark("skipped", "no WhatsApp conversation"); continue; }
     if (consent.service === "withdrawn") { await mark("skipped", "buyer opted out"); continue; }
     const lang = conv.contact?.preferred_language === "en" ? "en" : "ms";
-    const location = a.location || settings.business?.appointments?.location || "";
+    // the place given at confirmation; the map link only when that is still the project's showroom
+    const place = await placeFor(db, a, settings);
+    const location = a.location || place.location, map = location === place.location ? place.map : "";
     let s;
     if (inWindow(conv.last_inbound_at, now)) {
-      s = await sendOutbound(deps, { conversation: conv, to, text: reminderText({ kind: a.kind, start: a.start_at, location, lang }), senderType: "system", purpose: "service" });
+      s = await sendOutbound(deps, { conversation: conv, to, text: reminderText({ kind: a.kind, start: a.start_at, location, map, lang }), senderType: "system", purpose: "service" });
     } else {
       const tpls = ((await db.get("ai_message_templates?name=eq.appointment_reminder&wa_status=eq.approved&active=is.true&select=*")) || []).filter((t) => t.wa_template_name);
       const t = tpls.find((x) => x.lang === lang) || tpls[0];

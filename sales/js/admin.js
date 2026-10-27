@@ -116,7 +116,7 @@ export async function settings(el, params) {
       <label>Minimum notice (hours)<input name="a_min_notice_hours" type="number" min="0" max="168" value="${attr(ap.min_notice_hours ?? 3)}"${dis}></label>
       <label>Offer slots up to (days ahead)<input name="a_days_ahead" type="number" min="1" max="30" value="${attr(ap.days_ahead ?? 7)}"${dis}></label>
       <label>Slots offered at most<input name="a_max_slots_offered" type="number" min="1" max="12" value="${attr(ap.max_slots_offered ?? 6)}"${dis}></label>
-      <label class="full">Default location (sent to the buyer in confirmations)<input name="a_location" maxlength="300" value="${attr(ap.location || "")}" placeholder="e.g. One Stop Centre showroom, Jalan …"${dis}></label>
+      <label class="full">Default location (used when the project has no showroom address)<input name="a_location" maxlength="300" value="${attr(ap.location || "")}" placeholder="e.g. One Stop Centre showroom, Jalan …"${dis}></label>
       ${own ? `<div class="actions full"><button class="btn pri">Save</button></div>` : ""}</form>`;
     const f = $("#sf", body); if (own) { guardForm(f, "settings:business");
       f.onsubmit = (e) => { e.preventDefault(); const v = formData(f); const hours = {};
@@ -271,7 +271,7 @@ export async function integrations(el) {
 function waResult(r) {
   const ok = (v) => (v ? badge("Yes", "ok") : badge("No", "alert"));
   const p = r.phone || {};
-  return `<div class="card ${r.healthy ? "notice" : "error"}"><div><b>${r.healthy ? "WhatsApp is connected." : "WhatsApp is not fully connected yet."}</b></div></div>
+  return `<div class="card ${r.healthy ? "notice good" : "error"}"><div><b>${r.healthy ? "WhatsApp is connected." : "WhatsApp is not fully connected yet."}</b></div></div>
   <dl class="kv">${r.detected ? `<dt>WhatsApp Business Account</dt><dd>${esc(r.waba_id)}<small>found automatically${r.entered_waba_id ? ` (the ID entered, ${esc(r.entered_waba_id)}, does not hold this number or is not reachable with the token)` : ""}</small></dd>` : ""}
   <dt>Access token works</dt><dd>${ok(!p.error)}${p.error ? `<small>${esc(p.error)}</small>` : ""}</dd>
   ${p.display_phone_number ? `<dt>Number</dt><dd>${esc(p.display_phone_number)} · ${esc(p.verified_name || "")}</dd><dt>Status</dt><dd>${esc([p.status, p.platform_type, p.quality_rating && "quality " + p.quality_rating, p.name_status && "name " + p.name_status].filter(Boolean).join(" · "))}</dd>` : ""}
