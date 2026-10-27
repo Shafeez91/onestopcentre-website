@@ -184,6 +184,8 @@ test("prompt: schema is strict and messages alternate with context last", () => 
   assert.match(m[2].content, /rejected_draft_feedback/);
   const sys = buildSystemPrompt({ persona: { name: "X", allow_manglish: false } }, [{ key: "loan_worry", examples: ["Takut loan"], guidance_en: "Never guarantee", escalate: true }]);
   assert.match(sys, /You are X/);
+  assert.match(sys, /"Saya X, pembantu AI" \/ "I'm X, an AI assistant"/, "introduces itself by the persona name");
+  assert.doesNotMatch(buildSystemPrompt({ persona: { name: "Hafizan Hanis AI Agent" } }, []), /pembantu AI One Stop Centre/);
   assert.match(sys, /do not use Manglish/);
   assert.match(sys, /loan_worry \[escalate to a human\]/);
   assert.doesNotMatch(sys, /\d{4}-\d\d-\d\d/, "no dates in the cached system prompt");
