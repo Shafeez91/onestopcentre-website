@@ -402,3 +402,13 @@ test("loan engine: the run log keeps no income figures", async () => {
   assert.doesNotMatch(JSON.stringify(run.output), /4000|"inputs"|"result"/, "field names only, no figures");
   assert.equal(run.output.actions.find((a) => a.type === "save_financing").outcome, "potentially_affordable");
 });
+
+test("brochure: the project's brochure link from the website CMS is given to the AI and may be shared", async () => {
+  const llm = scripted(draft({ reply: "Hai, saya pembantu AI. Ini brochure Test Residence: https://example.test/brochure.pdf", facts_used: [] }));
+  const r = await respond({ db: fakeDb(), llm, message: "boleh send brochure Test Residence?", now: NOW, mode: "simulate" });
+  const ctx = llm.calls[0].messages.at(-1).content;
+  assert.match(ctx, /"brochure_url":"https:\/\/example\.test\/brochure\.pdf"/);
+  assert.match(ctx, /"id":"t2"[^}]*"brochure_url":null/);
+  assert.match(llm.calls[0].system, /asks for a brochure, send the project's brochure_url/);
+  assert.equal(r.decision, "reply", JSON.stringify(r.violations));
+});
