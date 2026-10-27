@@ -2,6 +2,7 @@
 // follow-up sequences, campaigns, reports, and consent/security/audit.
 import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, api, loadLookups, projectName, sourceName, flag, keepPlace } from "./core.js";
 import { DEFAULT_SCORING } from "../shared/scoring.mjs";
+import { financingSettings } from "./financing.js";
 
 const hasDraftChanges = (f) => f.classList.contains("has-draft");
 
@@ -11,6 +12,7 @@ const FLAGS = [
   ["ai_auto_reply", "AI auto-reply", "Lets the AI answer buyers on WhatsApp automatically. Needs WhatsApp connected (Integrations) and \"WhatsApp sending\" on. When off, new messages alert staff on Telegram instead."],
   ["whatsapp_outbound", "WhatsApp sending", "Allows any outbound WhatsApp message, including human replies from the inbox."],
   ["follow_ups", "Automated follow-ups", "Lets the follow-up engine send scheduled messages (always subject to consent and opt-outs)."],
+  ["loan_engine", "Loan eligibility engine", "Lets the WhatsApp AI run a preliminary LPPSA / bank affordability check when a buyer asks, using the Financing rules. Results are always labelled estimates, never approvals; difficult cases go to an advisor. The AI test console uses it even when off."],
   ["calendar_booking", "Calendar booking", "Lets the AI offer free Google Calendar slots and book the one the buyer picks. The buyer is told it is confirmed only after the calendar event exists."],
 ];
 const SAFEGUARDS = [
@@ -27,7 +29,7 @@ const SAFEGUARDS = [
 export async function settings(el, params) {
   const sub = params.get("tab") || "flags";
   const st = S.settings;
-  const tabs = [["flags", "Feature switches"], ["persona", "AI persona"], ["ai", "AI model & limits"], ["scoring", "Lead scoring"], ["business", "Business hours & rules"], ["notifications", "Telegram notifications"], ["compliance", "Compliance"]];
+  const tabs = [["flags", "Feature switches"], ["persona", "AI persona"], ["ai", "AI model & limits"], ["scoring", "Lead scoring"], ["business", "Business hours & rules"], ["notifications", "Telegram notifications"], ["compliance", "Compliance"], ["financing", "Financing rules"]];
   const own = can("owner");
   el.innerHTML = `<div class="page-head"><h1>AI agent settings</h1>${own ? "" : `<p class="sub">Read-only — only owners can change settings.</p>`}</div>
   <div class="seg">${tabs.map(([k, l]) => `<a class="${sub === k ? "on" : ""}" href="#/settings?tab=${k}">${l}</a>`).join("")}<a href="#/settings/pipeline">Pipeline stages</a></div><div id="sbody" class="card"></div>`;
@@ -51,6 +53,7 @@ export async function settings(el, params) {
       act(f.querySelector("button"), () => save("flags", { ...st.flags, ...v }, f), "Switches saved"); };
     return;
   }
+  if (sub === "financing") { financingSettings(body, { own, save }); return; }
   if (sub === "persona") {
     const p = st.persona;
     body.innerHTML = `<h2>AI persona</h2><form id="sf" class="form two">
@@ -462,8 +465,8 @@ export async function audit(el, params) {
     ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Contact</th><th>Purpose</th><th>Channel</th><th>Status</th><th>Source / evidence</th></tr></thead><tbody>${rows.map((r) => `<tr><td data-label="When">${esc(fmtDate(r.recorded_at))}</td><td data-label="Contact">${esc(r.contact?.full_name || "")}<small>${esc(r.contact?.phone_e164 || "")}</small></td><td data-label="Purpose">${esc(r.purpose)}</td><td data-label="Channel">${esc(r.channel)}</td><td data-label="Status">${badge(r.status, r.status === "granted" ? "ok" : "alert")}</td><td data-label="Source">${esc(r.source)}<small>${esc(r.evidence || "")} · ${esc(r.recorded_by)}</small></td></tr>`).join("")}</tbody></table></div>` : empty("No consent records yet.")}`;
     return;
   }
-  body.innerHTML = `<section class="card"><h2>Retention rules</h2><ul class="checks"><li>Webhook payloads: deleted after 90 days.</li><li>AI run inputs/outputs: removed after 180 days (the decision log is kept).</li><li>Finished background jobs: deleted after 30 days.</li><li>Contacts: kept until erased on request (PDPA). Erasure is done from the lead page by an owner.</li></ul>
+  body.innerHTML = `<section class="card"><h2>Retention rules</h2><ul class="checks"><li>Webhook payloads: deleted after 90 days.</li><li>AI run inputs/outputs: removed after 180 days (the decision log is kept).</li><li>Finished background jobs: deleted after 30 days.</li><li>Financing figures (income, commitments, results): deleted ${esc(String(S.settings?.compliance?.financing_retention_days ?? 365))} days after their last update; only advisors and above can see them.</li><li>Contacts: kept until erased on request (PDPA). Erasure is done from the lead page by an owner.</li></ul>
     ${can("owner") ? `<button class="btn" id="purge">Run retention clean-up now</button>` : ""}<p class="note">The clean-up also runs automatically every day at about 3 am (Malaysia time).</p></section>`;
   const pb = $("#purge", body);
-  if (pb) pb.onclick = () => confirm("Permanently delete data past its retention period now?") && act(pb, async () => { const r = await q(SB.rpc("ai_purge_expired")); toast(`Clean-up done: ${r.webhook_events_deleted} webhook events, ${r.agent_runs_trimmed} AI runs trimmed`); });
+  if (pb) pb.onclick = () => confirm("Permanently delete data past its retention period now?") && act(pb, async () => { const r = await q(SB.rpc("ai_purge_expired")); toast(`Clean-up done: ${r.webhook_events_deleted} webhook events, ${r.agent_runs_trimmed} AI runs trimmed${r.financing_deleted ? `, ${r.financing_deleted} financing records deleted` : ""}`); });
 }

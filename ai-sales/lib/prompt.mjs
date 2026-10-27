@@ -12,10 +12,14 @@ export const INTENTS = ["greeting", "project_info", "price", "instalment", "avai
 export const AGENTS = ["reception", "knowledge", "qualification", "recommendation", "objection", "appointment", "handover"];
 export const HANDOVER_REASONS = ["customer_request", "ready_to_buy", "negotiation", "legal", "complaint", "financing", "conflicting_info", "low_confidence", "sensitive", "other"];
 
+const FINANCING_KEYS = ["route", "age", "basic_salary", "fixed_allowances", "variable_income", "self_employed_income", "mandatory_deductions",
+  "commitments_monthly", "credit_card_balance", "confirmed_service", "service_years", "second_financing", "property_price", "valuation",
+  "requested_amount", "down_payment", "property_count", "co_age", "co_income", "co_mandatory_deductions", "co_commitments_monthly"];
+
 export const REPLY_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["reply", "language", "intent", "agent", "confidence", "facts_used", "qualification_updates", "appointment_request", "handover", "objection_key"],
+  required: ["reply", "language", "intent", "agent", "confidence", "facts_used", "qualification_updates", "financing_updates", "appointment_request", "handover", "objection_key"],
   properties: {
     reply: { ...str, description: "The WhatsApp message to send to the buyer." },
     language: enumOf("ms", "en", "mixed"),
@@ -38,6 +42,22 @@ export const REPLY_SCHEMA = {
         concerns: str,
         preferred_project_id: str,
         asked_price: bool, requested_brochure: bool,
+      },
+    },
+    financing_updates: {
+      type: "object", additionalProperties: false,
+      description: "Figures the buyer stated for a loan / LPPSA eligibility check, in RM per month unless noted. 0 or \"\" = not mentioned; -1 = the buyer said none / zero.",
+      required: FINANCING_KEYS,
+      properties: {
+        route: enumOf("", "lppsa", "bank"),
+        age: num, basic_salary: num, fixed_allowances: num, variable_income: num, self_employed_income: num,
+        mandatory_deductions: { ...num, description: "statutory deductions: income tax, EPF/KWSP, SOCSO/PERKESO, EIS" },
+        commitments_monthly: { ...num, description: "total monthly instalments on existing loans/financing" },
+        credit_card_balance: { ...num, description: "total outstanding credit card balance (not monthly)" },
+        confirmed_service: enumOf("", "yes", "no"), service_years: num, second_financing: enumOf("", "yes", "no"),
+        property_price: num, valuation: num, requested_amount: num, down_payment: num,
+        property_count: { ...num, description: "number of housing loans including this one" },
+        co_age: num, co_income: num, co_mandatory_deductions: num, co_commitments_monthly: num,
       },
     },
     appointment_request: {
@@ -72,7 +92,7 @@ export function normalizeReply(d) {
   };
 }
 
-export function buildSystemPrompt(settings = {}, objections = [], { calendar = false } = {}) {
+export function buildSystemPrompt(settings = {}, objections = [], { calendar = false, financing = false } = {}) {
   const p = settings.persona || {}, ai = settings.ai || {}, c = settings.compliance || {};
   const manglish = p.allow_manglish !== false;
   const name = String(p.name || "OSC Property Assistant").trim();
@@ -90,7 +110,9 @@ Facts: the context is your only source of truth
   VERIFIED (checked by staff, you may state it as fact), INDICATIVE (from the public listing — say it is indicative / "dari"/"from"/"anggaran" and that the latest figure must be confirmed), or STALE/UNKNOWN (say you need to confirm it).
 - Never invent or estimate prices, unit availability, rebates, cashback, discounts, rental yields, completion dates, maintenance fees or developer promises. If something is missing, say an advisor will confirm it.
 - Quote prices only as they appear in the context, in the format RM450,000. Say a unit is available only if the context lists it as available with a recent check. Mention a promotion only if it is listed under active_promotions, together with its key conditions.
-- Monthly instalment: you may give a rough estimate only with its assumptions (loan amount or margin, interest rate, tenure) and say it is not a loan offer.
+${financing
+    ? "- Monthly instalments, loan amounts and eligibility: quote only figures from financing_engine in the context (see Loan eligibility below). Never calculate or estimate them yourself."
+    : "- Monthly instalment: you may give a rough estimate only with its assumptions (loan amount or margin, interest rate, tenure) and say it is not a loan offer."}
 - Never guarantee loan approval, capital appreciation, rental income or investment returns. Never create false urgency or claim limited units unless the context says so.
 - Links: share only URLs that appear in the context.
 
@@ -99,7 +121,16 @@ Buyer qualification (do it gradually, through conversation, not as a questionnai
 - Ask about income or commitments only if the buyer wants an affordability check, and never ask for documents, IC numbers or bank details on WhatsApp.
 - Put anything the buyer has told you into qualification_updates (use "" for text and choices, 0 for numbers and false for yes/no flags when you learned nothing new).
 
-Recommendations and objections
+${financing ? `Loan eligibility and affordability (financing_engine in the context)
+- When a buyer asks whether they can get a loan / LPPSA, how much they qualify for, or what they can afford, offer a quick preliminary check. First ask which route: LPPSA (permanent government servant) or bank loan.
+- Collect the figures conversationally, one or two questions per message, using assessment.ask_next as the next questions. Accept rough figures ("lebih kurang 4k"). Record every figure in financing_updates (use -1 when the buyer says none, e.g. no debts).
+- Never ask for an IC number, payslip, bank statement, online banking details, CCRIS/CTOS report or any document on WhatsApp. If the buyer offers documents, say an advisor will handle that securely.
+- Once assessment.outcome is not insufficient_information, explain the result simply: the outcome_label, the estimated maximum financing or instalment, the key assumption (rate, tenure) and what could help (bigger down payment, lower price, fewer commitments, joint application). Always add that it is "anggaran awal, bukan kelulusan" / "a preliminary estimate, not an approval", and that the final decision is by LPPSA or the bank.
+- For bank loans, the figures are illustrative bank assumptions, not a bank's offer. For LPPSA, if rules_verified is false, say the rules used are being confirmed by an advisor.
+- Suggest projects only from projects_within_budget, with their price label (VERIFIED or INDICATIVE).
+- Hand over (reason "financing") when assessment.needs_advisor is not empty, the outcome is potentially_challenging, the buyer is self-employed or applying jointly, has a second LPPSA financing, disputes the result, or wants a full assessment or loan application.
+
+` : ""}Recommendations and objections
 - Recommend projects that fit the buyer's stated needs and budget, explaining why, the trade-offs and what still needs confirming. If nothing fits the budget, say so honestly and suggest reasonable alternatives. Never favour a project for any reason other than fit.
 - For objections: acknowledge the concern, ask a clarifying question if needed, answer with verified facts, be honest about trade-offs, and offer a practical next step. Guidance per objection (set objection_key when one applies):
 ${objections.map((o) => `  • ${o.key}${o.escalate ? " [escalate to a human]" : ""}: e.g. ${(o.examples || []).map((x) => `"${x}"`).join(", ")} — ${o.guidance_en}`).join("\n") || "  (none configured)"}
@@ -119,7 +150,7 @@ Safety
 - Do not give legal, tax or regulated financial advice. ${c.pdpa_notice_en ? `If a buyer asks how their data is used: ${c.pdpa_notice_en}` : ""}
 
 Output
-Return only the JSON object required by the schema: reply, language, intent, agent (which specialist role you acted as), confidence (0–1), facts_used, qualification_updates, appointment_request, handover, objection_key.`;
+Return only the JSON object required by the schema: reply, language, intent, agent (which specialist role you acted as), confidence (0–1), facts_used, qualification_updates, financing_updates (all 0 / "" unless the buyer gave financing figures), appointment_request, handover, objection_key.`;
 }
 
 const label = (verified, fresh) => (verified ? (fresh ? "VERIFIED" : "STALE") : "INDICATIVE");
@@ -144,6 +175,7 @@ export function renderContext(ctx) {
     })),
     active_promotions: ctx.promotions.map((x) => ({ key: `promo:${x.id}`, project_id: x.project_id || "all", title: x.title, details: x.details, conditions: x.conditions, valid_to: x.valid_to, label: "VERIFIED" })),
     knowledge: ctx.knowledge.map((k) => ({ key: `kb:${k.id}`, kind: k.kind, project_id: k.project_id, title: k.title, content: k.content, label: "VERIFIED" })),
+    ...(ctx.financingView ? { financing_engine: ctx.financingView } : {}),
     ...(ctx.slots ? { available_slots: ctx.slots.map((x) => ({ id: x.id, label: ctx.buyer?.preferred_language === "en" ? x.label_en : x.label_ms, label_en: x.label_en, status: "FREE (VERIFIED)" })) } : {}),
   };
   return `<verified_context>\n${JSON.stringify(payload)}\n</verified_context>`;

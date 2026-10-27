@@ -675,4 +675,52 @@ do $$ declare r jsonb; e jsonb; lid uuid; j uuid; begin
 end $$;
 rollback;
 
+\echo 'T41 financing figures: advisors only, history is append-only, erased with the contact, purged after retention'
+begin;
+set local role authenticated;
+select public.t_login('advisor@test.local');
+do $$ declare c uuid; l uuid; a uuid; begin
+  c := public.ai_upsert_contact('0145555555', 'Fin Test');
+  l := public.ai_open_lead(c);
+  insert into public.ai_financing_profiles (lead_id, route, inputs, outcome) values (l, 'lppsa', '{"basic_salary": 4321}', 'insufficient_information');
+  insert into public.ai_financing_assessments (lead_id, route, inputs, result, outcome) values (l, 'lppsa', '{"basic_salary": 4321}', '{}', 'potentially_affordable') returning id into a;
+  assert (select updated_by from public.ai_financing_profiles where lead_id = l) = 'advisor@test.local';
+  update public.ai_financing_assessments set outcome = 'potentially_challenging' where id = a;
+  assert (select outcome from public.ai_financing_assessments where id = a) = 'potentially_affordable', 'history cannot be edited';
+  begin insert into public.ai_financing_profiles (lead_id, route) values (l, 'bank'); assert false, 'two profiles for one lead';
+  exception when unique_violation then null; end;
+  begin insert into public.ai_financing_assessments (lead_id, route, inputs, result, outcome) values (l, 'cash', '{}', '{}', 'potentially_affordable'); assert false, 'bad route';
+  exception when check_violation then null; end;
+end $$;
+select public.t_login('viewer@test.local');
+do $$ begin
+  assert (select count(*) from public.ai_financing_profiles) = 0, 'viewer sees income figures';
+  assert (select count(*) from public.ai_financing_assessments) = 0, 'viewer sees assessments';
+end $$;
+select public.t_login('owner@test.local');
+do $$ declare c uuid; begin
+  c := (select id from public.ai_contacts where full_name = 'Fin Test');
+  assert exists (select 1 from public.ai_audit_logs where table_name = 'ai_financing_profiles' and changes::text like '%4321%'), 'audited';
+  perform public.ai_erase_contact(c, 'customer request');
+  assert not exists (select 1 from public.ai_financing_profiles p join public.ai_leads l on l.id = p.lead_id where l.contact_id = c);
+  assert not exists (select 1 from public.ai_financing_assessments a join public.ai_leads l on l.id = a.lead_id where l.contact_id = c);
+  assert not exists (select 1 from public.ai_audit_logs where table_name like 'ai_financing%' and changes::text like '%4321%'), 'audit scrubbed';
+end $$;
+reset role;
+do $$ declare c uuid; l uuid; r jsonb; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  c := public.ai_upsert_contact('0145555556', 'Old Fin');
+  l := public.ai_open_lead(c);
+  insert into public.ai_financing_assessments (lead_id, route, inputs, result, outcome, created_at) values
+    (l, 'bank', '{"basic_salary": 9876}', '{}', 'potentially_affordable', now() - interval '400 days'),
+    (l, 'bank', '{"basic_salary": 5555}', '{}', 'potentially_affordable', now() - interval '10 days');
+  r := public.ai_purge_expired();
+  assert (r ->> 'financing_deleted')::int = 1, r::text;
+  assert (select count(*) from public.ai_financing_assessments where lead_id = l) = 1, 'recent one kept';
+  assert not exists (select 1 from public.ai_audit_logs where table_name = 'ai_financing_assessments' and changes::text like '%9876%'), 'expired figures scrubbed from audit';
+  assert (select (compliance ->> 'financing_retention_days')::int from public.ai_settings) = 365;
+  assert (select financing from public.ai_settings) = '{}'::jsonb;
+end $$;
+rollback;
+
 \echo 'ALL DB TESTS PASSED'

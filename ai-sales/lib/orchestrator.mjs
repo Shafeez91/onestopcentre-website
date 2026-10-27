@@ -8,6 +8,7 @@ import { scoreLead } from "../../sales/shared/scoring.mjs";
 import { loadContext } from "./context.mjs";
 import { buildSystemPrompt, renderContext, buildMessages, REPLY_SCHEMA, normalizeReply } from "./prompt.mjs";
 import { DEFAULT_MODEL, LlmError } from "./llm.mjs";
+import { mergeFinancing, attachFinancing, renderFinancing, cleanInputs, isNewAssessment, advisorSummary } from "./financing.mjs";
 
 const QUAL_FIELDS = ["purpose", "first_home", "bedrooms", "size_sqft", "budget_min", "budget_max", "employment", "financing", "timeline_months", "readiness", "concerns"];
 
@@ -65,8 +66,16 @@ export async function respond(p) {
   const effort = settings.ai?.effort || "low";
   const threshold = Number(settings.ai?.confidence_threshold ?? 0.7);
   ctx.slots = p.calendar ? (p.slots || []) : null; // free calendar slots, only when calendar booking is on
-  const system = buildSystemPrompt(settings, ctx.objections, { calendar: !!p.calendar });
-  const contextText = renderContext(ctx);
+  // loan engine: on by flag for live chats, always in the test console so it can be tried before switching on
+  const finOn = !!settings.flags?.loan_engine || p.mode === "simulate";
+  let finSaved = null;
+  if (finOn) {
+    if (p.leadId) finSaved = (await p.db.get(`ai_financing_profiles?lead_id=eq.${encodeURIComponent(p.leadId)}&select=id,inputs,result`).catch(() => []))?.[0] || null;
+    attachFinancing(ctx, { inputs: { ...cleanInputs(finSaved?.inputs), ...cleanInputs(p.financingInputs) }, saved: finSaved });
+    ctx.financingView = renderFinancing(ctx.financing);
+  }
+  const system = buildSystemPrompt(settings, ctx.objections, { calendar: !!p.calendar, financing: finOn });
+  let contextText = renderContext(ctx);
 
   // 3) daily cost cap: reserve one AI reply before calling the model (fail closed if usage can't be checked)
   if (p.reserve) {
@@ -83,16 +92,30 @@ export async function respond(p) {
     base.quota = quota;
   }
 
-  // 4) AI draft + validation, with one corrected retry
+  // 4) AI draft + validation, with one corrected retry. When the buyer has just given new financing figures, the
+  //    engine recalculates and the AI writes the reply again from the new result (at most one extra call).
   let data = null, check = null, feedback = null, usage = { input_tokens: 0, output_tokens: 0 }, servedBy = null;
+  let finChanged = [], recalculated = false, retried = false;
   try {
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
       const r = await p.llm({ system, messages: buildMessages(history, contextText, message, feedback), schema: REPLY_SCHEMA, model, effort });
       data = normalizeReply(r.data); servedBy = r.model || model;
       usage.input_tokens += r.usage?.input_tokens || 0; usage.output_tokens += r.usage?.output_tokens || 0;
+      if (finOn && !recalculated) {
+        const m = mergeFinancing(ctx.financing.inputs, data.financing_updates);
+        if (m.changed.length) {
+          finChanged = m.changed; recalculated = true;
+          attachFinancing(ctx, { inputs: m.inputs, saved: finSaved, recalculated: true });
+          ctx.financingView = renderFinancing(ctx.financing);
+          contextText = renderContext(ctx);
+          base.attempts.push({ attempt, reply: data.reply, violations: [], recalculated: m.changed });
+          continue;
+        }
+      }
       check = validateReply(data.reply, ctx.rules);
       base.attempts.push({ attempt, reply: data.reply, violations: check.violations });
-      if (check.ok) break;
+      if (check.ok || retried) break;
+      retried = true;
       feedback = summariseViolations(check.violations);
     }
   } catch (e) {
@@ -124,6 +147,11 @@ export async function respond(p) {
   const leadQual = {};
   if (ctx.lead?.qualification_known) Object.assign(leadQual, ctx.lead.qualification_known);
   const { qualification, changed } = mergeQualification(leadQual, data.qualification_updates || {});
+  const fin = finOn ? ctx.financing : null;
+  if (fin?.result && finChanged.length) {
+    if (fin.result.route && !qualification.financing) { qualification.financing = fin.result.route; changed.push("financing"); }
+    if (qualification.financing_check !== fin.result.outcome) { qualification.financing_check = fin.result.outcome; changed.push("financing_check"); }
+  }
   const prefId = data.qualification_updates?.preferred_project_id;
   const scopeProject = ctx.projects.find((x) => x.id === prefId) || ctx.projects.find((x) => x.id === ctx.lead?.primary_project_id);
   const priceFrom = scopeProject ? Math.min(...[...scopeProject.prices.filter((x) => x.fresh).map((x) => Number(x.price_myr)), ...scopeProject.websitePrices].filter(Boolean)) : null;
@@ -136,6 +164,15 @@ export async function respond(p) {
   }, settings.scoring);
   if (changed.length || ctx.lead) actions.push({ type: "update_qualification", qualification, changed, score: scored.score, temperature: scored.temperature, rationale: scored.rationale });
   if (prefId && ctx.projects.some((x) => x.id === prefId)) actions.push({ type: "add_interest", project_id: prefId });
+  if (fin && finChanged.length) {
+    const res = fin.result, isNew = isNewAssessment(res, finSaved?.result);
+    actions.push({ type: "save_financing", inputs: fin.inputs, result: res, changed: finChanged, new_assessment: isNew, profile_id: finSaved?.id || null });
+    const before = new Set(finSaved?.result?.escalate || []);
+    const fresh = (res?.escalate || []).filter((x) => !before.has(x));
+    if (isNew && fresh.length && decision === "reply" && !actions.some((a) => a.type === "handover")) {
+      actions.push({ type: "handover", reason: "financing", summary: advisorSummary(res, fin.inputs), next_action: "Review the preliminary financing check and contact the buyer for a full assessment." });
+    }
+  }
   const pending = (ctx.lead?.open_appointments || []).find((a) => a.status === "pending_confirmation");
   const slot = (ctx.slots || []).find((x) => x.id === data.appointment_request?.slot_id); // only slots we offered count
   if (wantsAppt && (slot || !pending)) {
@@ -149,6 +186,7 @@ export async function respond(p) {
     decision, reply, draft: data.reply, language: data.language, intent: data.intent, agent: data.agent, confidence: Number(data.confidence),
     facts_used: data.facts_used || [], objection_key: data.objection_key || null, violations: check.violations, actions,
     qualification, score: scored.score, temperature: scored.temperature,
+    ...(fin ? { financing: { inputs: fin.inputs, result: fin.result, recalculated } } : {}),
   });
 }
 
@@ -171,6 +209,15 @@ export async function applyActions(db, { leadId, contactId, result, conversation
       await db.patch(`ai_leads?id=eq.${encodeURIComponent(leadId)}`, { handover_status: "requested" });
     } else if (a.type === "update_qualification") {
       await db.patch(`ai_leads?id=eq.${encodeURIComponent(leadId)}`, { qualification: a.qualification, score: a.score, temperature: a.temperature, score_rationale: a.rationale });
+    } else if (a.type === "save_financing") {
+      const row = { route: a.result?.route || null, inputs: a.inputs, result: a.result, outcome: a.result?.outcome || null, source: "ai", updated_by: "ai" };
+      const existing = a.profile_id ? [{ id: a.profile_id }] : await db.get(`ai_financing_profiles?lead_id=eq.${encodeURIComponent(leadId)}&select=id`);
+      if (existing?.[0]) await db.patch(`ai_financing_profiles?id=eq.${encodeURIComponent(existing[0].id)}`, row);
+      else await db.post("ai_financing_profiles?on_conflict=lead_id", { lead_id: leadId, ...row }, { prefer: "resolution=ignore-duplicates" });
+      if (a.new_assessment && a.result?.route) {
+        await db.post("ai_financing_assessments", { lead_id: leadId, route: a.result.route, inputs: a.inputs, result: a.result, outcome: a.result.outcome,
+          rules_version: a.result.rules_version || null, engine_version: a.result.engine_version || null, source: "ai", created_by: "ai" });
+      }
     } else if (a.type === "add_interest") {
       await db.post("ai_lead_interests?on_conflict=lead_id,project_id", { lead_id: leadId, project_id: a.project_id, interest: "interested" }, { prefer: "resolution=ignore-duplicates" });
     } else if (a.type === "request_appointment") {
@@ -195,7 +242,10 @@ export async function logRun(db, { result, leadId = null, conversationId = null,
   try {
     const rows = await db.post("ai_agent_runs", {
       lead_id: leadId, conversation_id: conversationId, agent: result.agent || "orchestrator", intent: result.intent || null, model: result.model,
-      input: { channel, message: result.message, ...input }, output: { reply: result.reply, draft: result.draft, actions: result.actions, attempts: result.attempts },
+      input: { channel, message: result.message, ...input },
+      // financing figures stay in the access-controlled financing tables, not in the run log
+      output: { reply: result.reply, draft: result.draft, attempts: result.attempts,
+        actions: (result.actions || []).map((a) => (a.type === "save_financing" ? { type: a.type, changed: a.changed, outcome: a.result?.outcome || null, new_assessment: a.new_assessment } : a)) },
       confidence: isFinite(result.confidence) ? Math.max(0, Math.min(1, result.confidence)) : null, decision: result.decision,
       validation: { ok: !(result.violations || []).length, violations: result.violations }, input_tokens: result.usage?.input_tokens ?? null,
       output_tokens: result.usage?.output_tokens ?? null, latency_ms: result.latency_ms, error: result.error || null,

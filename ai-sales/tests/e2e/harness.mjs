@@ -6,6 +6,7 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { assess } from "../../../sales/shared/finance.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const VENDOR = process.env.VENDOR_DIR;
@@ -51,7 +52,10 @@ export async function stop() { await browser?.close(); server?.close(); }
 
 /* ---------- fake Supabase (TEST FIXTURES ONLY) ---------- */
 const NOW = new Date().toISOString();
+const FIN_INPUTS = { route: "lppsa", age: 30, basic_salary: 4000, fixed_allowances: 1000, mandatory_deductions: 500, commitments_monthly: 800, confirmed_service: "yes", property_price: 450000 };
+
 export function fixtures() {
+  const finResult = assess(FIN_INPUTS);
   const stages = ["New Lead", "Contacted", "Qualified", "Appointment Pending", "Won", "Lost"].map((n, i) => ({ id: "s" + i, name: n, position: i + 1, is_won: n === "Won", is_lost: n === "Lost", active: true }));
   const contact = { id: "c1", full_name: "Test Buyer", phone_e164: "60123456789", email: "buyer@example.test", preferred_language: "ms" };
   return {
@@ -68,6 +72,8 @@ export function fixtures() {
     ai_contacts: [contact], ai_activities: [{ id: "a1", lead_id: "L1", kind: "website_enquiry", body: "Berapa harga?", actor: "website", created_at: NOW }],
     ai_tasks: [], ai_appointments: [{ id: "A1", lead_id: "L1", kind: "showroom_visit", status: "pending_confirmation", preferred_text: "Sabtu pagi", start_at: null, reminders: [], created_at: NOW, lead: { id: "L1", lead_code: "OSC-000001", contact } }], ai_lead_interests: [{ lead_id: "L1", project_id: "t1", interest: "enquired" }], ai_consent_current: [], ai_consent_records: [],
     ai_handover_events: [],
+    ai_financing_profiles: [{ id: "FP1", lead_id: "L1", route: "lppsa", inputs: FIN_INPUTS, result: finResult, outcome: finResult.outcome, source: "ai", updated_by: "ai", updated_at: NOW }],
+    ai_financing_assessments: [{ id: "FA1", lead_id: "L1", route: "lppsa", outcome: finResult.outcome, result: finResult, source: "ai", created_by: "ai", created_at: NOW, rules_version: finResult.rules_version }],
     ai_conversations: [{ id: "V1", contact_id: "c1", lead_id: "L1", channel: "whatsapp", mode: "ai", status: "open", last_inbound_at: NOW, unread_count: 2, created_at: NOW, contact, lead: { id: "L1", lead_code: "OSC-000001", ai_paused: false } }],
     ai_messages: [
       { id: "m1", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Salam, boleh info M Mira?", status: "received", created_at: NOW },
@@ -127,7 +133,7 @@ export async function newPage(viewport, { signedIn = true, mutate = null } = {})
     writes.push({ simulate: req });
     r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ decision: "handover", reply: "Baik, permintaan diskaun perlu disemak oleh penasihat kami.", intent: "negotiation", agent: "handover", language: "ms", confidence: 0.9, model: "claude-opus-5-5", latency_ms: 4200,
       attempts: [{ attempt: 1, reply: "Saya boleh bagi RM10,000 lagi!", violations: [{ code: "unverified_price", detail: "RM10,000 does not match any verified price" }] }, { attempt: 2, reply: "ok", violations: [] }],
-      actions: [{ type: "handover", reason: "negotiation", next_action: "Call about pricing" }, { type: "update_qualification", changed: ["asked_price"], score: 34, temperature: "nurture" }], facts_used: ["price:t1:Type A"], simulated: true }) });
+      actions: [{ type: "handover", reason: "negotiation", next_action: "Call about pricing" }, { type: "update_qualification", changed: ["asked_price"], score: 34, temperature: "nurture" }], facts_used: ["price:t1:Type A"], simulated: true, financing: { inputs: { route: "bank", age: 35 }, result: null, recalculated: true } }) });
   });
   await page.route("**/api/sales/whatsapp/send", (r) => { writes.push({ send: JSON.parse(r.request().postData() || "{}") }); r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, message_id: "new" }) }); });
   await page.route("**/api/sales/appointments/slots", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ slots: [
@@ -147,7 +153,7 @@ export async function newPage(viewport, { signedIn = true, mutate = null } = {})
 
 /** Every dashboard route the browser tests visit. */
 export const SECTIONS = ["overview", "inbox", "inbox?c=V1", "ai-test", "leads", "lead/L1", "pipeline", "appointments", "handover", "properties", "property/t1", "knowledge", "knowledge?tab=entries", "knowledge?tab=faqs", "knowledge?tab=search",
-  "templates", "templates?tab=templates", "followups", "campaigns", "reports", "settings", "settings?tab=persona", "settings?tab=ai", "settings?tab=scoring", "settings?tab=business", "settings?tab=compliance", "settings?tab=notifications", "settings/pipeline", "team", "integrations", "audit", "audit?tab=consent", "audit?tab=retention"];
+  "templates", "templates?tab=templates", "followups", "campaigns", "reports", "settings", "settings?tab=persona", "settings?tab=ai", "settings?tab=scoring", "settings?tab=business", "settings?tab=compliance", "settings?tab=notifications", "settings?tab=financing", "settings/pipeline", "team", "integrations", "audit", "audit?tab=consent", "audit?tab=retention"];
 
 /** Navigates the dashboard to `#/route` and waits until that page (not the previous one) has rendered. */
 export async function go(page, route) {

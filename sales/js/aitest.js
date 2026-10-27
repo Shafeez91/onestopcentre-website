@@ -6,7 +6,7 @@ const KEY = (lead) => "sales:aitest:" + (lead || "new");
 const load = (lead) => { try { return JSON.parse(sessionStorage.getItem(KEY(lead)) || "[]"); } catch { return []; } };
 const save = (lead, turns) => { try { sessionStorage.setItem(KEY(lead), JSON.stringify(turns.slice(-40))); } catch { /* convenience only */ } };
 
-const SAMPLES = ["Hi, how much is this property?", "Monthly berapa?", "Cashback betul ke?", "Saya nak datang showroom Sabtu", "Saya takut tak boleh dapat loan", "Boleh bagi discount lagi?", "Bro got unit left or not?", "STOP"];
+const SAMPLES = ["Hi, how much is this property?", "Monthly berapa?", "Saya cikgu, boleh check layak LPPSA?", "Cashback betul ke?", "Saya nak datang showroom Sabtu", "Saya takut tak boleh dapat loan", "Boleh bagi discount lagi?", "Bro got unit left or not?", "STOP"];
 const DECISION = {
   reply: ["Would send", "ok"], handover: ["Would send + alert a human", "warn"], blocked: ["Draft blocked — safe reply + human alert", "alert"],
   opt_out: ["Opt-out honoured", "warn"], capped: ["Daily AI limit reached — safe reply + human alert", "alert"], paused: ["AI paused — no reply", ""], error: ["AI unavailable — safe reply + human alert", "alert"], ignored: ["Ignored", ""],
@@ -20,6 +20,7 @@ function actionText(a) {
     case "handover": return `Alert a human — ${REASON[a.reason] || a.reason}${a.next_action ? `. Next: ${a.next_action}` : ""}`;
     case "update_qualification": return `Update qualification${a.changed?.length ? ` (${a.changed.join(", ")})` : ""} → score ${a.score} (${a.temperature})`;
     case "add_interest": return `Add interest: ${projectName(a.project_id)}`;
+    case "save_financing": return `Save financing figures (${(a.changed || []).join(", ")}) → ${String(a.result?.outcome || "").replace(/_/g, " ")}${a.new_assessment ? " — new assessment recorded" : ""}`;
     case "request_appointment": return `Create appointment request: ${String(a.kind).replace(/_/g, " ")}${a.preferred_text ? `, "${a.preferred_text}"` : ""}${a.project_id ? ` · ${projectName(a.project_id)}` : ""} — pending confirmation`;
     default: return a.type;
   }
@@ -69,7 +70,9 @@ export async function aitest(el, params) {
     turns.push({ role: "user", text: message }); box.value = ""; render();
     btn.disabled = true; const label = btn.innerHTML; btn.innerHTML = '<span class="spin" aria-hidden="true"></span> AI is thinking…';
     try {
-      const r = await api("/api/sales/ai/simulate", { method: "POST", body: JSON.stringify({ lead_id: lead || null, history, message }) });
+      // the loan figures the buyer gave earlier in this simulated chat (nothing is stored for a simulation)
+      const financing_inputs = [...turns].reverse().find((t) => t.r?.financing)?.r.financing.inputs || null;
+      const r = await api("/api/sales/ai/simulate", { method: "POST", body: JSON.stringify({ lead_id: lead || null, history, message, financing_inputs }) });
       turns.push({ role: "assistant", text: r.reply, r });
     } catch (x) {
       turns.pop(); box.value = message;
