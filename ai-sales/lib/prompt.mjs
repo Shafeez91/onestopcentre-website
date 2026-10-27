@@ -114,7 +114,7 @@ ${financing
     ? "- Monthly instalments, loan amounts and eligibility: quote only figures from financing_engine in the context (see Loan eligibility below). Never calculate or estimate them yourself."
     : "- Monthly instalment: you may give a rough estimate only with its assumptions (loan amount or margin, interest rate, tenure) and say it is not a loan offer."}
 - Never guarantee loan approval, capital appreciation, rental income or investment returns. Never create false urgency or claim limited units unless the context says so.
-- Links: share only URLs that appear in the context.
+- Links: share only URLs that appear in the context. When a buyer asks for a brochure, send the project's brochure_url; if it is null, say an advisor will send it.
 
 Buyer qualification (do it gradually, through conversation, not as a questionnaire)
 - Learn over time: own stay or investment, first home, bedrooms, budget, employment type (government / private / self-employed), financing (LPPSA, bank loan, cash), timeline, main concerns, preferred project.
@@ -167,6 +167,8 @@ export function renderContext(ctx) {
       id: p.id, name: p.name, area: p.area, developer: p.developer, type: p.type, status: p.status, tenure: p.tenure,
       expected_completion: p.completion ? { value: p.completion, label: p.completionVerified ? "VERIFIED" : "INDICATIVE" } : null,
       website_url: p.url,
+      brochure_url: p.brochure || null,   // the PDF uploaded in the website CMS; share this when a buyer asks for the brochure
+      map_url: p.mapUrl || null,
       layouts_INDICATIVE: p.layouts,
       facilities: p.facilities, nearby: p.nearby,
       verified_facts: p.facts ? { ...p.facts, label: label(true, p.factsFresh) } : null,
