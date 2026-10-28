@@ -24,6 +24,14 @@ export function mergeQualification(current = {}, updates = {}) {
   return { qualification: q, changed };
 }
 
+/** Project data only (no buyer details): the projects in focus, the details they lack and any conflicts. */
+export const retrievalTrace = (ctx) => ({
+  focus: (ctx.focus?.ids || []).map((id) => ctx.projects.find((p) => p.id === id)?.name).filter(Boolean),
+  focus_source: ctx.focus?.source || null, ambiguous: !!ctx.focus?.ambiguous,
+  not_on_record: Object.fromEntries(ctx.projects.filter((p) => p.inFocus && p.notOnRecord.length).map((p) => [p.name, p.notOnRecord])),
+  conflicts: Object.fromEntries(ctx.projects.filter((p) => p.inFocus && p.conflicts.length).map((p) => [p.name, p.conflicts.map((c) => c.field)])),
+});
+
 const summariseViolations = (vs) => vs.map((v) => `- ${v.code}: ${v.detail}`).join("\n");
 
 /**
@@ -187,6 +195,8 @@ export async function respond(p) {
     facts_used: data.facts_used || [], objection_key: data.objection_key || null, violations: check.violations, actions,
     qualification, score: scored.score, temperature: scored.temperature,
     ...(fin ? { financing: { inputs: fin.inputs, result: fin.result, recalculated } } : {}),
+    // which project the reply was about and what its information lacked, so a hand-over can be traced to a data gap
+    retrieval: retrievalTrace(ctx),
   });
 }
 
@@ -245,7 +255,7 @@ export async function logRun(db, { result, leadId = null, conversationId = null,
       lead_id: leadId, conversation_id: conversationId, agent: result.agent || "orchestrator", intent: result.intent || null, model: result.model,
       input: { channel, message: result.message, ...input },
       // financing figures stay in the access-controlled financing tables, not in the run log
-      output: { reply: result.reply, draft: result.draft, attempts: result.attempts,
+      output: { reply: result.reply, draft: result.draft, attempts: result.attempts, retrieval: result.retrieval || null,
         actions: (result.actions || []).map((a) => (a.type === "save_financing" ? { type: a.type, changed: a.changed, outcome: a.result?.outcome || null, new_assessment: a.new_assessment } : a)) },
       confidence: isFinite(result.confidence) ? Math.max(0, Math.min(1, result.confidence)) : null, decision: result.decision,
       validation: { ok: !(result.violations || []).length, violations: result.violations }, input_tokens: result.usage?.input_tokens ?? null,

@@ -301,6 +301,30 @@ test("appointments: archive a pending request (no status change), restore it, an
   } finally { await ctx.close(); }
 });
 
+test("property projects: 'What the AI knows' shows listing gaps, conflicts and per-field coverage", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.ipad, { mutate: (db) => {
+    Object.assign(db.projects[0].data, { tenure: "Freehold", year: "2028", maintPsf: "0.35", furn: "No", furnList: ["Sofa"] });
+    db.projects[0].data.types.push({ name: "Type B", size: "1000", beds: "4", baths: "3", price: "RM560,000", carparks: "2 (Tandem)" });
+  } });
+  try {
+    await page.goto(base + "/sales/#/properties");
+    await page.waitForSelector("#coverage");
+    const row = await page.textContent("#coverage tbody tr");
+    assert.match(row, /Test Residence/);
+    assert.match(row, /Car parks \(some layouts\)/, "Type A has no car parks on the website");
+    assert.match(row, /Furnishing/, "Unfurnished with furnished items listed is a conflict");
+    await page.goto(base + "/sales/#/property/t1");
+    await page.waitForSelector("#coverage dl");
+    const kv = await page.textContent("#coverage dl");
+    assert.match(kv, /Car parks\s*Some layouts\s*Type A: — · Type B: 2 \(Tandem\)/);
+    assert.match(kv, /Lease years\s*N\/A/);
+    assert.match(kv, /Maintenance fee\s*On website\s*RM0.35 psf/);
+    assert.match(kv, /Booking fee \(staff\)\s*Not provided/);
+    assert.match(await page.textContent(".mini"), /Car parks[\s\S]*2 \(Tandem\)/);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("integrations: WhatsApp connection check finds the unlinked account and links it", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {

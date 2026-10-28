@@ -1,6 +1,7 @@
 // AI Sales dashboard — property database (verified facts, units, prices, promotions) and knowledge base.
 // public.projects (the website listings) is read-only here; listing edits stay in the existing website admin.
 import { parseCSV, chunkText } from "../shared/text.mjs";
+import { projectSpecs, coverage, COVERAGE_FIELDS } from "../shared/listing.mjs";
 import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, projectName, keepPlace } from "./core.js";
 
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
@@ -8,14 +9,27 @@ const projectOptions = (sel, blank = "— General (all projects) —") => opt(""
 const ageDays = (d) => (d ? Math.floor((Date.now() - new Date(d)) / 864e5) : null);
 const freshness = (d, maxDays) => { const a = ageDays(d); if (a === null) return badge("Not verified", "alert"); return a > maxDays ? badge(`Verified ${a} d ago — stale`, "warn") : badge(`Verified ${a === 0 ? "today" : a + " d ago"}`, "ok"); };
 
+// what the AI knows about each project: the same reading of the listing the AI receives (shared/listing.mjs)
+const COV = { verified: ["Verified", "ok"], published: ["On website", "ok"], partial: ["Some layouts", "warn"], stale: ["Verified, stale", "warn"], conflict: ["Conflict", "alert"], not_applicable: ["N/A", ""], missing: ["Not provided", "alert"] };
+const covBadge = (c) => badge(COV[c.status][0], COV[c.status][1]);
+const coverageOf = (p, f, maxDays) => coverage(projectSpecs(p.data), f && Object.keys(f).length ? f : null, { factsFresh: !!f?.verified_at && ageDays(f.verified_at) <= maxDays });
+const LABEL = Object.fromEntries(COVERAGE_FIELDS);
+const STAFF_ONLY = new Set(["booking_fee", "sinking_fund", "title_type", "showroom"]);
+
 const num = (v) => { const n = Number(String(v ?? "").replace(/[^\d.]/g, "")); return v !== "" && v !== null && v !== undefined && isFinite(n) && n > 0 ? n : null; };
 
 /* ======================= Property list ======================= */
 export async function properties(el) {
-  const facts = (await q(SB.from("ai_project_facts").select("project_id,verified_at"))) || [];
+  const facts = (await q(SB.from("ai_project_facts").select("*"))) || [];
   const units = (await q(SB.from("ai_project_units").select("project_id,status"))) || [];
   const promos = (await q(SB.from("ai_active_promotions").select("project_id"))) || [];
   const maxDays = S.settings.business?.price_max_age_days || 30;
+  const cov = Object.fromEntries(S.projects.map((p) => [p.id, coverageOf(p, facts.find((x) => x.project_id === p.id), maxDays)]));
+  const count = (c, st, fields = Object.keys(c)) => fields.filter((k) => c[k].status === st).length;
+  const listingFields = COVERAGE_FIELDS.map(([k]) => k).filter((k) => !STAFF_ONLY.has(k));
+  const pub = S.projects.filter((p) => p.published);
+  const gaps = pub.reduce((a, p) => a + count(cov[p.id], "missing", listingFields) + count(cov[p.id], "partial", listingFields), 0);
+  const clashes = pub.reduce((a, p) => a + count(cov[p.id], "conflict"), 0);
   el.innerHTML = `<div class="page-head"><h1>Property projects</h1><p class="sub">Listings come from your website (${S.projects.length}). Add verified details the AI may quote: unit inventory, prices, promotions, booking fees, showroom hours.</p></div>
   <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Project</th><th>Website</th><th>Verified facts</th><th>Units available</th><th>Active promotions</th></tr></thead><tbody>
   ${S.projects.map((p) => { const f = facts.find((x) => x.project_id === p.id); const u = units.filter((x) => x.project_id === p.id); return `<tr data-href="#/property/${attr(p.id)}" tabindex="0">
@@ -24,7 +38,17 @@ export async function properties(el) {
     <td data-label="Verified facts">${f ? freshness(f.verified_at, maxDays) : badge("None", "alert")}</td>
     <td data-label="Units">${u.length ? `${u.filter((x) => x.status === "available").length} / ${u.length}` : "—"}</td>
     <td data-label="Promotions">${promos.filter((x) => x.project_id === p.id || !x.project_id).length || "—"}</td></tr>`; }).join("")}
-  </tbody></table></div>`;
+  </tbody></table></div>
+  <section class="card" id="coverage"><h2>What the AI knows <small>(${pub.length} published project${pub.length === 1 ? "" : "s"})</small></h2>
+    <p class="note">The AI answers from this information first. <b>Not provided</b> means the website listing has no value, so the AI tells the buyer an advisor will confirm it. Fix gaps and conflicts in the website admin, or add verified facts on the project page. ${gaps} listing gap${gaps === 1 ? "" : "s"}, ${clashes} conflict${clashes === 1 ? "" : "s"}.</p>
+    <div class="tbl-wrap"><table class="tbl cov"><thead><tr><th>Project</th><th>On the website</th><th>Gaps in the listing</th><th>Conflicts</th><th>Staff-only details</th></tr></thead><tbody>
+    ${pub.map((p) => { const c = cov[p.id]; const miss = listingFields.filter((k) => ["missing", "partial"].includes(c[k].status)); const con = Object.keys(c).filter((k) => c[k].status === "conflict"); const staff = [...STAFF_ONLY].filter((k) => c[k].status === "verified" || c[k].status === "stale");
+      return `<tr><td data-label="Project"><a href="#/property/${attr(p.id)}#coverage"><b>${esc(p.name)}</b></a></td>
+      <td data-label="On the website">${count(c, "published")} of ${listingFields.length - count(c, "not_applicable", listingFields)}</td>
+      <td data-label="Gaps">${miss.length ? miss.map((k) => `${esc(LABEL[k])}${c[k].status === "partial" ? " (some layouts)" : ""}`).join(", ") : badge("None", "ok")}</td>
+      <td data-label="Conflicts">${con.length ? con.map((k) => badge(LABEL[k], "alert")).join(" ") : "—"}</td>
+      <td data-label="Staff-only">${staff.length ? staff.map((k) => esc(LABEL[k])).join(", ") : `<span class="note">none yet</span>`}</td></tr>`; }).join("")}
+    </tbody></table></div></section>`;
   $$("tr[data-href]", el).forEach((tr) => { tr.onclick = (e) => { if (!e.target.closest("a")) location.hash = tr.dataset.href; }; tr.onkeydown = (e) => { if (e.key === "Enter") location.hash = tr.dataset.href; }; });
 }
 
@@ -41,7 +65,7 @@ export async function property(el, id) {
     q(SB.from("ai_documents").select("id,title,kind,extract_status,share_with_customers").eq("project_id", id)),
   ]);
   const f = facts || {};
-  const d = p.data;
+  const d = p.data, spec = projectSpecs(d);
   const B = S.settings.business || {};
   const current = (prices || []).filter((x) => !x.effective_to);
   const history = (prices || []).filter((x) => x.effective_to);
@@ -54,8 +78,12 @@ export async function property(el, id) {
    <div class="col">
     <section class="card"><h2>From the website listing <small>(indicative)</small></h2>
       <dl class="kv">${[["Developer", d.d], ["Type", d.t], ["Status", d.s], ["Tenure", d.tenure], ["Expected completion", d.year], ["Built-up", d.z && d.z + " sqft"], ["Maintenance (website)", d.maintPsf && "RM" + d.maintPsf + " psf"], ["Address", d.address]].filter((x) => x[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
-      ${(d.types || []).length ? `<table class="mini"><thead><tr><th>Layout</th><th>Size</th><th>Beds</th><th>Website price</th></tr></thead><tbody>${d.types.filter((x) => x && x.name).map((x) => `<tr><td>${esc(x.name)}</td><td>${esc(x.size)}</td><td>${esc(x.beds)}</td><td>${esc(x.price)}</td></tr>`).join("")}</tbody></table>` : ""}
+      ${spec.layouts.length ? `<table class="mini"><thead><tr><th>Layout</th><th>Size</th><th>Beds</th><th>Baths</th><th>Car parks</th><th>Website price</th></tr></thead><tbody>${spec.layouts.map((x) => `<tr><td>${esc(x.layout)}</td><td>${esc(x.size_sqft)}</td><td>${esc(x.bedrooms)}</td><td>${esc(x.bathrooms)}</td><td>${esc(x.car_parks || "—")}</td><td>${esc(x.price_from)}</td></tr>`).join("")}</tbody></table>` : ""}
       <p class="note">The AI treats website prices as <b>indicative</b>. It quotes a price as confirmed only from "Verified prices" below while it is current and not older than ${esc(B.price_max_age_days || 30)} days.</p>
+    </section>
+    <section class="card" id="coverage"><h2>What the AI knows about ${esc(p.name)}</h2>
+      <p class="note">Read from the website listing exactly as the AI receives it, plus the verified facts below. The AI answers <b>On website</b> details directly, gives money figures as indicative, and passes <b>Not provided</b> or <b>Conflict</b> details to an advisor.</p>
+      <dl class="kv cov">${(() => { const c = coverageOf(p, facts, B.price_max_age_days || 30); return COVERAGE_FIELDS.map(([k, label]) => `<dt>${esc(label)}${STAFF_ONLY.has(k) ? " <small>(staff)</small>" : ""}</dt><dd>${covBadge(c[k])}${c[k].value ? ` <span>${esc(c[k].value)}</span>` : ""}</dd>`).join(""); })()}</dl>
     </section>
 
     <section class="card"><h2>Verified facts ${freshness(f.verified_at, B.price_max_age_days || 30)}</h2>

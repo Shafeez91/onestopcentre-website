@@ -146,7 +146,7 @@ test("context: verified vs stale vs indicative, freshness, allow-lists", async (
 test("context: tolerates the live listing shapes (near with objects/strings, odd fields)", async () => {
   const ctx = await loadContext(fakeDb(), { message: "hi", now: NOW });
   const t2 = ctx.projects.find((p) => p.id === "t2");
-  assert.deepEqual(t2.nearby, { transit: ["MRT Taman Connaught 800m"] });
+  assert.deepEqual(t2.nearby, { public_transport: ["MRT Taman Connaught (800m)"] });
   const odd = await loadContext(fakeDb({ projects: [{ id: "x", slug: "x", data: { n: "X", types: "n/a", facilities: { a: 1 }, near: "none" } }] }), { message: "hi", now: NOW });
   assert.deepEqual(odd.projects[0].layouts, []);
   assert.deepEqual(odd.projects[0].nearby, {});
@@ -413,13 +413,14 @@ test("brochure: the project's brochure link from the website CMS is given to the
   assert.equal(r.decision, "reply", JSON.stringify(r.violations));
 });
 
-test("website listing details (maintenance fee, furnishing, highlights, surroundings) reach the AI as indicative", async () => {
+test("website listing details reach the AI: specifications as published, money figures as indicative", async () => {
   const db = fakeDb({ projects: [{ id: "t3", slug: "m-mira", data: { n: "M MIRA", maintPsf: "0.38", furn: "Partially Furnished", furnList: ["Air-conditioners"], hl: ["Low Density 633 Units Only"],
     lease: "99", height: "40", z: "800 sqft - 1050 sqft", address: "M MIRA", desc: "", nearby: "650m – Sri Rampai LRT Station", types: [{ name: "Type A", price: "RM476,000" }] } }] });
   const llm = scripted(draft({ reply: "Hai, saya pembantu AI. Yuran penyelenggaraan M MIRA dianggarkan RM0.38 psf (indikatif, tertakluk pengesahan).", facts_used: [] }));
   const r = await respond({ db, llm, message: "Berapa maintenance fee M Mira?", now: NOW, mode: "simulate" });
   const ctx = llm.calls[0].messages.at(-1).content;
-  assert.match(ctx, /"listing_details_INDICATIVE":\{"maintenance_fee_psf":"RM0.38 psf","size_range":"800 sqft - 1050 sqft","lease_years":"99","floors":"40","furnishing":"Partially Furnished","furnished_items":\["Air-conditioners"\],"highlights":\["Low Density 633 Units Only"\],"address":"M MIRA","surroundings":"650m – Sri Rampai LRT Station"\}/);
+  // the project is named in the message, so it is in focus with its full details; a placeholder address is left out
+  assert.match(ctx, /"specs_PUBLISHED":\{"lease_years":"99","size_range":"800 sqft - 1050 sqft","furnishing":"Partially Furnished","furnished_items":\["Air-conditioners"\],"floors":"40","highlights":\["Low Density 633 Units Only"\],"surroundings":"650m – Sri Rampai LRT Station"\},"money_INDICATIVE":\{"price_from":"RM476,000","maintenance_fee_psf":"RM0.38 psf"\}/);
   assert.equal(r.decision, "reply", JSON.stringify(r.violations));
   // an unlabelled fee is still caught
   const bad = await respond({ db, llm: scripted(draft({ reply: "Hai, saya pembantu AI. Maintenance fee M MIRA RM0.38 psf." }), draft({ reply: "Hai, saya pembantu AI. Maintenance fee M MIRA RM0.38 psf." })), message: "maintenance?", now: NOW, mode: "simulate" });

@@ -1,14 +1,13 @@
 // Builds the verified context for one buyer turn, plus the allow-lists the validator checks the reply against.
 // `db` is a small adapter: { get(path) -> rows[], rpc(name, args) -> result } over PostgREST.
 import { extractAmounts } from "../../sales/shared/validator.mjs";
+import { projectSpecs, resolveFocus, coverage, conflicts as findConflicts, numOf } from "../../sales/shared/listing.mjs";
 
 const SITE = "https://onestopcentreproperty.com/";
 const DAY = 864e5;
 const enc = encodeURIComponent;
 const clean = (v) => { v = String(v ?? "").trim(); return /^(none|null|undefined)$/i.test(v) ? "" : v; };
 const num = (v) => { const n = +String(v ?? "").replace(/[^\d.]/g, ""); return n > 0 ? n : null; };
-const arr = (v) => (Array.isArray(v) ? v : []);
-const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 
 /** Buyer-written figures such as "budget 500k", "RM450,000", "dalam 400 ribu". */
 export function buyerAmounts(text) {
@@ -59,32 +58,45 @@ export async function loadContext(db, { leadId = null, message = "", history = [
   }
 
   const factsBy = Object.fromEntries((facts || []).map((f) => [f.project_id, f]));
+  const focus = resolveFocus((projectRows || []).map((r) => ({ id: r.id, slug: r.slug, name: clean(r.data?.n) })), { message, history, lead });
   const projects = (projectRows || []).map((r) => {
-    const d = r.data || {}, f = factsBy[r.id];
+    const d = r.data || {}, f = factsBy[r.id], spec = projectSpecs(d);
+    const factsFresh = !!f?.verified_at && now - new Date(f.verified_at) <= priceMaxMs;
     const pr = (prices || []).filter((x) => x.project_id === r.id).map((x) => ({ ...x, fresh: !!x.verified_at && now - new Date(x.verified_at) <= priceMaxMs }));
     const us = (units || []).filter((u) => u.project_id === r.id);
     const freshAvail = us.filter((u) => u.status === "available" && u.status_verified_at && now - new Date(u.status_verified_at) <= invMaxMs);
     const factFields = f ? Object.fromEntries(["title_type", "booking_fee", "payment_terms", "maintenance_fee_psf", "sinking_fund_psf", "parking_allocation", "completion_date", "eligibility", "restrictions", "showroom_address", "showroom_hours", "showroom_map_url", "official_url", "notes"]
       .filter((k) => k !== "notes" && f[k] !== null && f[k] !== "").map((k) => [k, f[k]])) : null;
+    const cov = coverage(spec, f, { factsFresh });
+    const inFocus = focus.ids.includes(r.id);
+    // full details for the project(s) being discussed; a compact summary of the others keeps every turn small
+    const full = inFocus;
     return {
-      id: r.id, name: clean(d.n), area: clean(d.l), developer: clean(d.d), type: clean(d.t) || clean(d.c), status: clean(d.s), tenure: clean(d.tenure),
-      completion: f?.completion_date || clean(d.year) || null, completionVerified: !!f?.completion_date,
-      url: SITE + "property/" + r.slug + "/", urlMs: SITE + "ms/property/" + r.slug + "/", brochure: /^https?:/.test(d.brochure || "") ? d.brochure : null, mapUrl: /^https?:/.test(d.mapUrl || "") ? d.mapUrl : null,
-      layouts: arr(d.types).filter((t) => t && t.name).map((t) => ({ layout: clean(t.name), size_sqft: clean(t.size), bedrooms: clean(t.beds), bathrooms: clean(t.baths), price_from: clean(t.price) || null })),
-      websitePrices: [...arr(d.types).map((t) => t && t.price), d.p].map(num).filter((n) => n && n >= 10000),
-      maintPsfWebsite: num(d.maintPsf),
-      // other public listing details (indicative, as shown on the website)
-      listing: Object.fromEntries(Object.entries({
-        maintenance_fee_psf: num(d.maintPsf) ? `RM${num(d.maintPsf)} psf` : null,
-        size_range: clean(d.z), lease_years: clean(d.lease), floors: clean(d.height), furnishing: clean(d.furn),
-        furnished_items: arr(d.furnList).filter((x) => typeof x === "string" && x).slice(0, 15),
-        highlights: arr(d.hl).filter((x) => typeof x === "string" && x).slice(0, 8),
-        address: clean(d.address), description: clean(d.desc).slice(0, 800),
-        surroundings: typeof d.nearby === "string" ? clean(d.nearby).slice(0, 1500) : "",
+      id: r.id, name: spec.name, area: spec.area, developer: spec.developer, type: spec.property_type, status: spec.status, tenure: spec.tenure,
+      inFocus,
+      completion: f?.completion_date || spec.expected_completion || null, completionVerified: !!f?.completion_date,
+      url: SITE + "property/" + r.slug + "/", urlMs: SITE + "ms/property/" + r.slug + "/", brochure: spec.brochure_url || null, mapUrl: spec.map_url || null,
+      layouts: spec.layouts,
+      websitePrices: [...spec.layouts.map((l) => l.price_from), d.p].map(num).filter((n) => n && n >= 10000),
+      maintPsfWebsite: numOf(spec.maintenance_fee_psf) || null,
+      layoutMaintPsf: spec.layouts.map((l) => numOf(l.maintenance_fee_psf)).filter(Boolean),
+      // what the project page states (published specifications)
+      specs: Object.fromEntries(Object.entries({
+        lease_years: spec.lease_years, size_range: spec.size_range, bedrooms_max: spec.bedrooms_max, car_parks_all_units: spec.car_parks_all_units,
+        furnishing: spec.furnishing, furnished_items: full ? spec.furnished_items : [],
+        towers: full ? spec.towers : [], total_units: spec.total_units, floors: spec.floors,
+        highlights: spec.highlights.slice(0, full ? 12 : 4), transit_oriented: spec.transit_oriented, address: spec.address,
+        description: full ? spec.description.slice(0, 3000) : "",
+        surroundings: full ? spec.surroundings.slice(0, 4000) : "",
       }).filter(([, v]) => v !== null && v !== "" && !(Array.isArray(v) && !v.length))),
-      facilities: arr(d.facilities).filter((x) => typeof x === "string" && x).slice(0, 15),
-      nearby: Object.fromEntries(Object.entries(obj(d.near)).map(([k, v]) => [k, arr(v).filter((x) => x && x.n).slice(0, 5).map((x) => [x.n, x.d].filter(Boolean).join(" "))]).filter(([, v]) => v.length)),
-      facts: factFields, factsFresh: !!f?.verified_at && now - new Date(f.verified_at) <= priceMaxMs,
+      money: Object.fromEntries(Object.entries({ price_from: spec.price_from, maintenance_fee_psf: spec.maintenance_fee_psf }).filter(([, v]) => v)),
+      facilities: full ? spec.facilities : spec.facilities.slice(0, 8),
+      facilitiesTotal: spec.facilities.length,
+      nearby: full ? spec.nearby : Object.fromEntries(Object.entries(spec.nearby).filter(([k]) => k === "public_transport").map(([k, v]) => [k, v.slice(0, 2)])),
+      notOnRecord: full ? Object.entries(cov).filter(([, c]) => c.status === "missing").map(([k]) => k) : [],
+      partial: full ? Object.entries(cov).filter(([, c]) => c.status === "partial").map(([k]) => k) : [],
+      conflicts: findConflicts(spec, f, { factsFresh }),
+      facts: factFields, factsFresh,
       prices: pr,
       availability: us.length
         ? { recently_checked_available_units: freshAvail.length, units_on_record: us.length, by_layout: [...new Set(freshAvail.map((u) => u.unit_type).filter(Boolean))], label: freshAvail.length ? "VERIFIED" : "STALE" }
@@ -104,6 +116,7 @@ export async function loadContext(db, { leadId = null, message = "", history = [
     p.freshUnitPrices.forEach((n) => allowed.add(n));
     p.websitePrices.forEach((n) => indicative.add(n));
     if (p.maintPsfWebsite) indicative.add(p.maintPsfWebsite);
+    p.layoutMaintPsf.forEach((n) => indicative.add(n));
     if (p.facts) {
       for (const k of ["booking_fee", "payment_terms", "eligibility", "restrictions", "parking_allocation"]) extractAmounts(p.facts[k]).forEach((a) => allowed.add(a.value));
       for (const k of ["maintenance_fee_psf", "sinking_fund_psf"]) if (p.facts[k] !== undefined) allowed.add(Number(p.facts[k]));
@@ -121,7 +134,7 @@ export async function loadContext(db, { leadId = null, message = "", history = [
   return {
     settings, objections: objections || [], lead, buyer, aiPaused, isFirstReply, businessWa: wa ? "https://wa.me/" + wa : null,
     today: now.toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" }),
-    projects, promotions: promotions || [], knowledge,
+    projects, focus, promotions: promotions || [], knowledge,
     rules: {
       allowedAmounts: [...allowed], indicativeAmounts: [...indicative],
       hasFreshAvailability: projects.some((p) => p.freshAvailable > 0),
