@@ -563,6 +563,26 @@ test("Telegram follow-up reminder: sent when a person has not answered; not when
 const APPT = { id: "A1", lead_id: "L1", kind: "showroom_visit", status: "confirmed", project_id: "p1", start_at: new Date(NOW.getTime() + 24 * 3600e3).toISOString(), reminders: [], wa_reminders: true };
 const apptWorld = (job, o = {}) => world({ ai_jobs: [], ai_appointments: [structuredClone(APPT)], ai_automation_jobs: [jobOf({ appointment_id: "A1", ref_time: APPT.start_at, ...job })], ...o });
 
+test("appointment messages follow the buyer's own language when the saved one is 'mixed' or unknown", async () => {
+  // a buyer saved as "mixed" who writes in English (the 28 Oct case) gets English
+  let w = apptWorld({ kind: "appt_confirmation" });
+  w.ai_contacts[0].preferred_language = "mixed";
+  w.ai_messages = [{ id: "M1", conversation_id: "V1", direction: "inbound", body: "Hi, Boss. how abt 2pm this saturday?", created_at: ago(5) }, { id: "M2", conversation_id: "V1", direction: "inbound", body: "Thanks boss", created_at: ago(2) }, { id: "M3", conversation_id: "V1", direction: "inbound", body: "[reaction]", created_at: ago(1) }];
+  let db = memdb(w), d = deps(db);
+  await runWorker(d);
+  assert.match(d.wa.sent[0].msg.text, /^✅ Your appointment is confirmed: Showroom visit \(M MIRA\) on \w{3}, \d+ \w{3}, \d+:\d\d (am|pm)/);
+  // no saved language and Malay messages: Malay
+  w = apptWorld({ kind: "appt_reminder", offset_minutes: 1440 }); w.ai_contacts[0].preferred_language = null;
+  db = memdb(w); d = deps(db);
+  await runWorker(d);
+  assert.match(d.wa.sent[0].msg.text, /^Peringatan: lawatan showroom/);
+  // a saved choice always wins
+  w = apptWorld({ kind: "appt_reminder", offset_minutes: 1440 }); w.ai_contacts[0].preferred_language = "en"; w.ai_messages[0].body = "Saya nak datang";
+  db = memdb(w); d = deps(db);
+  await runWorker(d);
+  assert.match(d.wa.sent[0].msg.text, /^Reminder: your showroom visit/);
+});
+
 test("appointment confirmation and reminders: fixed text with place and map; asks once whether they can make it", async () => {
   const facts = [{ project_id: "p1", showroom_address: "M MIRA Sales Gallery", showroom_map_url: "https://maps.app.goo.gl/abc" }];
   let db = memdb(apptWorld({ kind: "appt_confirmation" }, { ai_project_facts: facts })), d = deps(db);

@@ -1,5 +1,5 @@
 // In-memory stand-in for the PostgREST calls the worker makes ({ get, post, patch, rpc }). TEST ONLY.
-// Supports eq/neq/gt/gte/lt/lte/is/in filters, order, limit, on_conflict + ignore-duplicates, and to-one embeds
+// Supports eq/neq/gt/gte/lt/lte/is/in/not.<op> filters, order, limit, on_conflict + ignore-duplicates, and to-one embeds
 // such as contact:ai_contacts(...) resolved through <alias>_id columns.
 import { randomUUID } from "node:crypto";
 
@@ -19,6 +19,7 @@ function embeds(select) {
 function match(row, col, expr) {
   const i = expr.indexOf("."), op = expr.slice(0, i), raw = decode(expr.slice(i + 1)), v = row[col];
   switch (op) {
+    case "not": return !match(row, col, raw);
     case "eq": return String(v) === raw;
     case "neq": return String(v) !== raw;
     case "is": return raw === "null" ? v === null || v === undefined : String(v) === raw;

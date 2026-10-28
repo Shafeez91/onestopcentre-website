@@ -2,10 +2,19 @@
 // endpoints). Every AI-written message is checked against the conversation's owner immediately before it goes to
 // WhatsApp, so an AI reply or follow-up prepared while a person took over is never delivered.
 import { renderTemplate } from "./followups.mjs";
+import { replyLanguage } from "../../sales/shared/guard.mjs";
 
 const enc = encodeURIComponent;
 
 /** Is the AI still allowed to speak in this conversation right now? (read fresh, just before sending) */
+/** "en" or "ms" for system messages and templates: the buyer's saved language, else what their recent messages are in. */
+export async function buyerLanguage(db, conv, contact = conv?.contact) {
+  const pref = contact?.preferred_language;
+  if (pref === "en" || pref === "ms" || !conv?.id) return replyLanguage(pref, []);
+  const rows = (await db.get(`ai_messages?conversation_id=eq.${encodeURIComponent(conv.id)}&direction=eq.inbound&body=not.is.null&select=body&order=created_at.desc&limit=8`).catch(() => [])) || [];
+  return replyLanguage(pref, rows.map((r) => r.body).filter((b) => b && !/^\[[a-z]+\]$/i.test(b)));
+}
+
 export async function aiMaySend(db, conversationId) {
   const c = (await db.get(`ai_conversations?id=eq.${enc(conversationId)}&select=mode,status,lead:ai_leads(ai_paused,closed_at)`))?.[0];
   if (!c) return { ok: false, reason: "conversation not found" };

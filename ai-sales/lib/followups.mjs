@@ -70,7 +70,7 @@ export function decideFollowUp({ step, lead, conversation, consent, marketingSen
     return at ? { action: "defer", reason: "outside business hours", runAt: at } : { action: "skip", reason: "no business hours configured" };
   }
   if (inWindow(conversation.last_inbound_at, now)) return { action: "send_ai" };
-  const lang = conversation.contact?.preferred_language === "en" ? "en" : "ms";
+  const lang = conversation.lang || (conversation.contact?.preferred_language === "en" ? "en" : "ms");
   const ok = templates.filter((t) => t.active && t.wa_status === "approved" && t.wa_template_name && t.name === step.template);
   const tpl = ok.find((t) => t.lang === lang) || ok[0];
   if (tpl) return { action: "send_template", template: tpl };
