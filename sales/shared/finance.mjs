@@ -403,6 +403,25 @@ export function priceExamples(price, rules = DEFAULT_FINANCING) {
 }
 
 /**
+ * Monthly figures for one price the way the website's loan calculator shows them (its own financing %, rate and
+ * years, set in the website admin), plus the LPPSA equivalent from the LPPSA rules. Illustrations, not offers.
+ * @param calc { margin_pct, rate_pct, tenure_years } — the website calculator settings
+ */
+export function instalmentIllustration(price, calc = {}, lppsa = null) {
+  const P = pos(price);
+  if (!P) return null;
+  const m = pos(calc.margin_pct) || 90, r = known(calc.rate_pct) && Number(calc.rate_pct) >= 0 ? Number(calc.rate_pct) : 4.5, y = pos(calc.tenure_years) || 35;
+  const loan = round(P * m / 100);
+  const out = { price: P, bank: { financing_pct: m, rate_pct: r, tenure_years: y, loan, monthly: round(instalment(loan, r, y * 12)) } };
+  if (lppsa?.rate_tiers?.length) {
+    const ly = Math.min(y, pos(lppsa.max_tenure_years) || 35), ll = Math.min(round(P * (pos(lppsa.margin_pct) || 100) / 100), pos(lppsa.max_financing) || Infinity);
+    out.lppsa = { financing_pct: pos(lppsa.margin_pct) || 100, tenure_years: ly, loan: ll, monthly: round(tieredInstalment(ll, lppsa.rate_tiers, ly * 12)),
+      rates: lppsa.rate_tiers.map((t) => `${t.rate_pct}%${t.up_to ? ` up to RM${t.up_to.toLocaleString("en-MY")}` : " above"}`).join(", "), rules_verified: !!lppsa.verified };
+  }
+  return out;
+}
+
+/**
  * Projects that fit a budget, from the most reliable price on record: VERIFIED (fresh staff-checked price or unit)
  * before INDICATIVE (website listing). `projects` is the context shape (prices, freshUnitPrices, websitePrices, layouts).
  */

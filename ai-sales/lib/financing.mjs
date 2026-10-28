@@ -1,7 +1,8 @@
 // Server glue between the AI conversation and the loan engine (sales/shared/finance.mjs).
 // The AI only collects the buyer's figures (financing_updates); every number it may say comes from the engine,
 // and the reply checker allows exactly those numbers.
-import { assess, financingRules, resultAmounts, priceExamples, recommendProjects, advisorSummary } from "../../sales/shared/finance.mjs";
+import { assess, financingRules, resultAmounts, instalmentIllustration, recommendProjects, advisorSummary } from "../../sales/shared/finance.mjs";
+import { numOf } from "../../sales/shared/listing.mjs";
 
 export const FIN_FIELDS = ["route", "age", "basic_salary", "fixed_allowances", "variable_income", "self_employed_income", "mandatory_deductions",
   "commitments_monthly", "credit_card_balance", "confirmed_service", "service_years", "second_financing", "property_price", "valuation",
@@ -38,12 +39,27 @@ export function cleanInputs(raw = {}) {
 export function attachFinancing(ctx, { inputs = {}, saved = null, recalculated = false } = {}) {
   const rules = financingRules(ctx.settings?.financing);
   const result = Object.keys(inputs).length ? assess(inputs, rules) : null;
-  const examples = ctx.projects.map((p) => {
-    const verified = [...p.prices.filter((x) => x.fresh).map((x) => Number(x.price_myr)), ...p.freshUnitPrices];
-    const from = verified.length ? Math.min(...verified) : p.websitePrices.length ? Math.min(...p.websitePrices) : null;
-    const ex = priceExamples(from, rules);
-    return ex && { project_id: p.id, price_label: verified.length ? "VERIFIED" : "INDICATIVE", ...ex };
-  }).filter(Boolean);
+  // the website calculator's own settings, so the AI quotes the same monthly figure the project page shows
+  const calc = ctx.websiteLoan || { margin_pct: rules.bank.margin_pct_first, rate_pct: rules.bank.rate_pct, tenure_years: rules.bank.max_tenure_years };
+  const examples = ctx.projects.flatMap((p) => {
+    const freshBy = Object.fromEntries(p.prices.filter((x) => x.fresh).map((x) => [String(x.unit_type || "").toLowerCase(), Number(x.price_myr)]));
+    const verified = [...Object.values(freshBy), ...p.freshUnitPrices];
+    // every priced layout of the project(s) being discussed; the lowest price of the others
+    const rows = p.inFocus ? p.layouts.filter((l) => numOf(l.price_from) >= 10000 || freshBy[l.layout.toLowerCase()]).map((l) => {
+      const v = freshBy[l.layout.toLowerCase()];
+      return { layout: l.layout, price: v || numOf(l.price_from), label: v ? "VERIFIED" : "INDICATIVE", size: numOf(l.size_sqft), psf: numOf(l.maintenance_fee_psf) || p.maintPsfWebsite };
+    }) : [];
+    if (!rows.length) {
+      const from = verified.length ? Math.min(...verified) : p.websitePrices.length ? Math.min(...p.websitePrices) : null;
+      if (from) rows.push({ layout: "lowest price", price: from, label: verified.length ? "VERIFIED" : "INDICATIVE" });
+    }
+    return rows.map((r) => {
+      const ex = instalmentIllustration(r.price, calc, rules.lppsa);
+      const maint = r.size && r.psf ? Math.round(r.size * r.psf) : null;
+      return ex && { project_id: p.id, project: p.name, layout: r.layout, price_label: r.label, ...ex,
+        ...(maint ? { maintenance_monthly: maint, bank_monthly_with_maintenance: ex.bank.monthly + maint } : {}) };
+    }).filter(Boolean);
+  });
   // the highest price the figures support (financing + planned down payment), else the buyer's stated budget
   const byIncome = result?.max_by_income > 0 ? result.max_by_income : null;
   const affordable = byIncome && (result.route === "lppsa" ? byIncome + (Number(inputs.down_payment) || 0) : Math.floor(byIncome / (rules.bank.margin_pct_first / 100)));
@@ -52,7 +68,7 @@ export function attachFinancing(ctx, { inputs = {}, saved = null, recalculated =
   ctx.financing = { rules, inputs, result, examples, recommendations, affordable: affordable || null, saved, recalculated };
   const allowed = new Set(ctx.rules.allowedAmounts);
   if (result) resultAmounts(result).forEach((n) => allowed.add(n));
-  for (const e of examples) [e.loan, e.monthly].forEach((n) => allowed.add(n));
+  for (const e of examples) [e.price, e.bank.loan, e.bank.monthly, e.lppsa?.loan, e.lppsa?.monthly, e.maintenance_monthly, e.bank_monthly_with_maintenance].filter(Boolean).forEach((n) => allowed.add(n));
   if (affordable) allowed.add(affordable);
   ctx.rules.allowedAmounts = [...allowed];
   ctx.rules.strictAmounts = true; // no free-form instalment estimates: only the engine's figures
@@ -77,7 +93,7 @@ export function renderFinancing(fin) {
       upfront_costs_estimate: r.upfront && { total: r.upfront.total, items: r.upfront.items.map((i) => ({ item: i.en, amount: i.amount })) },
       assumptions: r.assumptions, disclaimer: r.disclaimer,
     },
-    instalment_examples_bank_assumptions: fin.examples,
+    instalment_examples: { note: "Monthly figures per project/layout, calculated the same way as the loan calculator on the website (bank: its financing %, rate and years; lppsa: the LPPSA rules). Illustrations, not loan offers.", rows: fin.examples },
     projects_within_budget: fin.recommendations,
     affordable_price_estimate: fin.affordable || null,
   };
