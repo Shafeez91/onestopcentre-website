@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createHmac, generateKeyPairSync, createVerify } from "node:crypto";
 import { verifySignature, parseWebhook, inWindow, sendWhatsApp, textOf, WhatsAppError } from "../../lib/whatsapp.mjs";
 import { isOpen, nextOpening, decideFollowUp, consentState, renderTemplate, templateParams } from "../../lib/followups.mjs";
-import { freeSlots, signAssertion, bookSlot, calConfig, confirmationText, _resetTokenCache } from "../../lib/calendar.mjs";
+import { freeSlots, signAssertion, bookSlot, calConfig, confirmationText, formatWhen, _resetTokenCache } from "../../lib/calendar.mjs";
 import { runWorker } from "../../lib/worker.mjs";
 import { memdb } from "./helpers/memdb.mjs";
 
@@ -332,7 +332,7 @@ test("Telegram: AI replies send nothing; an undelivered reply gives ONE follow-u
   assert.ok(!db2.t.telegram.some((x) => x.p_kind === "whatsapp_message"));
 });
 
-const SLOT = { id: "2026-10-29T11:00", start: "2026-10-29T03:00:00.000Z", end: "2026-10-29T04:00:00.000Z", label_ms: "Kha, 29 Okt, 11:00 PG", label_en: "Thu, 29 Oct, 11:00 am" };
+const SLOT = { id: "2026-10-29T11:00", start: "2026-10-29T03:00:00.000Z", end: "2026-10-29T04:00:00.000Z", label_ms: "Khamis, 29 Okt, 11:00 Pagi", label_en: "Thu, 29 Oct, 11:00 am" };
 const calOf = ({ taken = false } = {}) => { const booked = []; return { booked, slots: async () => [SLOT], book: async (x) => { if (taken) throw Object.assign(new Error("no longer free"), { kind: "taken" }); booked.push(x); return "EV1"; } }; };
 const pickSlot = (slot_id) => draft({ reply: "Baik, saya tempah slot Khamis 11 pagi sekarang. Mesej pengesahan akan menyusul.", intent: "appointment", agent: "appointment",
   appointment_request: { wanted: true, kind: "showroom_visit", preferred_text: "Khamis 11 pagi", project_id: "p1", slot_id } });
@@ -673,4 +673,13 @@ test("appointment place: the project's showroom and map for visits, the default 
   const c = confirmationText({ kind: "showroom_visit", start: "2026-10-29T03:00:00Z", location: facts.p1.showroom_address, map: "https://maps.app.goo.gl/abc", lang: "en" });
   assert.match(c, /at M Mira Sales Gallery, Jalan Wangsa Delima 6\. Reply to this message.*\n📍 https:\/\/maps\.app\.goo\.gl\/abc$/s);
   assert.doesNotMatch(reminderText({ kind: "phone_call", start: "2026-10-29T03:00:00Z", location: "", lang: "ms" }), / di |📍/);
+});
+
+test("Malay appointment times use full day names and Pagi / Tengah Hari / Petang / Malam", () => {
+  assert.equal(formatWhen("2026-10-29T01:00:00Z", "ms"), "Khamis, 29 Okt, 9:00 Pagi");
+  assert.equal(formatWhen("2026-10-29T04:00:00Z", "ms"), "Khamis, 29 Okt, 12:00 Tengah Hari");
+  assert.equal(formatWhen("2026-10-29T06:30:00Z", "ms"), "Khamis, 29 Okt, 2:30 Petang");
+  assert.equal(formatWhen("2026-10-29T13:00:00Z", "ms"), "Khamis, 29 Okt, 9:00 Malam");
+  assert.equal(formatWhen("2026-10-31T01:00:00Z", "ms"), "Sabtu, 31 Okt, 9:00 Pagi");
+  assert.equal(formatWhen("2026-10-29T01:00:00Z", "en"), "Thu, 29 Oct, 9:00 am");
 });

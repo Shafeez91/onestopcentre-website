@@ -8,7 +8,7 @@
 import { composeFollowUp } from "./orchestrator.mjs";
 import { inWindow } from "./whatsapp.mjs";
 import { isOpen, nextOpening, consentState, templateParams } from "./followups.mjs";
-import { confirmationText, reminderText, placeFor } from "./calendar.mjs";
+import { confirmationText, reminderText, placeFor, formatWhen } from "./calendar.mjs";
 import { sendOutbound } from "./outbound.mjs";
 
 const enc = encodeURIComponent;
@@ -189,7 +189,7 @@ async function appointmentMessage(deps, job, settings, ck) {
     const tpls = ((await db.get(`ai_message_templates?name=eq.${name}&wa_status=eq.approved&active=is.true&select=*`)) || []).filter((t) => t.wa_template_name);
     const t = tpls.find((x) => x.lang === lang) || tpls[0];
     if (!ck(`approved "${name}" template available`, !!t)) return remindHuman(`outside the 24-hour window and no approved "${name}" template`);
-    const when = new Intl.DateTimeFormat(t.lang === "en" ? "en-MY" : "ms-MY", { timeZone: "Asia/Kuala_Lumpur", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(a.start_at));
+    const when = formatWhen(a.start_at, t.lang);
     s = await sendOutbound(deps, { conversation: conv, to, senderType: "system", purpose: "service", sourceJobId: job.id,
       template: { ...t, params: templateParams(t, { name: conv.contact?.full_name, project, appointment: when, location: [location, map].filter(Boolean).join(" ") }) } });
   }
