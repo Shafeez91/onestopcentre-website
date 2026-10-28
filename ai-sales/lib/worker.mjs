@@ -12,7 +12,7 @@ import { isOptOut, wantsHuman, fixedReply, replyLanguage } from "../../sales/sha
 import { decideFollowUp, consentState, templateParams } from "./followups.mjs";
 import { confirmationText, placeFor } from "./calendar.mjs";
 import { sendOutbound, buyerLanguage } from "./outbound.mjs";
-import { runAutomation, confirmAppointmentNow, automationOf, alertHumanAbout } from "./automation.mjs";
+import { runAutomation, confirmAppointmentNow, automationOf, openHumanTaskAbout } from "./automation.mjs";
 
 export { sendOutbound };
 
@@ -59,7 +59,7 @@ export async function processReplyJob(deps, job, settings) {
   const aiOn = f.module && f.ai_auto_reply && conv.mode === "ai" && !lead?.ai_paused && !lead?.closed_at;
   const guard = isOptOut(message) || wantsHuman(message);
 
-  // no Telegram for WhatsApp messages: a person is reminded only if nobody answers (human_reminder job)
+  // no Telegram for WhatsApp messages: Telegram carries new clients, follow-up tasks and appointments only
   if (!aiOn && !guard) return { status: "done", note: "AI not answering this conversation" };
 
   let result;
@@ -91,7 +91,7 @@ export async function processReplyJob(deps, job, settings) {
         if (!lead.first_response_at) await db.patch(`ai_leads?id=eq.${enc(lead.id)}`, { first_response_at: deps.now().toISOString() });
       } else {
         // the buyer was not answered: one follow-up reminder per buyer per day, however many replies fail
-        await alertHumanAbout(deps, conv.id, `the AI's reply could not be delivered (${String(sent.error).slice(0, 120)})`, `undelivered:${conv.id}:${deps.now().toISOString().slice(0, 10)}`);
+        await openHumanTaskAbout(deps, conv.id, { cause: "undelivered", key: `${conv.id}:${deps.now().toISOString().slice(0, 10)}`, title: "Reply to the buyer: the AI's reply could not be delivered", details: `WhatsApp error: ${String(sent.error).slice(0, 160)}` });
       }
     }
   }
@@ -206,7 +206,7 @@ export async function runWorker(deps, { maxJobs = 10, followUps = true, reminder
     } catch (e) {
       const dead = job.attempts >= job.max_attempts;
       await db.patch(`ai_jobs?id=eq.${enc(job.id)}`, { status: dead ? "dead" : "failed", last_error: String(e?.message || e).slice(0, 500), run_at: new Date(deps.now().getTime() + 60e3 * job.attempts ** 2).toISOString() });
-      if (dead && job.payload?.conversation_id) await alertHumanAbout(deps, job.payload.conversation_id, `a WhatsApp message could not be answered after ${job.attempts} tries`, `undelivered:${job.payload.conversation_id}:${deps.now().toISOString().slice(0, 10)}`);
+      if (dead && job.payload?.conversation_id) await openHumanTaskAbout(deps, job.payload.conversation_id, { cause: "undelivered", key: `${job.payload.conversation_id}:${deps.now().toISOString().slice(0, 10)}`, title: "Reply to the buyer: the AI could not answer their message", details: `Failed after ${job.attempts} tries.` });
       out.errors.push(String(e?.message || e));
     }
   }

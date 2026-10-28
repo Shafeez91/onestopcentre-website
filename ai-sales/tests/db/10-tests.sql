@@ -620,18 +620,35 @@ do $$ declare r jsonb; lid uuid; j uuid; a uuid; begin
 end $$;
 rollback;
 
-\echo 'T37 handovers alert staff on Telegram once; the alert can be switched off'
+\echo 'T37 hand-overs: a follow-up task (announced once) only when a person must act; "AI unsure" stays in the queue; can be switched off'
 begin;
-do $$ declare r jsonb; h uuid; begin
+do $$ declare r jsonb; h uuid; t public.ai_tasks; n0 bigint; begin
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   r := public.ai_wa_inbound('60123456705', 'Dina', 'wamid.E1', 'text', 'nak cakap dengan orang');
+  n0 := (select count(*) from net.calls);
+  -- the AI was unsure: hand-over queue only, nothing on Telegram
+  insert into public.ai_handover_events (lead_id, conversation_id, reason) values ((r ->> 'lead_id')::uuid, (r ->> 'conversation_id')::uuid, 'low_confidence');
+  assert (select count(*) from net.calls) = n0, 'no Telegram for an unsure AI';
+  assert not exists (select 1 from public.ai_tasks where lead_id = (r ->> 'lead_id')::uuid), 'no task';
+  -- the buyer asked for a person: one follow-up task, announced once as a task
   insert into public.ai_handover_events (lead_id, conversation_id, reason, summary)
   values ((r ->> 'lead_id')::uuid, (r ->> 'conversation_id')::uuid, 'customer_request', '{"text":"Buyer asked for a person","next_action":"Call her"}') returning id into h;
-  assert (select count(*) from public.ai_notifications where kind = 'handover' and ref_id = h::text) = 1;
-  assert (select count(*) from net.calls where body ->> 'text' like '%Follow-up needed — customer request%Dina%Next: Call her%#/inbox?c=%') = 1;
-  update public.ai_settings set notifications = notifications || '{"handover_alerts": false}';
+  select * into t from public.ai_tasks where lead_id = (r ->> 'lead_id')::uuid;
+  assert t.source_key = 'handover:' || h and t.status = 'open' and t.created_by = 'system' and t.title = 'Buyer needs a person: customer request';
+  assert (select count(*) from public.ai_notifications where kind = 'task_reminder' and ref_id = t.id::text) = 1;
+  assert (select count(*) from net.calls where body ->> 'text' like '%Follow-up task%Buyer needs a person: customer request%Dina%Next: Call her%#/inbox?c=%') = 1;
+  assert not exists (select 1 from public.ai_notifications where kind = 'handover'), 'the old hand-over alert is gone';
+  -- the reminder run does not announce it again
+  perform public.ai_run_reminders(now());
+  assert (select count(*) from public.ai_notifications where ref_id = t.id::text) = 1, 'once';
+  -- a second request while the task is open: no second task
   insert into public.ai_handover_events (lead_id, reason) values ((r ->> 'lead_id')::uuid, 'complaint');
-  assert (select count(*) from public.ai_notifications where kind = 'handover') = 1, 'switched off';
+  assert (select count(*) from public.ai_tasks where lead_id = (r ->> 'lead_id')::uuid) = 1;
+  -- switched off: no task
+  update public.ai_settings set notifications = notifications || '{"handover_alerts": false}';
+  update public.ai_tasks set status = 'done' where id = t.id;
+  insert into public.ai_handover_events (lead_id, reason) values ((r ->> 'lead_id')::uuid, 'ready_to_buy');
+  assert (select count(*) from public.ai_tasks where lead_id = (r ->> 'lead_id')::uuid) = 1, 'switched off';
 end $$;
 rollback;
 
@@ -767,13 +784,17 @@ do $$ declare r jsonb; conv uuid; lid uuid; begin
   assert (select status || '/' || reason from public.ai_automation_jobs where kind = 'smart_follow_up') = 'cancelled/a person replied';
   assert (select status from public.ai_jobs where id = (r ->> 'job_id')::uuid) = 'done', 'the pending AI reply is cancelled';
   assert (select status from public.ai_follow_up_jobs where idempotency_key = 'seq-test') = 'cancelled';
-  -- the buyer writes again: no AI follow-up, but a person is reminded if they do not answer
+  -- the buyer writes again: no AI follow-up, and no "waiting for your reply" reminder (migration 13): the inbox shows it
   r := public.ai_wa_inbound('60123456802', 'Aina', 'wamid.H2', 'text', 'Ok bila?');
   assert not exists (select 1 from public.ai_automation_jobs where kind = 'smart_follow_up' and status = 'scheduled');
-  assert (select count(*) from public.ai_automation_jobs where kind = 'human_reminder' and status = 'scheduled') = 1;
+  assert not exists (select 1 from public.ai_automation_jobs where kind = 'human_reminder'), 'no reply reminder';
   assert (select mode from public.ai_conversations where id = conv) = 'human', 'not handed back by a buyer message';
+  -- a person replying completes the buyer's open automatic follow-up tasks; a task staff created stays open
+  perform public.ai_open_human_task(lid, 'Message the buyer', null, 'appointment:x1');
+  insert into public.ai_tasks (lead_id, title, due_at) values (lid, 'Send the floor plan', now() + interval '1 day');
   insert into public.ai_messages (conversation_id, direction, sender_type, sender_email, body, status) values (conv, 'outbound', 'human', 'advisor@test.local', 'Petang ni', 'queued');
-  assert (select status || '/' || reason from public.ai_automation_jobs where kind = 'human_reminder') = 'cancelled/a person replied';
+  assert (select status from public.ai_tasks where source_key = 'appointment:x1') = 'done';
+  assert (select status from public.ai_tasks where title = 'Send the floor plan') = 'open';
   -- AI and system messages never count as a human reply
   update public.ai_conversations set mode = 'ai' where id = conv; update public.ai_leads set ai_paused = false where id = lid;
   insert into public.ai_messages (conversation_id, direction, sender_type, body, status) values (conv, 'outbound', 'ai', 'Baik', 'queued'), (conv, 'outbound', 'system', 'Peringatan', 'queued');
@@ -804,7 +825,7 @@ do $$ declare r jsonb; conv uuid; lid uuid; begin
   assert not (select ai_paused from public.ai_leads where id = lid);
   assert (select status from public.ai_handover_events where lead_id = lid) = 'resolved';
   assert (select status from public.ai_jobs where id = (r ->> 'job_id')::uuid) = 'done', 'the old message is not answered after resuming';
-  assert (select status from public.ai_automation_jobs where kind = 'human_reminder' and conversation_id = conv) = 'cancelled';
+  assert not exists (select 1 from public.ai_automation_jobs where kind = 'human_reminder' and conversation_id = conv and status = 'scheduled');
   assert exists (select 1 from public.ai_audit_logs where action = 'resume_ai' and record_id = conv::text);
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   perform public.ai_wa_inbound('60123456803', 'Klaus', 'wamid.R3', 'text', 'Still there?');
@@ -1063,6 +1084,43 @@ select public.t_login('advisor@test.local');
 update public.ai_appointments set archived_at = null, archived_by = null where id = (select ap from t54);
 reset role;
 do $$ begin assert (select archived_at from public.ai_appointments where id = (select ap from t54)) is null, 'restored'; end $$;
+rollback;
+
+\echo 'T55 Telegram carries only new clients, follow-up tasks and appointments: an existing buyer chatting (AI or person) sends nothing'
+begin;
+update public.ai_settings set flags = flags || '{"ai_auto_reply": true}', notifications = notifications || '{"daily_digest": false}';
+do $$ declare r jsonb; conv uuid; lid uuid; n0 bigint; t1 uuid; t2 uuid; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123456901', 'Izalynn', 'wamid.Z1', 'text', 'Hi, nak tanya M Mira');
+  conv := (r ->> 'conversation_id')::uuid; lid := (r ->> 'lead_id')::uuid;
+  update public.ai_contacts set created_at = now() - interval '3 days' where id = (select contact_id from public.ai_leads where id = lid);
+  -- a person takes the chat; the buyer keeps writing and waits
+  insert into public.ai_messages (conversation_id, direction, sender_type, sender_email, body, status) values (conv, 'outbound', 'human', 'advisor@test.local', 'Hi, saya check', 'queued');
+  n0 := (select count(*) from net.calls);
+  perform public.ai_wa_inbound('60123456901', 'Izalynn', 'wamid.Z2', 'text', 'Akk skrg fokus Arte star 2.5%');
+  perform public.ai_wa_inbound('60123456901', 'Izalynn', 'wamid.Z3', 'text', 'M Mira 2.4%');
+  perform public.ai_wa_inbound('60123456901', 'Izalynn', 'wamid.Z3', 'text', 'M Mira 2.4%');   -- redelivered
+  perform public.ai_run_reminders(now() + interval '2 hours');
+  assert (select count(*) from net.calls) = n0, 'nothing on Telegram for an existing buyer waiting for a reply: ' || (select string_agg(left(body ->> 'text', 60), ' | ') from (select body from net.calls order by id desc limit (select count(*) from net.calls) - n0) x);
+  assert not exists (select 1 from public.ai_automation_jobs where kind = 'human_reminder');
+  assert not exists (select 1 from public.ai_tasks where lead_id = lid);
+  -- the old kinds are refused centrally, whoever calls
+  assert not public.ai_send_telegram('handover', 'x', 'legacy:h', '🔔 Follow-up needed — other');
+  assert (select status from public.ai_notifications where dedupe_key = 'blocked:legacy:h') = 'skipped';
+  -- a follow-up task due: announced once; the same cause again while open: no second task; done: nothing more
+  t1 := public.ai_open_human_task(lid, 'Follow up with the buyer', 'the automatic follow-up could not be sent', 'followup:j1');
+  t2 := public.ai_open_human_task(lid, 'Follow up with the buyer', null, 'followup:j2');
+  assert t1 is not null and t2 is null;
+  assert (select count(*) from net.calls) = n0 + 1;
+  assert (select body ->> 'text' from net.calls order by id desc limit 1) like '🔔 Follow-up task%Follow up with the buyer%Izalynn%';
+  perform public.ai_run_reminders(now());
+  assert (select count(*) from net.calls) = n0 + 1, 'not twice';
+  -- an appointment and an independent task for the same buyer each alert once
+  update public.ai_settings set notifications = notifications || '{"appointment_changes": true}';
+  insert into public.ai_appointments (lead_id, kind, status, start_at, end_at) values (lid, 'showroom_visit', 'confirmed', now() + interval '3 days', now() + interval '3 days 1 hour');
+  assert (select count(*) from net.calls) = n0 + 2;
+  assert (select count(*) from public.ai_notifications where kind = 'appointment_change' and status = 'sent') = 1;
+end $$;
 rollback;
 
 \echo 'ALL DB TESTS PASSED'

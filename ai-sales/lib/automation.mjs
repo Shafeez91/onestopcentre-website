@@ -1,6 +1,6 @@
 // Scheduled automation jobs (ai_automation_jobs), created by database triggers and run by the worker:
 //   smart_follow_up    one AI-written check-in when the buyer has gone quiet for N hours (default 12) and nobody followed up
-//   human_reminder     Telegram reminder to staff when a buyer is waiting for a person's reply
+//   human_reminder     (retired) Telegram reminder when a buyer was waiting for a reply; closed if found
 //   appt_confirmation  WhatsApp confirmation once an appointment is confirmed
 //   appt_reminder      WhatsApp reminders before a confirmed appointment (default 24 h and 2 h)
 // Every job re-checks the conversation's current state when it runs and records each check, so a job that is no
@@ -30,32 +30,29 @@ async function loadConv(db, id) {
 const consentOf = async (db, contactId) => consentState(contactId ? (await db.get(`ai_consent_current?contact_id=eq.${enc(contactId)}&select=channel,purpose,status`)) || [] : []);
 const projectName = async (db, id) => (id ? (await db.get(`projects?id=eq.${enc(id)}&select=data`))?.[0]?.data?.n || null : null);
 
-/** Telegram to staff: a buyer needs a person. Deduplicated per key; never raises. */
-export async function alertHuman(deps, { conv, reason, key, lastMessage = null }) {
-  const { db } = deps;
+/**
+ * A follow-up task for a person (shown on the lead, announced once on Telegram), opened only when a person has to
+ * act. `cause` groups tasks: while one of the same cause is open for this buyer, no second one is opened.
+ * Never raises; returns the task id or null.
+ */
+export async function openHumanTask(deps, { conv, cause, key, title, details = "", lastMessage = null }) {
   try {
-    const lead = conv?.lead || {}, c = conv?.contact || {};
-    const project = await projectName(db, lead.primary_project_id);
+    const lead = conv?.lead;
+    if (!lead?.id) return null;
     const since = lastMessage ? agoText(deps.now() - new Date(lastMessage.created_at)) : null;
-    const to = toOf(conv);
-    const text = [`🔔 Follow-up needed — ${reason}`,
-      `👤 ${c.full_name || "(no name)"}${lead.lead_code ? " · " + lead.lead_code : ""}${lead.temperature ? " · " + lead.temperature : ""}${Number.isFinite(lead.score) ? ` (${lead.score}/100)` : ""}`,
-      project ? `🏠 ${project}` : null,
-      lastMessage ? `💬 "${String(lastMessage.body || "[media]").slice(0, 200)}"${since ? ` — ${since} ago` : ""}` : null,
-      to ? `📞 https://wa.me/${to}` : null,
-      `${SITE}#/inbox?c=${conv.id}`].filter(Boolean).join("\n");
-    return await db.rpc("ai_send_telegram", { p_kind: "follow_up_due", p_ref: conv.id, p_key: key, p_text: text });
-  } catch { return false; }
+    const body = [details, lastMessage ? `Buyer's last message${since ? ` (${since} ago)` : ""}: "${String(lastMessage.body || "[media]").slice(0, 200)}"` : null].filter(Boolean).join("\n");
+    return await deps.db.rpc("ai_open_human_task", { p_lead: lead.id, p_title: title, p_details: body, p_key: `${cause}:${key}` });
+  } catch { return null; }
 }
 
-/** Same reminder for a conversation by id, with the buyer's latest message (used when a reply could not be delivered). */
-export async function alertHumanAbout(deps, conversationId, reason, key) {
+/** Same task for a conversation by id, with the buyer's latest message (used when a reply could not be delivered). */
+export async function openHumanTaskAbout(deps, conversationId, { cause, key, title, details = "" }) {
   try {
     const conv = await loadConv(deps.db, conversationId);
-    if (!conv) return false;
+    if (!conv) return null;
     const last = (await deps.db.get(`ai_messages?conversation_id=eq.${enc(conversationId)}&direction=eq.inbound&order=created_at.desc&limit=1&select=id,body,created_at`))?.[0] || null;
-    return await alertHuman(deps, { conv, reason, key, lastMessage: last });
-  } catch { return false; }
+    return await openHumanTask(deps, { conv, cause, key, title, details, lastMessage: last });
+  } catch { return null; }
 }
 
 /* ---------------------------------------------------------------- smart follow-up */
@@ -83,7 +80,10 @@ async function smartFollowUp(deps, job, settings, ck) {
   if (!ck("no other follow-up sequence due around now", !clash)) return { status: "skipped", reason: "another follow-up sequence is handling this buyer" };
 
   // switched off, or WhatsApp unavailable: a person should follow up instead
-  const needHuman = async (reason) => { if (A.human_reminders) await alertHuman(deps, { conv, reason: `no reply for ${agoText(now - new Date(anchor.created_at))}; ${reason}`, key: `smart-human:${job.id}`, lastMessage: anchor }); return { status: "skipped", reason }; };
+  const needHuman = async (reason) => {
+    if (A.human_reminders) await openHumanTask(deps, { conv, cause: "followup", key: job.id, title: "Follow up with the buyer: the automatic follow-up could not be sent", details: `Reason: ${reason}.`, lastMessage: anchor });
+    return { status: "skipped", reason };
+  };
   if (!ck("automatic follow-ups switched on", !!f.follow_ups && A.smart_follow_up !== false)) return needHuman("automatic follow-ups are switched off");
   if (!ck("WhatsApp sending available", !!f.whatsapp_outbound && !!deps.wa)) return needHuman("WhatsApp sending is off or not connected");
   if (!isOpen(settings.business?.hours, now)) {
@@ -129,28 +129,12 @@ async function smartFollowUp(deps, job, settings, ck) {
   return { status: "sent", message_id: s.id };
 }
 
-/* ---------------------------------------------------------------- human reminder (Telegram) */
+/* ---------------------------------------------------------------- human reminder (retired) */
+// "The buyer is waiting for your reply" reminders are no longer sent (migration 13): a buyer waiting for an answer
+// is in the inbox; Telegram carries follow-up tasks only. Jobs created before the change are closed here.
 async function humanReminder(deps, job, settings, ck) {
-  const { db } = deps, now = deps.now(), A = automationOf(settings), f = settings.flags || {};
-  const conv = await loadConv(db, job.conversation_id);
-  if (!ck("conversation open", !!conv && conv.status === "open" && !conv.lead?.closed_at)) return { status: "cancelled", reason: "conversation or lead closed" };
-  const anchor = (await db.get(`ai_messages?id=eq.${enc(job.anchor_message_id)}&select=id,body,created_at`))?.[0];
-  if (!ck("buyer message still recorded", !!anchor)) return { status: "cancelled", reason: "message no longer exists" };
-  const later = (await db.get(`ai_messages?conversation_id=eq.${enc(conv.id)}&created_at=gte.${enc(anchor.created_at)}&select=id,direction,sender_type,status,created_at`)) || [];
-  const human = later.some((m) => m.direction === "outbound" && m.sender_type === "human");
-  if (!ck("no reply from a person yet", !human)) return { status: "cancelled", reason: "a person replied" };
-  const aiHandles = conv.mode === "ai" && !conv.lead?.ai_paused && !!f.ai_auto_reply;
-  const aiAnswered = later.some((m) => m.direction === "outbound" && m.sender_type === "ai" && ["sent", "delivered", "read"].includes(m.status));
-  if (!ck("the AI did not answer it", !(aiHandles && aiAnswered))) return { status: "cancelled", reason: "the AI answered" };
-  if (!ck("human follow-up reminders switched on", A.human_reminders !== false)) return { status: "skipped", reason: "human follow-up reminders are switched off" };
-  if (!isOpen(settings.business?.hours, now)) {
-    const at = nextOpening(settings.business?.hours, now);
-    ck("within business hours", false);
-    if (at) return { status: "scheduled", reason: "waiting for business hours", run_at: at.toISOString() };
-  }
-  const why = conv.mode !== "ai" || conv.lead?.ai_paused ? "the buyer is waiting for your reply" : "AI auto-reply is off; the buyer is waiting for a reply";
-  const ok = await alertHuman(deps, { conv, reason: why, key: `human:${job.anchor_message_id}`, lastMessage: anchor });
-  return ok ? { status: "sent" } : { status: "skipped", reason: "Telegram not configured or already notified" };
+  ck("buyers waiting for a reply are sent to Telegram", false);
+  return { status: "cancelled", reason: "buyers waiting for a reply are no longer sent to Telegram" };
 }
 
 /* ---------------------------------------------------------------- appointment confirmation / reminder */
@@ -170,7 +154,10 @@ async function appointmentMessage(deps, job, settings, ck) {
   if (!ck("appointment messages allowed for this conversation", conv.automation?.appointment_reminders !== false)) return { status: "cancelled", reason: "appointment reminders switched off for this conversation" };
   const consent = await consentOf(db, conv.contact?.id);
   if (!ck("buyer has not opted out", consent.service !== "withdrawn")) return { status: "cancelled", reason: "buyer opted out" };
-  const remindHuman = async (reason) => { if (A.human_reminders) await alertHuman(deps, { conv, reason: `the WhatsApp appointment ${isConfirm ? "confirmation" : "reminder"} could not be sent (${reason}) — please message the buyer`, key: `appt-human:${job.id}` }); return { status: "skipped", reason }; };
+  const remindHuman = async (reason) => {
+    if (A.human_reminders) await openHumanTask(deps, { conv, cause: "appointment", key: job.id, title: `Message the buyer: the WhatsApp appointment ${isConfirm ? "confirmation" : "reminder"} could not be sent`, details: `Reason: ${reason}.` });
+    return { status: "skipped", reason };
+  };
   if (!ck("WhatsApp sending available", !!f.whatsapp_outbound && !!deps.wa)) return remindHuman("WhatsApp sending is off or not connected");
 
   const place = await placeFor(db, a, settings);

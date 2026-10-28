@@ -5,7 +5,7 @@ import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearD
 
 export const AUTOMATION_DEFAULTS = { smart_follow_up: true, follow_up_delay_hours: 12, follow_up_template: "follow_up", appointment_confirmations: true,
   appointment_reminders: true, appointment_reminder_minutes: [1440, 120], human_reminders: true, human_reminder_minutes: 60 };
-const KIND = { smart_follow_up: "12-hour follow-up", human_reminder: "Telegram: reply needed", appt_confirmation: "Appointment confirmation", appt_reminder: "Appointment reminder" };
+const KIND = { smart_follow_up: "12-hour follow-up", human_reminder: "Reply reminder (retired)", appt_confirmation: "Appointment confirmation", appt_reminder: "Appointment reminder" };
 const STATUS = { scheduled: ["Pending", ""], processing: ["Sending", ""], sent: ["Sent", "ok"], skipped: ["Skipped", "warn"], cancelled: ["Cancelled", ""], failed: ["Failed", "alert"] };
 const minutesText = (m) => (m % 1440 === 0 ? m / 1440 + " day" + (m === 1440 ? "" : "s") : m % 60 === 0 ? m / 60 + " h" : m + " min");
 const list = (v) => String(v || "").split(",").map((x) => x.trim()).filter(Boolean).map(Number);
@@ -35,9 +35,9 @@ export function automationHtml(data) {
       ${chk("appointment_confirmations", A.appointment_confirmations, "WhatsApp appointment confirmations", "Sent once an appointment is confirmed (calendar, advisor or lead page).")}
       ${chk("appointment_reminders", A.appointment_reminders, "WhatsApp appointment reminders", "Sent to the buyer before a confirmed appointment, even while a person handles the chat.")}
       <label class="full">Reminder times before the appointment (minutes, comma-separated)<input name="appointment_reminder_minutes" value="${attr((A.appointment_reminder_minutes || []).join(", "))}" placeholder="1440, 120 = 24 h and 2 h"${dis}></label>
-      ${chk("human_reminders", A.human_reminders, "Telegram: remind me when a buyer is waiting for a person", "When a chat a person handles (or with AI replies off) gets no reply, or an automatic follow-up/reminder cannot be sent.")}
-      <label>Remind me after (minutes without a reply)<input name="human_reminder_minutes" type="number" min="5" max="1440" step="5" value="${attr(A.human_reminder_minutes)}"${dis}></label>
-      ${chk("handover_alerts", N.handover_alerts !== false, "Telegram: buyer asks for a person / AI hands over", "")}
+      ${chk("human_reminders", A.human_reminders, "Follow-up task when an automatic message cannot be sent", "If the 12-hour follow-up, an appointment confirmation or a reminder cannot go out, a follow-up task is opened on the lead and sent to Telegram once.")}
+      ${chk("handover_alerts", N.handover_alerts !== false, "Follow-up task when a buyer needs a person", "When the buyer asks for a person, is ready to buy, negotiates, complains, or needs a legal or financing answer. Other hand-overs wait in the hand-over queue without a Telegram message.")}
+      <p class="note full">A buyer simply waiting for a reply is not sent to Telegram: see the inbox. Replying to the buyer completes their open automatic tasks.</p>
       ${chk("appointment_changes", N.appointment_changes, "Telegram: appointment booked, confirmed, rescheduled or cancelled", "")}
       <label class="full">Telegram appointment reminders (minutes before, comma-separated)<input name="tg_appointment_reminder_minutes" value="${attr((N.appointment_reminder_minutes || []).join(", "))}" placeholder="1440, 120"${dis}></label>
       ${own ? `<div class="actions full"><button class="btn pri">Save automation settings</button></div>` : `<p class="note full">Only owners can change these settings.</p>`}
@@ -72,14 +72,13 @@ export function bindAutomation(el, data, reload) {
       const rem = list(v.appointment_reminder_minutes), tg = list(v.tg_appointment_reminder_minutes);
       if (![...rem, ...tg].every((m) => Number.isInteger(m) && m >= 10 && m <= 10080)) return toast("Reminder times: whole minutes from 10 to 10080, e.g. 1440, 120.", "err");
       if (!(v.follow_up_delay_hours >= 1 && v.follow_up_delay_hours <= 72)) return toast("Follow up after 1 to 72 hours.", "err");
-      if (!(v.human_reminder_minutes >= 5 && v.human_reminder_minutes <= 1440)) return toast("Remind me after 5 to 1440 minutes.", "err");
       const st = S.settings;
       act(f.querySelector("button"), async () => {
         await q(SB.from("ai_settings").update({
           flags: { ...st.flags, ai_auto_reply: v.ai_auto_reply, follow_ups: v.follow_ups },
           automation: { ...(st.automation || {}), smart_follow_up: v.smart_follow_up, follow_up_delay_hours: v.follow_up_delay_hours, follow_up_template: v.follow_up_template || "follow_up",
             appointment_confirmations: v.appointment_confirmations, appointment_reminders: v.appointment_reminders, appointment_reminder_minutes: [...new Set(rem)].sort((a, b) => b - a),
-            human_reminders: v.human_reminders, human_reminder_minutes: v.human_reminder_minutes },
+            human_reminders: v.human_reminders },
           notifications: { ...(st.notifications || {}), handover_alerts: v.handover_alerts, appointment_changes: v.appointment_changes, appointment_reminder_minutes: [...new Set(tg)].sort((a, b) => b - a) },
         }).eq("id", 1).select("id"), { expectRows: true });
         clearDraft(f); await loadLookups(); reload();

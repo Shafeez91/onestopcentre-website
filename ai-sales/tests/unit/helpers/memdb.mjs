@@ -119,6 +119,15 @@ export function memdb(seed = {}, rpcs = {}) {
         return structuredClone(due);
       }
       if (name === "ai_follow_up_start") { (t.started ||= []).push(args); return "fu-job"; }
+      if (name === "ai_open_human_task") {
+        // like the SQL function: one open system task per buyer and cause, announced once on Telegram as a task
+        const cause = String(args.p_key).split(":")[0], tasks = (t.ai_tasks ||= []);
+        if (tasks.some((k) => k.lead_id === args.p_lead && k.status === "open" && String(k.source_key || "").split(":")[0] === cause)) return null;
+        const id = "TK" + (tasks.length + 1);
+        tasks.push({ id, lead_id: args.p_lead, title: args.p_title, details: args.p_details, source_key: args.p_key, status: "open", created_by: "system" });
+        (t.telegram ||= []).push({ p_kind: "task_reminder", p_ref: id, p_key: `task:${id}`, p_text: `🔔 Follow-up task\n📝 ${args.p_title}\n${args.p_details || ""}` });
+        return id;
+      }
       throw new Error("memdb: unexpected rpc " + name);
     },
   };
