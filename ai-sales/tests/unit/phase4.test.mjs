@@ -312,7 +312,7 @@ test("WhatsApp sending switched off: the AI drafts, nothing goes to the buyer, n
   assert.equal((db.t.telegram || []).length, 0);
 });
 
-test("Telegram: AI replies send nothing; an undelivered reply gives ONE follow-up reminder per buyer per day", async () => {
+test("Telegram: AI replies send nothing; an undelivered reply opens ONE follow-up task per buyer per day", async () => {
   const db = memdb(world()), d = deps(db);
   await runWorker(d);
   assert.equal(d.wa.sent.length, 1);
@@ -321,14 +321,16 @@ test("Telegram: AI replies send nothing; an undelivered reply gives ONE follow-u
   const fail = Object.assign(new Error("WhatsApp refused the message (400)"), { kind: "rejected" });
   const w = world(); w.ai_messages.push({ id: "M2", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Hello?", created_at: ago(0.5), status: "received" });
   w.ai_jobs.push({ id: "J2", kind: "wa_reply", payload: { conversation_id: "V1", message_id: "M2" }, status: "queued", attempts: 0, max_attempts: 5 });
-  const db2 = memdb(w, { ai_send_telegram: (a, t) => { const seen = (t.telegram ||= []).some((x) => x.p_key === a.p_key); if (!seen) t.telegram.push(a); return !seen; } });
+  const db2 = memdb(w);
   const d2 = { ...deps(db2), wa: { send: async () => { throw fail; } } };
   await runWorker(d2);                                      // J1 superseded by J2; J2's reply fails
   db2.t.ai_jobs.forEach((j) => { if (j.status === "failed") j.status = "queued"; });
   await runWorker(d2);                                      // retried, fails again
-  assert.equal(db2.t.telegram.length, 1, "one reminder, not one per failure");
-  assert.equal(db2.t.telegram[0].p_kind, "follow_up_due");
-  assert.match(db2.t.telegram[0].p_text, /^🔔 Follow-up needed — the AI's reply could not be delivered \(WhatsApp refused the message \(400\)\)\n👤 Aina · OSC-000001[\s\S]*💬 "Hello\?"[\s\S]*#\/inbox\?c=V1/);
+  assert.equal(db2.t.ai_tasks.length, 1, "one task, not one per failure");
+  assert.deepEqual([db2.t.ai_tasks[0].lead_id, db2.t.ai_tasks[0].title], ["L1", "Reply to the buyer: the AI's reply could not be delivered"]);
+  assert.match(db2.t.ai_tasks[0].source_key, /^undelivered:V1:\d{4}-\d\d-\d\d$/);
+  assert.match(db2.t.ai_tasks[0].details, /WhatsApp error: WhatsApp refused the message \(400\)[\s\S]*Buyer's last message .*"Hello\?"/);
+  assert.deepEqual(db2.t.telegram.map((x) => x.p_kind), ["task_reminder"], "announced as a follow-up task, once");
   assert.ok(!db2.t.telegram.some((x) => x.p_kind === "whatsapp_message"));
 });
 
@@ -510,7 +512,7 @@ test("12-hour follow-up is cancelled when a person replied, took over, the buyer
   }
 });
 
-test("12-hour follow-up: outside business hours it waits; after 24 hours only an approved template; otherwise a person is reminded on Telegram", async () => {
+test("12-hour follow-up: outside business hours it waits; after 24 hours only an approved template; otherwise a follow-up task is opened", async () => {
   const evening = quiet(); evening.ai_automation_jobs[0].run_at = "2026-10-28T11:00:00.000Z"; evening.__now = "2026-10-28T11:00:00.000Z";
   let db = memdb(evening), d = { ...deps(db), now: () => new Date("2026-10-28T11:00:00Z") }; // Wed 19:00 MYT, closed at 18:00
   await runWorker(d);
@@ -523,8 +525,9 @@ test("12-hour follow-up: outside business hours it waits; after 24 hours only an
   assert.equal(d.wa.sent.length, 0);
   assert.equal(db.t.ai_automation_jobs[0].status, "skipped");
   assert.match(db.t.ai_automation_jobs[0].reason, /no approved follow-up template/);
-  const tg = db.t.telegram.find((x) => x.p_kind === "follow_up_due");
-  assert.match(tg.p_text, /Follow-up needed — no reply for 30 h; more than 24 hours[\s\S]*Aina · OSC-000001[\s\S]*M MIRA[\s\S]*Nak tahu pasal loan LPPSA[\s\S]*#\/inbox\?c=V1/);
+  assert.equal(db.t.ai_tasks[0].title, "Follow up with the buyer: the automatic follow-up could not be sent");
+  assert.match(db.t.ai_tasks[0].details, /Reason: more than 24 hours[\s\S]*Nak tahu pasal loan LPPSA/);
+  assert.deepEqual(db.t.telegram.map((x) => x.p_kind), ["task_reminder"]);
 
   const w = late(); w.ai_message_templates = [{ id: "T9", name: "follow_up", lang: "ms", category: "utility", active: true, wa_status: "approved", wa_template_name: "follow_up_ms", body: "Hai {{1}}, masih berminat dengan {{2}}?", variables: ["name", "project"] }];
   db = memdb(w); d = deps(db);
@@ -535,29 +538,17 @@ test("12-hour follow-up: outside business hours it waits; after 24 hours only an
   db = memdb(quiet()); flags(db, { follow_ups: false }); d = deps(db);
   await runWorker(d);
   assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], ["skipped", "automatic follow-ups are switched off"]);
-  assert.match(db.t.telegram[0].p_text, /Follow-up needed/);
+  assert.match(db.t.telegram[0].p_text, /Follow-up task/);
 });
 
-test("Telegram follow-up reminder: sent when a person has not answered; not when someone replied or the AI answered", async () => {
-  const hw = (o = {}) => { const w = world({ ai_jobs: [], ...o }); w.ai_conversations[0].mode = "human"; w.ai_leads[0].ai_paused = true;
-    w.ai_messages[0].created_at = ago(70); w.ai_automation_jobs = [jobOf({ kind: "human_reminder", anchor_message_id: "M1" })]; return w; };
-  let db = memdb(hw()), d = deps(db);
+test("no 'waiting for your reply' alerts: an old reply-reminder job is closed without Telegram (Test D)", async () => {
+  const w = world({ ai_jobs: [] }); w.ai_conversations[0].mode = "human"; w.ai_leads[0].ai_paused = true;
+  w.ai_messages[0].created_at = ago(70); w.ai_automation_jobs = [jobOf({ kind: "human_reminder", anchor_message_id: "M1" })];
+  const db = memdb(w), d = deps(db);
   await runWorker(d);
-  assert.equal(db.t.ai_automation_jobs[0].status, "sent");
-  assert.equal(db.t.telegram.length, 1);
-  assert.match(db.t.telegram[0].p_text, /^🔔 Follow-up needed — the buyer is waiting for your reply\n👤 Aina · OSC-000001[\s\S]*🏠 M MIRA\n💬 "Salam, boleh info M Mira\?" — 1\.2 h ago\n📞 https:\/\/wa\.me\/60123456789/);
-  assert.equal(db.t.telegram[0].p_key, "human:M1", "one reminder per unanswered message");
-
-  const w = hw(); w.ai_messages.push({ id: "H1", conversation_id: "V1", direction: "outbound", sender_type: "human", body: "Hi", created_at: ago(10), status: "sent" });
-  db = memdb(w); d = deps(db);
-  await runWorker(d);
-  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason, (db.t.telegram || []).length], ["cancelled", "a person replied", 0]);
-
-  const w2 = hw(); w2.ai_conversations[0].mode = "ai"; w2.ai_leads[0].ai_paused = false;
-  w2.ai_messages.push({ id: "A1", conversation_id: "V1", direction: "outbound", sender_type: "ai", body: "Hai", created_at: ago(60), status: "delivered" });
-  db = memdb(w2); d = deps(db);
-  await runWorker(d);
-  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], ["cancelled", "the AI answered"]);
+  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], ["cancelled", "buyers waiting for a reply are no longer sent to Telegram"]);
+  assert.equal((db.t.telegram || []).length, 0);
+  assert.equal((db.t.ai_tasks || []).length, 0, "and no task: a buyer waiting for a reply is in the inbox");
 });
 
 const APPT = { id: "A1", lead_id: "L1", kind: "showroom_visit", status: "confirmed", project_id: "p1", start_at: new Date(NOW.getTime() + 24 * 3600e3).toISOString(), reminders: [], wa_reminders: true };
