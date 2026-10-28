@@ -108,6 +108,8 @@ export async function leads(el, params) {
   $$("tr[data-href]", el).forEach((tr) => { tr.onclick = (e) => { if (!e.target.closest("a")) location.hash = tr.dataset.href; }; tr.onkeydown = (e) => { if (e.key === "Enter") location.hash = tr.dataset.href; }; });
   const nb = $("#new", el);
   if (nb) nb.onclick = () => newLeadModal();
+  // quick add (top bar): open the form straight away
+  if (nb && params.get("new") === "1") { history.replaceState(null, "", "#/leads"); newLeadModal(); }
 }
 
 function newLeadModal() {

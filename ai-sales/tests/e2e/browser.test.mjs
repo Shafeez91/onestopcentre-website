@@ -327,6 +327,37 @@ test("property projects: 'What the AI knows' shows listing gaps, conflicts and p
 
 const toastSeen = (page, re) => page.waitForFunction((src) => [...document.querySelectorAll(".toast")].some((t) => new RegExp(src).test(t.textContent)), re.source);
 
+test("app shell: grouped menu, breadcrumb, collapsible rail remembered, global search, quick add and notifications", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.desktop);
+  try {
+    await page.goto(base + "/sales/#/lead/L1");
+    await page.waitForSelector("#view .page");
+    assert.deepEqual(await page.$$eval("#side .grp", (g) => g.map((x) => x.textContent)), ["Overview", "Sales & Clients", "AI & Knowledge", "Reporting", "Administration", "Website"]);
+    assert.match(await page.textContent("#crumbs"), /Sales & Clients\s*\/\s*Leads & CRM\s*\/\s*Lead/);
+    assert.equal(await page.getAttribute("[data-nav=leads]", "aria-current"), "page");
+    // collapse to icons; remembered after a reload
+    await page.click("#cbtn");
+    assert.ok(await page.$(".shell.collapsed"));
+    await page.reload();
+    await page.waitForSelector(".shell.collapsed #view .page");
+    // notifications: what needs a person, with links
+    await page.click("#bellbtn");
+    assert.match(await page.textContent("#bellmenu"), /workflow lead\(s\) need a person[\s\S]*appointment\(s\) to confirm/);
+    await page.keyboard.press("Escape");
+    assert.equal(await page.isVisible("#bellmenu"), false);
+    // global search goes to the leads list with the search filled in
+    await page.fill("#gq", "osc-000001");
+    await page.press("#gq", "Enter");
+    await page.waitForFunction(() => location.hash === "#/leads?q=osc-000001");
+    await page.waitForFunction(() => document.querySelector("#flt input[name=q]")?.value === "osc-000001");
+    // quick add: new lead form opens straight away
+    await page.click("#addbtn");
+    await page.click("#addmenu a[href='#/leads?new=1']");
+    await page.waitForSelector("dialog.modal #nl");
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("workflow page: board by stage, overdue shown, stage change and pause through the database functions; the old RMK link still works", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {
