@@ -38,6 +38,8 @@ export async function loadContext(db, { leadId = null, message = "", history = [
   const B = settings.business || {};
   const priceMaxMs = (B.price_max_age_days || 30) * DAY, invMaxMs = (B.inventory_max_age_hours || 72) * 36e5;
   const wa = clean(siteSettings?.[0]?.data?.wa).replace(/\D/g, "");
+  const L = siteSettings?.[0]?.data?.loan || {};
+  const websiteLoan = num(L.r) || num(L.m) ? { margin_pct: num(L.m) || 90, rate_pct: num(L.r) || 4.5, tenure_years: num(L.y) || 35 } : null;
 
   let lead = null, buyer = null, interests = [], appointments = [], aiPaused = false;
   if (leadId) {
@@ -132,7 +134,7 @@ export async function loadContext(db, { leadId = null, message = "", history = [
 
   const isFirstReply = !(history || []).some((h) => h.role === "assistant");
   return {
-    settings, objections: objections || [], lead, buyer, aiPaused, isFirstReply, businessWa: wa ? "https://wa.me/" + wa : null,
+    settings, objections: objections || [], lead, buyer, aiPaused, isFirstReply, websiteLoan, businessWa: wa ? "https://wa.me/" + wa : null,
     today: now.toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" }),
     projects, focus, promotions: promotions || [], knowledge,
     rules: {

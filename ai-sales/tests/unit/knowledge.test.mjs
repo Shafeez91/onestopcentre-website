@@ -189,3 +189,19 @@ test("layouts are merged from 'types' and 'layouts' like the website does", () =
   const s = projectSpecs({ n: "X", carpark: { bays: "2" }, types: [{ name: "Type A" }, { name: "Type B", carparks: "3" }] });
   assert.deepEqual(s.layouts.map((l) => l.car_parks), ["2", "3"], "a project-wide car park figure fills layouts without their own");
 });
+
+test("monthly instalment per layout matches the website's loan calculator and is answered without asking for income first", async () => {
+  const site = { settings: [{ data: { loan: { m: 100, r: 3.7, y: 35 } } }] };
+  const history = [intro, { role: "user", text: "M Aurora ada 3 bilik?" }, { role: "assistant", text: "Ada, M AURORA Type C dan Type D." }];
+  const reply = "Type C M AURORA (dari RM517,000): anggaran ansuran ~RM2,197 sebulan (100% pembiayaan, 3.7% setahun, 35 tahun), campur maintenance ~RM283 jadi ~RM2,480. Ini ilustrasi sahaja, bukan tawaran pinjaman 😊";
+  const llm = scripted(draft(reply, { intent: "instalment" }));
+  const r = await respond({ db: db(site), llm, message: "Type C berapa bulanan?", history, now: NOW, mode: "simulate" });
+  assert.equal(r.decision, "reply", JSON.stringify(r.violations));
+  const ctx = llm.calls[0].messages.at(-1).content;
+  // the website: Math.round(517000 × i / (1 − (1 + i)^−420)), i = 3.7 / 1200; maintenance 858 sqft × RM0.33
+  assert.match(ctx, /"project":"M AURORA","layout":"Type C","price_label":"INDICATIVE","price":517000,"bank":\{"financing_pct":100,"rate_pct":3.7,"tenure_years":35,"loan":517000,"monthly":2197\},"lppsa":\{"financing_pct":100,"tenure_years":35,"loan":517000,"monthly":2289,[^}]*"rules_verified":false\},"maintenance_monthly":283,"bank_monthly_with_maintenance":2480/);
+  assert.match(llm.calls[0].system, /answer at once from instalment_examples[\s\S]*Do not ask for the route, age or income before giving this/);
+  // a figure the engine did not produce is still refused
+  const bad = await respond({ db: db(site), llm: scripted(draft("Type C M AURORA anggaran ~RM2,050 sebulan (100% pembiayaan, 3.7% setahun, 35 tahun).")), message: "Type C berapa bulanan?", history, now: NOW, mode: "simulate" });
+  assert.notEqual(bad.decision, "reply");
+});

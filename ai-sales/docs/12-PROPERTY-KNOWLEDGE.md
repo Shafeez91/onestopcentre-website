@@ -91,3 +91,15 @@ Validator, guards, financing, takeover, appointments, follow-ups, WhatsApp and T
 ## Known limits
 - **Cross-project figures:** the business-rule checker matches RM figures across all projects. A missing maintenance fee answered with another project's figure would not be caught by the checker; the prompt forbids it.
 - **AI-generated area conclusion:** the website's AI-generated "area conclusion" text (`near.concl`) is not given to the AI.
+
+## Follow-up: monthly instalment per layout (28 Oct)
+- **Problem:** asked "Type C berapa bulanan?", the AI asked LPPSA or bank and then age and salary, instead of giving the figure the website's loan calculator shows.
+- **Causes:**
+  - The loan engine produced one example per project, for its **lowest price only**.
+  - Monthly figures may come only from the engine, so the AI had no Type C figure.
+  - The engine used its own bank rate (3.65%), not the website calculator's settings (100% financing, 3.7%, 35 years).
+- **Fix:**
+  - `instalmentIllustration()` in `sales/shared/finance.mjs`.
+  - `attachFinancing` builds `instalment_examples` for **every priced layout** of the project(s) in focus, using the website calculator's own settings (`settings.data.loan`). Each row has the LPPSA equivalent, the maintenance per month (size × psf) and the total.
+  - The prompt says to answer with these at once, as an illustration, and offer the eligibility check afterwards.
+- **Result:** M AURORA Type C (RM517,000) gives RM2,197 a month, the same as the website, plus RM283 maintenance, RM2,480 in total. The LPPSA figure is RM2,289.
