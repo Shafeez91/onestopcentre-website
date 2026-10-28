@@ -6,6 +6,7 @@
 //   indicativeAmounts   numbers (RM) the website shows (indicative only)
 //   hasFreshAvailability  true if some unit's status was verified within the freshness window
 //   hasActivePromotion  true if an approved, in-date promotion exists for the projects in scope
+//   knowledgeCoversPromotion  true if approved knowledge in the context describes a discount, rebate or free fees
 //   appointmentConfirmed  true only when the calendar has confirmed a slot
 //   isFirstReply        the AI's first message in this conversation (must disclose it is an AI)
 //   allowedUrls         exact URLs the AI may share; allowedHosts hostnames always allowed
@@ -44,7 +45,7 @@ function findAll(re, text) {
 
 const GUARANTEE = /(guarantee[ds]?|guaranteeing|dijamin|jaminan|menjamin|jamin|pasti\s+(lulus|untung|naik|dapat|approve)|confirm(ed)?\s+(lulus|approve[d]?|untung|naik)|sure\s+(get|to get|approve[d]?|lulus|profit)|definitely\s+(approved|get|increase|rise|profit)|100\s?%\s+(lulus|approved?|safe|selamat|untung|profit|dapat)|risk[-\s]?free|tanpa\s+risiko|confirm\s+boleh\s+dapat\s+loan)/i;
 const AVAILABILITY = /((unit|units|bilik|type|jenis|layout|pelan)[^.?!\n]{0,30}(masih ada|ada lagi|masih available|still available|available now|are available|is available|tersedia|belum habis)|\b(still|masih)\s+(available|ada unit|ada kosong)|\bunits? (left|remaining)\b|tinggal\s+\d+\s+unit)/i;
-const PROMOTION = /(cashback|cash back|rebate|rebat|diskaun|discount|percuma|free\s+(legal|spa|furniture|gift|hadiah|aircond|kitchen)|promo(tion|si)?|potongan harga|early bird)/i;
+export const PROMOTION = /(cashback|cash back|rebate|rebat|diskaun|discount|percuma|free\s+(legal|spa|furniture|gift|hadiah|aircond|kitchen)|promo(tion|si)?|potongan harga|early bird)/i;
 const PROMO_HEDGE = /(tertakluk|subject to|semak|check|sahkan|confirm with|perlu (di)?sahkan|need to confirm|tiada promosi|no (current |active )?promotion|not able to confirm|belum dapat sahkan|tidak dapat sahkan|syarat|terms)/i;
 const APPT_CONFIRM = /((appointment|temujanji|janji temu|booking|tempahan|slot|lawatan|visit|viewing)[^.?!\n]{0,40}(confirmed|disahkan|sudah (di)?sahkan|telah ditempah|dah book|berjaya ditempah|is booked|has been booked|telah dibuat)|\b(confirmed|disahkan)\b[^.?!\n]{0,30}(appointment|temujanji|slot|visit|lawatan|viewing))/i;
 const IMPERSONATION = /((i am|i'm|im)\s+(a\s+)?(human|real person|real agent|not (a |an )?(bot|ai|robot))|saya\s+(manusia|orang sebenar|bukan\s+(bot|ai|robot))|(saya|i)\s+(dah|sudah|telah|have|has|had)\s+(pernah\s+)?(lawat|melawat|visited|been to|pergi ke|tengok sendiri|seen)\s+((the|that|this|our|your|ke)\s+)?(showroom|projek|project|site|unit|tapak))/i;
@@ -83,7 +84,7 @@ export function validateReply(reply, ctx = {}) {
   if (!ctx.hasFreshAvailability) for (const m of findAll(AVAILABILITY, text)) if (!negated(text, m.index) && !CHECKING.test(sentenceAt(text, m.index))) add("unverified_availability", `"${m[0].trim()}" claims availability, but no unit status was verified recently.`);
 
   // 4) promotions need an approved, in-date promotion (or the reply must clearly say it needs confirming)
-  if (!ctx.hasActivePromotion && PROMOTION.test(text) && !PROMO_HEDGE.test(text)) add("unverified_promotion", "The reply mentions a promotion, but no approved, in-date promotion is on record.");
+  if (!ctx.hasActivePromotion && !ctx.knowledgeCoversPromotion && PROMOTION.test(text) && !PROMO_HEDGE.test(text)) add("unverified_promotion", "The reply mentions a promotion, but no approved, in-date promotion is on record.");
 
   // 5) appointments are only "confirmed" after the calendar confirms
   if (!ctx.appointmentConfirmed) for (const m of findAll(APPT_CONFIRM, text)) {

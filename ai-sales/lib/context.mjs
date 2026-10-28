@@ -1,6 +1,6 @@
 // Builds the verified context for one buyer turn, plus the allow-lists the validator checks the reply against.
 // `db` is a small adapter: { get(path) -> rows[], rpc(name, args) -> result } over PostgREST.
-import { extractAmounts } from "../../sales/shared/validator.mjs";
+import { extractAmounts, PROMOTION } from "../../sales/shared/validator.mjs";
 import { projectSpecs, resolveFocus, coverage, conflicts as findConflicts, numOf } from "../../sales/shared/listing.mjs";
 
 const SITE = "https://onestopcentreproperty.com/";
@@ -108,8 +108,24 @@ export async function loadContext(db, { leadId = null, message = "", history = [
     };
   });
 
-  const q = searchQuery(message);
-  const knowledge = q ? ((await db.rpc("ai_search_knowledge", { q, p_project: null, only_approved: true, max_rows: 6 }).catch(() => [])) || []) : [];
+  // Approved knowledge: the general entries and those of the project(s) in focus are always given (up to a size
+  // budget), so a policy the staff wrote down is found however the buyer words the question; the full-text
+  // search adds matching entries beyond that (e.g. for other projects, or when the knowledge base grows large).
+  const KB_BUDGET = 8000;
+  const [chunks, faqs] = await Promise.all([
+    db.get("ai_knowledge_chunks?approved=eq.true&select=id,project_id,title,content&order=updated_at.desc&limit=60").catch(() => []),
+    db.get("ai_faqs?approved=eq.true&select=id,project_id,question,answer&order=updated_at.desc&limit=60").catch(() => []),
+  ]);
+  const inScope = (k) => !k.project_id || focus.ids.includes(k.project_id);
+  const knowledge = [];
+  let used = 0;
+  for (const k of [...(faqs || []).map((f) => ({ kind: "faq", id: f.id, project_id: f.project_id, title: f.question, content: f.answer })), ...(chunks || []).map((c) => ({ kind: "chunk", ...c }))]) {
+    if (!inScope(k) || used + String(k.content || "").length > KB_BUDGET) continue;
+    knowledge.push(k); used += String(k.content || "").length;
+  }
+  const q = searchQuery([...(history || []).filter((h) => h.role !== "assistant").slice(-1).map((h) => h.text), message].join(" "));
+  const found = q ? ((await db.rpc("ai_search_knowledge", { q, p_project: null, only_approved: true, max_rows: 6 }).catch(() => [])) || []) : [];
+  for (const k of found) if (!knowledge.some((x) => x.id === k.id)) knowledge.push(k);
 
   const conversationText = [...(history || []).filter((h) => h.role !== "assistant").map((h) => h.text), message].join("\n");
   const allowed = new Set(), indicative = new Set();
@@ -141,6 +157,8 @@ export async function loadContext(db, { leadId = null, message = "", history = [
       allowedAmounts: [...allowed], indicativeAmounts: [...indicative],
       hasFreshAvailability: projects.some((p) => p.freshAvailable > 0),
       hasActivePromotion: (promotions || []).length > 0,
+      // a discount, rebate or free legal fees described in approved knowledge may be mentioned like a promotion
+      knowledgeCoversPromotion: knowledge.some((k) => PROMOTION.test(`${k.title} ${k.content}`)),
       appointmentConfirmed: appointments.some((a) => a.status === "confirmed" && a.start_at && new Date(a.start_at) > now),
       isFirstReply, allowedUrls: [...allowedUrls], allowedHosts: ["onestopcentreproperty.com"],
       maxChars: settings.ai?.max_reply_chars || 700,

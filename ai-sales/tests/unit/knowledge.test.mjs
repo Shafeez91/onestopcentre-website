@@ -205,3 +205,26 @@ test("monthly instalment per layout matches the website's loan calculator and is
   const bad = await respond({ db: db(site), llm: scripted(draft("Type C M AURORA anggaran ~RM2,050 sebulan (100% pembiayaan, 3.7% setahun, 35 tahun).")), message: "Type C berapa bulanan?", history, now: NOW, mode: "simulate" });
   assert.notEqual(bad.decision, "reply");
 });
+
+test("approved knowledge (the staff's 'SALES PACKAGE & COST' entry) is always given and answered, however the buyer words it", async () => {
+  const entry = { id: "k1", project_id: null, approved: true, title: "SALES PACKAGE & COST", content: "Legal Fees:\n-SPA & LA Legal fees free by MahSing.\n-Only MOT Stamp duty need to borne by purchaser.\n\nBumi Discount: \n-5% (For property in KL, usually)\n-7%-10% (For property in Selangor, usually)\n\n-Fyi price in website is the price after discount & rebates. Keep this for your knowledge only." };
+  const other = { id: "k2", project_id: ID["M NOVA"], approved: true, title: "M NOVA note", content: "Only for M NOVA." };
+  const draftEntry = { id: "k3", project_id: null, approved: false, title: "Draft", content: "Not approved yet." };
+  const kb = { ai_knowledge_chunks: [entry, other, draftEntry].filter((k) => k.approved) };   // the query asks for approved only
+  const history = [intro, { role: "user", text: "M Aurora 3 bilik ada?" }, { role: "assistant", text: "Ada, M AURORA Type C dan D." }];
+  // Malay wording that a word search on the English entry would miss
+  const { ctx, j } = await ctxJson({ message: "Diskaun bumi ada?", history }, kb);
+  assert.deepEqual(j.knowledge.map((k) => k.title), ["SALES PACKAGE & COST"], "general entry given; another project's entry left out");
+  assert.equal(ctx.rules.knowledgeCoversPromotion, true);
+  const sys = buildSystemPrompt({}, []);
+  assert.match(sys, /knowledge entries are the agency's own approved policies/);
+  assert.match(sys, /follow those notes and never quote them/);
+  // the answer from the entry is sent; it is not blocked as an "unverified promotion" nor handed over
+  const reply = "Ada Bang Zan 😊 Untuk M AURORA (KL), Bumi discount biasanya 5%. Legal fees SPA & LA pula free oleh Mah Sing, cuma duti setem MOT ditanggung pembeli.";
+  const r = await respond({ db: db(kb), llm: scripted(draft(reply, { intent: "promotion" })), message: "Diskaun bumi ada?", history, now: NOW, mode: "simulate" });
+  assert.equal(r.decision, "reply", JSON.stringify(r.violations));
+  // without the entry, the same unqualified claim is still blocked
+  const r2 = await respond({ db: db(), llm: scripted(draft(reply, { intent: "promotion" })), message: "Diskaun bumi ada?", history, now: NOW, mode: "simulate" });
+  assert.notEqual(r2.decision, "reply");
+  assert.equal(r2.attempts[0].violations[0].code, "unverified_promotion");
+});
