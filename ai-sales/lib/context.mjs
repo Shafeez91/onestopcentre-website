@@ -2,7 +2,7 @@
 // `db` is a small adapter: { get(path) -> rows[], rpc(name, args) -> result } over PostgREST.
 import { extractAmounts, PROMOTION } from "../../sales/shared/validator.mjs";
 import { projectSpecs, resolveFocus, coverage, conflicts as findConflicts, numOf } from "../../sales/shared/listing.mjs";
-import { RMK_STAGE, rmkNext } from "../../sales/shared/rmk.mjs";
+import { workflowContext } from "./workflows.mjs";
 
 const SITE = "https://onestopcentreproperty.com/";
 const DAY = 864e5;
@@ -42,21 +42,14 @@ export async function loadContext(db, { leadId = null, message = "", history = [
   const L = siteSettings?.[0]?.data?.loan || {};
   const websiteLoan = num(L.r) || num(L.m) ? { margin_pct: num(L.m) || 90, rate_pct: num(L.r) || 4.5, tenure_years: num(L.y) || 35 } : null;
 
-  let lead = null, buyer = null, interests = [], appointments = [], aiPaused = false, rmk = null;
+  let lead = null, buyer = null, interests = [], appointments = [], aiPaused = false, workflows = [], workflowOffers = [];
   if (leadId) {
     const rows = await db.get(`ai_leads?id=eq.${enc(leadId)}&select=*,contact:ai_contacts(full_name,salutation,preferred_language,phone_e164)`);
     const l = rows[0];
     if (l) {
       interests = (await db.get(`ai_lead_interests?lead_id=eq.${enc(leadId)}&select=project_id,interest`)) || [];
       appointments = (await db.get(`ai_appointments?lead_id=eq.${enc(leadId)}&status=in.(pending_confirmation,confirmed,rescheduled)&select=id,kind,status,start_at,preferred_text,project_id`)) || [];
-      const rp = (await db.get(`ai_rmk_pipeline?lead_id=eq.${enc(leadId)}&select=stage,status,stage_changed_at,history`).catch(() => []))?.[0];
-      if (rp) {
-        const nxt = rmkNext(rp.stage), lastMove = [...(rp.history || [])].reverse().find((h) => h.from);
-        rmk = { stage: rp.stage, stage_label: RMK_STAGE[rp.stage]?.label, automation: rp.status, since: rp.stage_changed_at,
-          current_step: rp.stage === "all_signed" ? null : { en: RMK_STAGE[rp.stage].step_en, ms: RMK_STAGE[rp.stage].step_ms, reply_keyword_when_done: RMK_STAGE[rp.stage].keyword },
-          next_stage: nxt ? RMK_STAGE[nxt].label : null,
-          last_change: lastMove ? { from: RMK_STAGE[lastMove.from]?.label, to: RMK_STAGE[lastMove.to]?.label, at: lastMove.at, via: lastMove.via } : null };
-      }
+      ({ workflows, offers: workflowOffers } = await workflowContext(db, leadId).catch(() => ({ workflows: [], offers: [] })));
       aiPaused = !!l.ai_paused;
       buyer = { name: clean(l.contact?.full_name) || null, salutation: clean(l.contact?.salutation) || null, preferred_language: l.contact?.preferred_language || null };
       lead = {
@@ -159,7 +152,7 @@ export async function loadContext(db, { leadId = null, message = "", history = [
 
   const isFirstReply = !(history || []).some((h) => h.role === "assistant");
   return {
-    settings, objections: objections || [], lead, buyer, aiPaused, isFirstReply, websiteLoan, rmk, businessWa: wa ? "https://wa.me/" + wa : null,
+    settings, objections: objections || [], lead, buyer, aiPaused, isFirstReply, websiteLoan, workflows, workflowOffers, businessWa: wa ? "https://wa.me/" + wa : null,
     today: now.toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" }),
     projects, focus, promotions: promotions || [], knowledge,
     rules: {

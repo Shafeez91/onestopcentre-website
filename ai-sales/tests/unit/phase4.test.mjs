@@ -711,38 +711,54 @@ test("cancelling deletes the Google Calendar event; an event already gone counts
   status = 403; await assert.rejects(cancelEvent(cfg, "EV1", { fetchImpl }), (e) => e.kind === "config" && /403/.test(e.message));
 });
 
-/* ================================================================ RMK pipeline (Residensi Metropolitan Kepong) */
-const RMK_CFG = { enabled: true, project_id: null, pause_if_active_hours: 6, stages: {
-  to_book: { follow_up_hours: 24, max_follow_ups: 2, template: "rmk_to_book", message_ms: "Hai {name}, tempahan unit RMK? Balas *DONE BOOKED* bila dah booking.", message_en: "Hi {name}, RMK booking? Reply *DONE BOOKED* once booked." },
-  to_portal: { follow_up_hours: 24, max_follow_ups: 3, template: "", message_ms: "Hai {name}, daftar portal RUMAWIP. Balas *DONE PORTAL*.", message_en: "" } } };
-const rmkWorld = ({ stage = "to_book", seq = 1, enrolled = true, cfg = {}, ...o } = {}) => {
+/* ================================================================ follow-up workflows (RMK as the example) */
+// the workflow and its stages come from the database (migration 15); nothing about RMK is in the code
+const WF = { id: "WF1", key: "rmk", name: "RMK — Residensi Metropolitan Kepong", project_id: null, status: "active", sending_enabled: true, pause_if_active_hours: 6,
+  entry: { ai_confirm: true, exclusive_project: true }, ai_instructions: "Ask whether RMK means Residensi Metropolitan Kepong." };
+const WF_STAGES = [
+  { key: "new", position: 10, name: "New RMK enquiry", step_en: "Confirm interest in RMK", keywords: ["RMK"], follow_up_hours: 0, max_follow_ups: 0 },
+  { key: "to_book", position: 20, name: "To book unit", step_en: "Book a unit", step_ms: "Buat tempahan unit", keywords: ["DONE BOOKED", "DONE BOOKING"], follow_up_hours: 24, max_follow_ups: 2, template: "rmk_to_book",
+    message_ms: "Hai {name}, tempahan unit RMK? Balas *DONE BOOKED* bila dah booking.", message_en: "Hi {{name}}, {{current_stage}} for RMK. Reply *{{keyword}}* once booked." },
+  { key: "to_portal", position: 30, name: "To apply portal (RUMAWIP)", keywords: ["DONE PORTAL"], follow_up_hours: 24, max_follow_ups: 3, message_ms: "Hai {{name}}, daftar portal RUMAWIP. Balas *DONE PORTAL*." },
+  { key: "all_signed", position: 60, name: "All signed", keywords: [], is_final: true },
+].map((x) => ({ id: "S-" + x.key, workflow_id: "WF1", active: true, archived_at: null, escalate_after_max: true, ...x }));
+const wfWorld = ({ stage = "to_book", seq = 1, enrolled = true, wf = {}, ...o } = {}) => {
   const w = quiet(o);
-  w.ai_settings[0].rmk = { ...RMK_CFG, ...cfg };
-  w.ai_rmk_pipeline = enrolled ? [{ lead_id: "L1", stage: "to_book", status: "active", history: [] }] : [];
-  w.ai_automation_jobs = [jobOf({ kind: "rmk_follow_up", stage, seq })];
+  w.ai_workflows = [{ ...WF, ...wf }];
+  w.ai_workflow_stages = structuredClone(WF_STAGES);
+  w.ai_workflow_leads = enrolled ? [{ id: "E1", workflow_id: "WF1", lead_id: "L1", stage: "to_book", status: "active", history: [] }] : [];
+  w.ai_automation_jobs = [jobOf({ kind: "workflow_follow_up", workflow_id: "WF1", stage, seq })];
   return w;
 };
-const rmkRpcs = { ai_rmk_advance: (a, t) => { (t.rmk_calls ||= []).push(["advance", a]); return true; }, ai_rmk_enroll: (a, t) => { (t.rmk_calls ||= []).push(["enroll", a]); return true; } };
+const wfRpcs = { ai_wf_advance: (a, t) => { (t.wf_calls ||= []).push(["advance", a]); return true; }, ai_wf_enroll: (a, t) => { (t.wf_calls ||= []).push(["enroll", a]); return true; } };
 
-test("RMK reminder: the stage message is sent with the buyer's name, the next reminder is scheduled, nothing on Telegram", async () => {
-  const db = memdb(rmkWorld()), d = deps(db);
+test("workflow reminder: the stage message from the database is sent with the buyer's name, the next one is scheduled, nothing on Telegram", async () => {
+  const db = memdb(wfWorld()), d = deps(db);
   await runWorker(d);
   assert.equal(db.t.ai_automation_jobs[0].status, "sent", JSON.stringify(db.t.ai_automation_jobs[0]));
   assert.deepEqual(d.wa.sent.map((x) => x.msg.text), ["Hai Aina, tempahan unit RMK? Balas *DONE BOOKED* bila dah booking."]);
   assert.deepEqual([db.t.ai_messages.at(-1).sender_type, db.t.ai_messages.at(-1).purpose], ["system", "service"]);
   const next = db.t.ai_automation_jobs.find((j) => j.seq === 2);
-  assert.deepEqual([next.kind, next.stage, next.run_at], ["rmk_follow_up", "to_book", new Date(NOW.getTime() + 24 * 3600e3).toISOString()]);
+  assert.deepEqual([next.kind, next.workflow_id, next.stage, next.run_at], ["workflow_follow_up", "WF1", "to_book", new Date(NOW.getTime() + 24 * 3600e3).toISOString()]);
   assert.equal(d.llm.calls.length, 0, "fixed message, no AI call");
   assert.equal((db.t.telegram || []).length, 0);
+  // an English-speaking buyer gets the English text with {{current_stage}} and {{keyword}} filled in
+  const w = wfWorld(); w.ai_contacts[0].preferred_language = "en";
+  const db2 = memdb(w), d2 = deps(db2);
+  await runWorker(d2);
+  assert.deepEqual(d2.wa.sent.map((x) => x.msg.text), ["Hi Aina, To book unit for RMK. Reply *DONE BOOKED* once booked."]);
 });
 
-test("RMK isolation: re-checked before sending — not enrolled, other stage, other project, paused or switched off: nothing is sent", async () => {
+test("workflow isolation: re-checked before sending — not enrolled, other stage, other project, paused, switched off or archived: nothing is sent", async () => {
   const cases = [
-    [rmkWorld({ enrolled: false }), "cancelled", "lead is not in the RMK pipeline"],
-    [rmkWorld({ stage: "to_portal" }), "cancelled", "stage changed"],
-    [(() => { const w = rmkWorld({ cfg: { project_id: "p-rmk" } }); w.ai_leads[0].primary_project_id = "p1"; return w; })(), "cancelled", "the lead's project is no longer RMK"],
-    [(() => { const w = rmkWorld(); w.ai_rmk_pipeline[0].status = "paused"; return w; })(), "cancelled", "RMK automation is paused"],
-    [rmkWorld({ cfg: { enabled: false } }), "skipped", "RMK follow-ups are switched off"],
+    [wfWorld({ enrolled: false }), "cancelled", "lead is not in the workflow"],
+    [wfWorld({ stage: "to_portal" }), "cancelled", "stage changed"],
+    [(() => { const w = wfWorld({ wf: { project_id: "p-rmk" } }); w.ai_leads[0].primary_project_id = "p1"; return w; })(), "cancelled", "the lead's project is no longer this workflow's"],
+    [(() => { const w = wfWorld(); w.ai_workflow_leads[0].status = "paused"; return w; })(), "cancelled", "automation is paused"],
+    [wfWorld({ wf: { sending_enabled: false } }), "skipped", "RMK — Residensi Metropolitan Kepong follow-ups are switched off"],
+    [wfWorld({ wf: { status: "archived" } }), "cancelled", "workflow archived or removed"],
+    [(() => { const w = wfWorld(); w.ai_workflow_stages[1].active = false; return w; })(), "cancelled", "the stage no longer sends reminders"],
+    [(() => { const w = wfWorld(); w.ai_automation_jobs[0].kind = "rmk_follow_up"; return w; })(), "cancelled", "replaced by follow-up workflow reminders"],
   ];
   for (const [w, status, reason] of cases) {
     const db = memdb(w), d = deps(db);
@@ -750,77 +766,103 @@ test("RMK isolation: re-checked before sending — not enrolled, other stage, ot
     assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], [status, reason]);
     assert.equal(d.wa.sent.length, 0, reason);
   }
-  // a non-RMK buyer's 12-hour follow-up is untouched; an RMK buyer's is left to the RMK reminders
+  // a buyer in no workflow gets the 12-hour follow-up; a buyer at a stage with reminders is left to the workflow
   let db = memdb(quiet()), d = deps(db);
   await runWorker(d);
   assert.equal(db.t.ai_automation_jobs[0].status, "sent");
-  const w = quiet(); w.ai_rmk_pipeline = [{ lead_id: "L1", stage: "to_portal", status: "active" }];
-  db = memdb(w); d = deps(db);
+  const inWf = (stage) => { const w = quiet(); w.ai_workflows = [WF]; w.ai_workflow_stages = structuredClone(WF_STAGES); w.ai_workflow_leads = [{ workflow_id: "WF1", lead_id: "L1", stage, status: "active" }]; return w; };
+  db = memdb(inWf("to_portal")); d = deps(db);
   await runWorker(d);
-  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], ["skipped", "the RMK pipeline follows up this buyer"]);
+  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], ["skipped", "a follow-up workflow follows up this buyer"]);
+  db = memdb(inWf("new")); d = deps(db);
+  await runWorker(d);
+  assert.equal(db.t.ai_automation_jobs[0].status, "sent", "a stage without reminders leaves the 12-hour follow-up on");
 });
 
-test("RMK reminder waits while the buyer is talking; outside 24 h only a template, else a follow-up task; after the last reminder a person takes over", async () => {
+test("workflow reminder waits while the buyer is talking; outside 24 h only a template, else a follow-up task; after the last reminder a person takes over", async () => {
   // the buyer wrote an hour ago: wait until 6 h after that message
-  let w = rmkWorld(); w.ai_messages.push({ id: "M5", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Ok nanti saya booking", created_at: ago(60) });
+  let w = wfWorld(); w.ai_messages.push({ id: "M5", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Ok nanti saya booking", created_at: ago(60) });
   let db = memdb(w), d = deps(db);
   await runWorker(d);
   assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].run_at], ["scheduled", new Date(NOW.getTime() + 5 * 3600e3).toISOString()]);
   assert.equal(d.wa.sent.length, 0);
   // 30 h since the buyer wrote, no approved template: a follow-up task, and the lead is marked for a person
-  const late = () => { const x = rmkWorld(); x.ai_conversations[0].last_inbound_at = ago(30 * 60); x.ai_messages.forEach((m) => { m.created_at = ago(30 * 60); }); return x; };
+  const late = () => { const x = wfWorld(); x.ai_conversations[0].last_inbound_at = ago(30 * 60); x.ai_messages.forEach((m) => { m.created_at = ago(30 * 60); }); return x; };
   db = memdb(late()); d = deps(db);
   await runWorker(d);
   assert.equal(d.wa.sent.length, 0);
-  assert.match(db.t.ai_tasks[0].title, /^RMK: message Aina about "To book unit"/);
-  assert.equal(db.t.ai_tasks[0].source_key.split(":")[0], "rmk");
-  assert.equal(db.t.ai_rmk_pipeline[0].status, "human");
+  assert.match(db.t.ai_tasks[0].title, /^RMK — Residensi Metropolitan Kepong: message Aina about "To book unit"/);
+  assert.equal(db.t.ai_tasks[0].source_key.split(":")[0], "wf-rmk");
+  assert.equal(db.t.ai_workflow_leads[0].status, "human");
   // with the approved template it is sent
   w = late(); w.ai_message_templates = [{ id: "T1", name: "rmk_to_book", lang: "ms", category: "utility", active: true, wa_status: "approved", wa_template_name: "rmk_to_book_ms", body: "Hai {{1}}, peringatan tempahan RMK.", variables: ["name"] }];
   db = memdb(w); d = deps(db);
   await runWorker(d);
   assert.deepEqual(d.wa.sent[0].msg, { template: { name: "rmk_to_book_ms", lang: "ms", params: ["Aina"] } });
-  // a website RMK lead with no WhatsApp chat yet: a person contacts them
-  w = rmkWorld(); w.ai_conversations = []; w.ai_automation_jobs[0].conversation_id = null; w.ai_contacts[0].full_name = "Web Buyer";
+  // a website lead with no WhatsApp chat yet: a person contacts them
+  w = wfWorld(); w.ai_conversations = []; w.ai_automation_jobs[0].conversation_id = null; w.ai_contacts[0].full_name = "Web Buyer";
   db = memdb(w); d = deps(db);
   await runWorker(d);
   assert.equal(d.wa.sent.length, 0);
-  assert.match(db.t.ai_tasks[0].title, /^RMK: contact the buyer about "To book unit" \(no WhatsApp conversation yet\)/);
-  // the check after the last reminder: no progress, a person takes over
-  db = memdb(rmkWorld({ seq: 3 })); d = deps(db);
+  assert.match(db.t.ai_tasks[0].title, /: contact the buyer about "To book unit" \(no WhatsApp conversation yet\)/);
+  // the check after the last reminder: no progress, a person takes over — unless the stage says not to
+  db = memdb(wfWorld({ seq: 3 })); d = deps(db);
   await runWorker(d);
   assert.equal(d.wa.sent.length, 0);
-  assert.match(db.t.ai_tasks[0].title, /^RMK: Aina still at "To book unit" after 2 reminders/);
-  assert.deepEqual([db.t.ai_rmk_pipeline[0].status, db.t.ai_rmk_pipeline[0].status_reason], ["human", "no progress after 2 reminders"]);
+  assert.match(db.t.ai_tasks[0].title, /: Aina still at "To book unit" after 2 reminders/);
+  assert.deepEqual([db.t.ai_workflow_leads[0].status, db.t.ai_workflow_leads[0].status_reason], ["human", "no progress after 2 reminders"]);
+  w = wfWorld({ seq: 3 }); w.ai_workflow_stages[1].escalate_after_max = false;
+  db = memdb(w); d = deps(db);
+  await runWorker(d);
+  assert.equal((db.t.ai_tasks || []).length, 0);
+  assert.equal(db.t.ai_workflow_leads[0].status, "active");
 });
 
-test("RMK and the AI: the buyer's own words move them on one stage (only the current one); a confirmed enquiry enrols them", async () => {
-  const run = async (rmk, pipeline) => {
-    const w = world(); w.ai_rmk_pipeline = pipeline ? [{ lead_id: "L1", stage: pipeline, status: "active", history: [] }] : [];
+test("workflows and the AI: the buyer's own words move them on one stage (only the current one); a confirmed offer enrols them", async () => {
+  const run = async (workflow, stage) => {
+    const w = world(); w.ai_workflows = [WF]; w.ai_workflow_stages = structuredClone(WF_STAGES);
+    w.ai_workflow_leads = stage ? [{ workflow_id: "WF1", lead_id: "L1", stage, status: "active", history: [] }] : [];
     w.ai_messages[0].body = "Dah booking semalam";
-    const db = memdb(w, rmkRpcs), d = deps(db, { llm: llmOf(draft({ reply: "Hai! Saya pembantu AI One Stop Centre. Tahniah, booking direkod!", rmk })) });
+    const db = memdb(w, wfRpcs), d = deps(db, { llm: llmOf(draft({ reply: "Hai! Saya pembantu AI One Stop Centre. Tahniah, booking direkod!", workflow })) });
     await runWorker(d);
-    return { calls: db.t.rmk_calls || [], ctx: d.llm.calls[0].messages.at(-1).content };
+    return { calls: db.t.wf_calls || [], ctx: d.llm.calls[0].messages.at(-1).content };
   };
-  let r = await run({ interest: "", stage_done: "to_book" }, "to_book");
-  assert.deepEqual(r.calls, [["advance", { p_lead: "L1", p_from: "to_book", p_by: "ai", p_via: "ai" }]]);
-  assert.match(r.ctx, /"rmk":\{"stage":"to_book","stage_label":"To book unit","automation":"active"[\s\S]*"reply_keyword_when_done":"DONE BOOKED"/);
-  r = await run({ interest: "", stage_done: "to_portal" }, "to_book");
+  let r = await run({ key: "rmk", interest: "", stage_done: "to_book" }, "to_book");
+  assert.deepEqual(r.calls, [["advance", { p_wf: "WF1", p_lead: "L1", p_from: "to_book", p_by: "ai", p_via: "ai" }]]);
+  assert.match(r.ctx, /"workflows":\[\{"workflow":"rmk","name":"RMK — Residensi Metropolitan Kepong"[\s\S]*"stage":"to_book","stage_label":"To book unit","automation":"active"[\s\S]*"reply_keyword_when_done":"DONE BOOKED"/);
+  assert.doesNotMatch(r.ctx, /"workflow_offers"/, "not offered a workflow they are in");
+  r = await run({ key: "rmk", interest: "", stage_done: "to_portal" }, "to_book");
   assert.deepEqual(r.calls, [], "a different step does not move the buyer");
-  r = await run({ interest: "confirmed", stage_done: "" }, null);
-  assert.deepEqual(r.calls, [["enroll", { p_lead: "L1", p_source: "whatsapp", p_by: "ai" }]]);
-  r = await run({ interest: "", stage_done: "" }, null);
+  r = await run({ key: "other", interest: "", stage_done: "to_book" }, "to_book");
+  assert.deepEqual(r.calls, [], "another workflow's key does not move the buyer");
+  r = await run({ key: "rmk", interest: "confirmed", stage_done: "" }, null);
+  assert.deepEqual(r.calls, [["enroll", { p_wf: "WF1", p_lead: "L1", p_source: "whatsapp", p_by: "ai" }]]);
+  assert.match(r.ctx, /"workflow_offers":\[\{"workflow":"rmk"[\s\S]*"guidance":"Ask whether RMK means/);
+  r = await run({ key: "nope", interest: "confirmed", stage_done: "" }, null);
+  assert.deepEqual(r.calls, [], "only an offered workflow can be joined");
+  r = await run({ key: "", interest: "", stage_done: "" }, null);
   assert.deepEqual(r.calls, []);
-  assert.doesNotMatch(r.ctx, /"rmk":\{/, "no RMK context for buyers outside the pipeline");
+  assert.doesNotMatch(r.ctx, /"workflows":\[/, "no workflow context for buyers outside one");
 });
 
-test("RMK ad recognition: an ad naming RMK or Residensi Metropolitan Kepong, not other projects", async () => {
-  const { isRmkAd, rmkNext, rmkSettings } = await import("../../../sales/shared/rmk.mjs");
-  assert.equal(isRmkAd({ headline: "RMK — Residensi Metropolitan Kepong", source_url: "https://fb.me/x" }), true);
-  assert.equal(isRmkAd({ body: "Residensi Metropolitan  Kepong dari RM300k" }), true);
-  assert.equal(isRmkAd({ headline: "M MIRA Wangsa Maju" }), false);
-  assert.equal(isRmkAd({ headline: "Promosi FARMKIT" }), false);
-  assert.equal(isRmkAd(null), false);
-  assert.deepEqual(["new", "to_book", "to_portal", "to_submit_loan", "to_sign", "all_signed"].map(rmkNext), ["to_book", "to_portal", "to_submit_loan", "to_sign", "all_signed", null]);
-  assert.equal(rmkSettings({}).enabled, false, "off unless switched on");
+test("workflow helpers: next stage, messages with variables, builder validation", async () => {
+  const { nextStage, fillMessage, messageVars, validateWorkflow, normKeyword, unknownVariables } = await import("../../../sales/shared/workflow.mjs");
+  const st = structuredClone(WF_STAGES);
+  assert.deepEqual(["new", "to_book", "to_portal", "all_signed"].map((k) => nextStage(st, k)?.key ?? null), ["to_book", "to_portal", "all_signed", null]);
+  st[2].active = false;
+  assert.equal(nextStage(st, "to_book").key, "all_signed", "inactive stages are skipped");
+  st[0].next_stage_key = "to_portal"; st[2].active = true;
+  assert.equal(nextStage(st, "new").key, "to_portal", "an explicit next stage wins");
+  const v = messageVars({ name: "", lang: "ms", projectName: "Residensi Metropolitan Kepong", stages: WF_STAGES, stageKey: "to_book" });
+  assert.equal(fillMessage("Hai {{name}} / {name}: {{current_stage}} → {{next_stage}} di {{project_name}}, balas {{keyword}} {{other}}", v),
+    "Hai tuan/puan / tuan/puan: To book unit → To apply portal (RUMAWIP) di Residensi Metropolitan Kepong, balas DONE BOOKED {{other}}");
+  assert.deepEqual(unknownVariables("Hi {{name}} {{other}}"), ["other"]);
+  assert.equal(normKeyword(" done, Booked! "), "DONE BOOKED");
+  const good = { key: "x1", name: "X", pause_if_active_hours: 6, stages: [{ key: "a", name: "A", keywords: ["DONE A"] }, { key: "z", name: "Z", is_final: true }] };
+  assert.deepEqual(validateWorkflow(good), []);
+  assert.match(validateWorkflow({ ...good, stages: [good.stages[0], { ...good.stages[1], is_final: false }] }).join(), /final/);
+  assert.match(validateWorkflow({ ...good, stages: [good.stages[0], { ...good.stages[1], keywords: ["done a!"] }] }).join(), /used by/);
+  assert.match(validateWorkflow({ ...good, stages: [{ ...good.stages[0], follow_up_hours: 24, max_follow_ups: 2 }, good.stages[1]] }).join(), /write a reminder message/);
+  assert.match(validateWorkflow({ ...good, stages: [{ ...good.stages[0], next_stage_key: "gone" }, good.stages[1]] }).join(), /next stage/);
+  assert.match(validateWorkflow({ ...good, stages: [{ ...good.stages[0], message_ms: "Hai {{nama}}" }, good.stages[1]] }).join(), /unknown placeholder/);
 });

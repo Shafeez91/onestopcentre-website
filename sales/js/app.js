@@ -4,23 +4,25 @@ import * as crm from "./crm.js";
 import * as kb from "./knowledge.js";
 import * as adm from "./admin.js";
 import * as ait from "./aitest.js";
-import * as rmkp from "./rmk.js";
+import * as wfp from "./workflows.js";
 
 const NAV = [
-  ["Sales", [["overview", "Overview", "◎"], ["inbox", "WhatsApp inbox", "✉"], ["ai-test", "AI test console", "✦"], ["leads", "Leads & CRM", "☺"], ["pipeline", "Pipeline", "▤"], ["appointments", "Appointments", "◷"], ["handover", "Handover queue", "⚑"], ["rmk", "RMK pipeline", "◆"]]],
+  ["Sales", [["overview", "Overview", "◎"], ["inbox", "WhatsApp inbox", "✉"], ["ai-test", "AI test console", "✦"], ["leads", "Leads & CRM", "☺"], ["pipeline", "Pipeline", "▤"], ["appointments", "Appointments", "◷"], ["handover", "Handover queue", "⚑"], ["workflows", "Follow-up workflows", "◆"]]],
   ["Knowledge", [["properties", "Property projects", "⌂"], ["knowledge", "Knowledge base", "❏"], ["templates", "Templates & objections", "❝"]]],
   ["Automation", [["followups", "Follow-up automation", "↻"], ["campaigns", "Campaigns", "◈"], ["reports", "Reports", "▥"]]],
   ["Admin", [["settings", "AI agent settings", "⚙"], ["team", "Team & permissions", "⚇"], ["integrations", "Integrations", "⇄"], ["audit", "Consent, security & audit", "⛨"]]],
 ];
 const ROUTES = {
   overview: (el) => crm.overview(el), inbox: (el, p) => crm.inbox(el, p), leads: (el, p) => crm.leads(el, p), lead: (el, p, id) => crm.leadDetail(el, id),
-  "ai-test": (el, p) => ait.aitest(el, p), rmk: (el, p) => rmkp.rmk(el, p),
+  "ai-test": (el, p) => ait.aitest(el, p), workflows: (el) => wfp.workflows(el), workflow: (el, p, id) => wfp.workflow(el, p, id),
+  // the RMK page before workflows were configurable: same pipeline, now the RMK workflow
+  rmk: (el, p) => wfp.workflow(el, new URLSearchParams({ view: { settings: "stages" }[p.get("view")] || p.get("view") || "board" }), "rmk"),
   pipeline: (el) => crm.pipeline(el), appointments: (el, p) => crm.appointments(el, p), handover: (el) => crm.handover(el),
   properties: (el) => kb.properties(el), property: (el, p, id) => kb.property(el, id), knowledge: (el, p) => kb.knowledge(el, p),
   templates: (el, p) => adm.templates(el, p), followups: (el) => adm.followups(el), campaigns: (el) => adm.campaigns(el), reports: (el, p) => adm.reports(el, p),
   settings: (el, p, id) => (id === "pipeline" ? adm.stages(el) : adm.settings(el, p)), team: (el) => adm.team(el), integrations: (el) => adm.integrations(el), audit: (el, p) => adm.audit(el, p),
 };
-const NAV_OF = { lead: "leads", property: "properties" };
+const NAV_OF = { lead: "leads", property: "properties", workflow: "workflows", rmk: "workflows" };
 
 const root = $("#app");
 
