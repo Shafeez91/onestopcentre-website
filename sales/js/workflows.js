@@ -33,7 +33,7 @@ const payloadOf = (w) => ({
 const save = (p) => q(SB.rpc("ai_wf_save", { p }));
 
 /* ================================================================ list */
-export async function workflows(el) {
+export async function workflows(el, params = new URLSearchParams()) {
   const all = await loadWorkflows(), mgr = can("manager");
   const card = (w) => {
     const n = (st) => w.leads.filter((l) => l.status === st).length, live = w.stages.filter((s) => !s.archived_at);
@@ -52,6 +52,7 @@ export async function workflows(el) {
     ${arch.length ? `<details class="card"><summary>Archived workflows (${arch.length})</summary><div class="wf-grid">${arch.map(card).join("")}</div></details>` : ""}`;
   const b = $("#wfnew", el);
   if (b) b.onclick = () => newWorkflowDialog(all);
+  if (b && params.get("new") === "1") { history.replaceState(null, "", "#/workflows"); newWorkflowDialog(all); }
 }
 
 function newWorkflowDialog(all) {

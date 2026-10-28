@@ -1,20 +1,24 @@
 // AI Sales dashboard — shell, sign-in, navigation and routing.
-import { SB, S, $, $$, esc, q, act, toast, loadLookups, flag, hasUnsaved, errText } from "./core.js";
+import { SB, S, $, $$, esc, q, act, toast, loadLookups, flag, hasUnsaved, errText, can } from "./core.js";
 import * as crm from "./crm.js";
 import * as kb from "./knowledge.js";
 import * as adm from "./admin.js";
 import * as ait from "./aitest.js";
 import * as wfp from "./workflows.js";
+import { icon } from "./icons.js";
 
+// grouped navigation: [group, [[route, label, icon]]]
 const NAV = [
-  ["Sales", [["overview", "Overview", "◎"], ["inbox", "WhatsApp inbox", "✉"], ["ai-test", "AI test console", "✦"], ["leads", "Leads & CRM", "☺"], ["pipeline", "Pipeline", "▤"], ["appointments", "Appointments", "◷"], ["handover", "Handover queue", "⚑"], ["workflows", "Follow-up workflows", "◆"]]],
-  ["Knowledge", [["properties", "Property projects", "⌂"], ["knowledge", "Knowledge base", "❏"], ["templates", "Templates & objections", "❝"]]],
-  ["Automation", [["followups", "Follow-up automation", "↻"], ["campaigns", "Campaigns", "◈"], ["reports", "Reports", "▥"]]],
-  ["Admin", [["settings", "AI agent settings", "⚙"], ["team", "Team & permissions", "⚇"], ["integrations", "Integrations", "⇄"], ["audit", "Consent, security & audit", "⛨"]]],
+  ["Overview", [["overview", "Dashboard", "dashboard"], ["inbox", "WhatsApp inbox", "inbox"], ["handover", "Handover queue", "flag"]]],
+  ["Sales & Clients", [["leads", "Leads & CRM", "users"], ["pipeline", "Pipeline", "columns"], ["appointments", "Appointments", "calendar"], ["workflows", "Follow-up workflows", "workflow"]]],
+  ["AI & Knowledge", [["settings", "AI agent settings", "sliders"], ["ai-test", "AI test console", "sparkle"], ["properties", "Property projects", "building"], ["knowledge", "Knowledge base", "book"], ["templates", "Templates & objections", "quote"]]],
+  ["Reporting", [["reports", "Reports", "chart"], ["campaigns", "Campaigns", "megaphone"], ["followups", "Follow-up automation", "refresh"]]],
+  ["Administration", [["team", "Team & permissions", "team"], ["integrations", "Integrations", "plug"], ["audit", "Consent, security & audit", "shield"]]],
 ];
+const NAV_ITEM = Object.fromEntries(NAV.flatMap(([g, items]) => items.map(([k, l]) => [k, { group: g, label: l }])));
 const ROUTES = {
   overview: (el) => crm.overview(el), inbox: (el, p) => crm.inbox(el, p), leads: (el, p) => crm.leads(el, p), lead: (el, p, id) => crm.leadDetail(el, id),
-  "ai-test": (el, p) => ait.aitest(el, p), workflows: (el) => wfp.workflows(el), workflow: (el, p, id) => wfp.workflow(el, p, id),
+  "ai-test": (el, p) => ait.aitest(el, p), workflows: (el, p) => wfp.workflows(el, p), workflow: (el, p, id) => wfp.workflow(el, p, id),
   // the RMK page before workflows were configurable: same pipeline, now the RMK workflow
   rmk: (el, p) => wfp.workflow(el, new URLSearchParams({ view: { settings: "stages" }[p.get("view")] || p.get("view") || "board" }), "rmk"),
   pipeline: (el) => crm.pipeline(el), appointments: (el, p) => crm.appointments(el, p), handover: (el) => crm.handover(el),
@@ -23,6 +27,8 @@ const ROUTES = {
   settings: (el, p, id) => (id === "pipeline" ? adm.stages(el) : adm.settings(el, p)), team: (el) => adm.team(el), integrations: (el) => adm.integrations(el), audit: (el, p) => adm.audit(el, p),
 };
 const NAV_OF = { lead: "leads", property: "properties", workflow: "workflows", rmk: "workflows" };
+const DETAIL = { lead: "Lead", property: "Project", workflow: "Workflow" };
+const NAV_KEY = "sales:nav-collapsed";
 
 const root = $("#app");
 
@@ -70,19 +76,86 @@ async function signOut() {
 }
 
 function shell() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem(NAV_KEY) === "1"; } catch { /* storage is optional */ }
   root.innerHTML = `
-  <header class="top"><button class="icon menu" id="mbtn" aria-label="Open menu" aria-expanded="false">☰</button><a class="brand" href="#/overview"><img src="/osc-logo-96.png" width="28" height="28" alt=""> <span>AI Sales</span></a>
-    <span class="who"><span class="role">${esc(S.role)}</span> <span class="em">${esc(S.email)}</span> <button class="link" id="so">Sign out</button></span></header>
-  <div class="layout"><nav class="side" id="side" aria-label="AI Sales sections">${NAV.map(([g, items]) => `<p class="grp">${esc(g)}</p>${items.map(([k, l, i]) => `<a href="#/${k}" data-nav="${k}"><span class="ic" aria-hidden="true">${i}</span>${esc(l)}</a>`).join("")}`).join("")}
-    <p class="grp">Website</p><a href="/" target="_blank" rel="noopener"><span class="ic" aria-hidden="true">↗</span>Open website</a><a href="/#admin" target="_blank" rel="noopener"><span class="ic" aria-hidden="true">↗</span>Website admin</a></nav>
-  <div class="scrim" id="scrim"></div><main class="main" id="view" tabindex="-1"></main></div>
+  <div class="shell${collapsed ? " collapsed" : ""}" id="shell">
+  <nav class="side" id="side" aria-label="AI Sales sections">
+    <div class="side-head"><a class="brand" href="#/overview"><img src="/osc-logo-96.png" width="30" height="30" alt=""><span>One Stop Centre<small>AI Sales</small></span></a>
+      <button class="icon collapse" id="cbtn" aria-label="Collapse menu" aria-pressed="${collapsed}" title="Collapse menu">${icon("collapse")}</button></div>
+    ${NAV.map(([g, items]) => `<p class="grp">${esc(g)}</p>${items.map(([k, l, i]) => `<a href="#/${k}" data-nav="${k}" title="${esc(l)}">${icon(i)}<span>${esc(l)}</span></a>`).join("")}`).join("")}
+    <p class="grp">Website</p><a href="/" target="_blank" rel="noopener" title="Open website">${icon("external")}<span>Open website</span></a><a href="/#admin" target="_blank" rel="noopener" title="Website admin">${icon("external")}<span>Website admin</span></a>
+  </nav>
+  <div class="scrim" id="scrim"></div>
+  <div class="col">
+    <header class="top">
+      <button class="icon menu" id="mbtn" aria-label="Open menu" aria-expanded="false">${icon("menu", { size: 22 })}</button>
+      <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
+      <form class="gsearch" id="gsearch" role="search"><label class="sr" for="gq">Search leads</label>${icon("search", { size: 18 })}<input id="gq" name="q" type="search" placeholder="Search leads: name, phone, OSC code" autocomplete="off"></form>
+      <div class="top-actions">
+        <div class="pop"><button class="icon tbtn" id="addbtn" aria-label="Quick add" aria-haspopup="true" aria-expanded="false">${icon("plus")}</button>
+          <div class="pop-menu" id="addmenu" hidden>${can("advisor") ? `<a href="#/leads?new=1">${icon("users", { size: 18 })}New lead</a>` : ""}
+            ${can("manager") ? `<a href="#/workflows?new=1">${icon("workflow", { size: 18 })}New follow-up workflow</a>` : ""}
+            <a href="#/appointments">${icon("calendar", { size: 18 })}Appointments</a><a href="#/ai-test">${icon("sparkle", { size: 18 })}Test the AI</a></div></div>
+        <div class="pop"><button class="icon tbtn" id="bellbtn" aria-label="Notifications" aria-haspopup="true" aria-expanded="false">${icon("bell")}<span class="dot" id="belldot" hidden></span></button>
+          <div class="pop-menu wide" id="bellmenu" hidden><p class="note">Checking…</p></div></div>
+        <div class="pop"><button class="who" id="whobtn" aria-haspopup="true" aria-expanded="false"><span class="av">${esc((S.email || "?")[0].toUpperCase())}</span><span class="role">${esc(S.role)}</span></button>
+          <div class="pop-menu" id="whomenu" hidden><p class="note">Signed in as<br><b>${esc(S.email)}</b></p><button class="link" id="so">${icon("logout", { size: 18 })}Sign out</button></div></div>
+      </div>
+    </header>
+    <main class="main" id="view" tabindex="-1"></main>
+  </div></div>
   ${flag("module_enabled") ? "" : `<div class="banner">The AI Sales workspace is switched off for non-owners (Settings → Feature switches).</div>`}`;
   $("#so").onclick = signOut;
-  const side = $("#side"), mbtn = $("#mbtn"), scrim = $("#scrim");
+  const shellEl = $("#shell"), side = $("#side"), mbtn = $("#mbtn"), scrim = $("#scrim");
   const setMenu = (open) => { side.classList.toggle("open", open); scrim.classList.toggle("on", open); mbtn.setAttribute("aria-expanded", String(open)); };
   mbtn.onclick = () => setMenu(!side.classList.contains("open"));
   scrim.onclick = () => setMenu(false);
   side.addEventListener("click", (e) => { if (e.target.closest("a")) setMenu(false); });
+  $("#cbtn").onclick = () => {
+    const c = !shellEl.classList.contains("collapsed");
+    shellEl.classList.toggle("collapsed", c); $("#cbtn").setAttribute("aria-pressed", String(c));
+    try { localStorage.setItem(NAV_KEY, c ? "1" : "0"); } catch { /* ignore */ }
+  };
+  $("#gsearch").onsubmit = (e) => { e.preventDefault(); const v = $("#gq").value.trim(); location.hash = "#/leads?" + new URLSearchParams(v ? { q: v } : {}); };
+  // small pop-up menus: one open at a time, closed by a click elsewhere or Escape
+  const pops = [["addbtn", "addmenu"], ["bellbtn", "bellmenu"], ["whobtn", "whomenu"]];
+  const closeAll = () => pops.forEach(([b, m]) => { $("#" + m).hidden = true; $("#" + b).setAttribute("aria-expanded", "false"); });
+  pops.forEach(([b, m]) => { $("#" + b).onclick = (e) => { e.stopPropagation(); const open = $("#" + m).hidden; closeAll(); if (open) { $("#" + m).hidden = false; $("#" + b).setAttribute("aria-expanded", "true"); if (b === "bellbtn") loadAlerts(); } }; });
+  if (!shell.bound) { // once per page load, not per sign-in
+    shell.bound = true;
+    document.addEventListener("click", (e) => { if (!e.target.closest(".pop-menu")) closeAll(); else if (e.target.closest("a")) closeAll(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAll(); });
+  }
+  loadAlerts();
+}
+
+/** What needs a person now: open hand-overs, overdue tasks, workflow leads needing a person, unconfirmed visits. */
+let alertsAt = 0;
+async function loadAlerts() {
+  alertsAt = Date.now();
+  const count = (b) => q(b).catch(() => 0);
+  const head = (t) => SB.from(t).select("id", { count: "exact", head: true });
+  const [ho, tasks, wf, appts] = await Promise.all([
+    count(head("ai_handover_events").eq("status", "open")),
+    count(head("ai_tasks").eq("status", "open").lt("due_at", new Date().toISOString())),
+    count(head("ai_workflow_leads").eq("status", "human")),
+    count(head("ai_appointments").eq("status", "pending_confirmation")),
+  ]);
+  const rows = [[ho, "buyer(s) waiting for a person", "#/handover", "flag"], [tasks, "overdue follow-up task(s)", "#/leads", "task"],
+    [wf, "workflow lead(s) need a person", "#/workflows", "workflow"], [appts, "appointment(s) to confirm", "#/appointments", "calendar"]].filter(([n]) => Number(n) > 0);
+  const total = rows.reduce((a, [n]) => a + Number(n), 0), dot = $("#belldot"), menu = $("#bellmenu");
+  if (!dot || !menu) return;
+  dot.hidden = !total; dot.textContent = total > 99 ? "99+" : String(total);
+  menu.innerHTML = rows.length ? `<p class="note">Needs attention</p>${rows.map(([n, l, h, i]) => `<a href="${h}">${icon(i, { size: 18 })}<b>${esc(n)}</b> ${esc(l)}</a>`).join("")}` : `<p class="note">Nothing needs attention right now.</p>`;
+}
+
+function crumbs(name, id) {
+  const el = $("#crumbs");
+  if (!el) return;
+  const key = NAV_OF[name] || (ROUTES[name] ? name : "overview"), it = NAV_ITEM[key];
+  el.innerHTML = it ? `<span>${esc(it.group)}</span><i aria-hidden="true">/</i>${DETAIL[name] ? `<a href="#/${key}">${esc(it.label)}</a><i aria-hidden="true">/</i><b>${esc(DETAIL[name])}</b>` : `<b>${esc(it.label)}</b>`}` : "";
+  document.title = `${it && !DETAIL[name] ? it.label : DETAIL[name] || "AI Sales"} | AI Sales`;
 }
 
 let renderSeq = 0, shownPath = null;
@@ -93,7 +166,9 @@ async function route() {
   const [name, id] = path.split("/");
   const fn = ROUTES[name] || ROUTES.overview;
   const nav = NAV_OF[name] || (ROUTES[name] ? name : "overview");
-  $$("[data-nav]").forEach((a) => a.classList.toggle("on", a.dataset.nav === nav));
+  $$("[data-nav]").forEach((a) => { a.classList.toggle("on", a.dataset.nav === nav); if (a.dataset.nav === nav) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+  crumbs(name, id);
+  if (Date.now() - alertsAt > 60e3) loadAlerts();
   const seq = ++renderSeq;
   // a new page starts at the top; a tab or filter change on the same page keeps the current content and scroll
   // position until the new content is ready (blanking it first collapsed the page and threw the reader to the top).
