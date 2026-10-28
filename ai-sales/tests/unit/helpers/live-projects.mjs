@@ -1,0 +1,80 @@
+// Snapshot of the 7 published projects on onestopcentreproperty.com (public listing data from the `projects`
+// table, 28 Oct 2026; images, galleries and SEO fields left out, some long facility lists shortened). Used to check
+// retrieval against real records.
+// If the website changes, these tests still describe how the AI reads a listing; refresh the snapshot as needed.
+const T = (name, beds, size, baths, price, carparks) => ({ name, beds, size, baths, price, carparks });
+
+export const LIVE_PROJECTS = [
+  { id: "p1790718990790", slug: "azura-setapak", data: {
+    n: "M AZURA", l: "Setapak", d: "Mah Sing", t: "Serviced Apartment", c: "Residential", s: "Under Construction", tenure: "Leasehold", lease: "99", year: "2028",
+    p: "Enquire", z: "", b: 3, maintPsf: "0.33", furn: "No", height: "36", address: "M Azura Project Site", carpark: {}, layouts: [],
+    desc: "The best Property That Near to MRT3 Future Station. 29 EV Bays. Speed-Ramp",
+    hl: ["MRT3 Nearby", "8KM to KLCC", "Shuttle Van To LRT Sri Rampai", "Luxury Mediterranean Italy"],
+    types: [T("Type A", "2", "700", "2", "380,000", "1-2"), T("Type B", "3", "850", "2", "480,000", "2"), T("Type C", "4", "1000", "2", "570,000", "2")],
+    towers: [{ name: "Tower A", units: "570", floors: "36" }, { name: "Tower B", units: "570", floors: "36" }],
+    furnList: ["Air-conditioners", "Wardrobe", "Kitchen cabinet", "Hob & hood", "Refrigerator", "Washing machine", "Water heater", "Bed & mattress", "Sofa", "Dining set", "TV", "Curtains"],
+    facilities: ["Drop-off Area", "Mirror Walk", "Seating Deck", "Picnic Deck", "Management Office", "Parcel Room", "Multipurpose / Badminton Court", "Pre-function Area", "Sauna", "Changing Room", "Private Dining Room", "Step Seating Terrace", "Grand Event / Play Lawn", "Poolside Cabana", "Pool Shower", "50m Lagoon Lap Pool", "Pool Lounge", "Jacuzzi", "Pool Deck", "Pool Slide", "Kids’ Pool", "Aqua Play", "Playground", "Kids Cycling Track", "Taichi Deck / Activity Terrace", "Outdoor Gym", "Vitality Lounge", "Multipurpose Social Space", "Sitting Alcove", "Gym", "Skyline Seating", "Garden Swing", "Garden Terrace", "Viewing Deck", "Reflexology Path / Garden Walk", "Picnic Frame", "Herb Garden", "BBQ Pavilion & Terrace", "Palm Courtyard", "Camping Enclave", "Upper Floor", "Indoor Games Room", "Co-working Space", "Reading Room", "Yoga Deck", "Studio", "Multi-tier security system", "EV charging stations", "Automated waste collection system", "Mediterranean courtyard-inspired landscaping", "Silver Provisional GreenRE Certification"],
+    near: { tod: "No", transit: [{ d: "1.9km", n: "Sri Rampai", t: "LRT", ok: true }, { d: "2.8km", n: "Wangsa Maju", t: "LRT", ok: true }], future: [{ n: "MRT3 Circle Line (alignment passes the Setapak / Sentul–Wangsa Maju corridor)", y: "~2032", ai: true, ok: true, st: "Approved" }], pop: { v: "461,780", ok: false } },
+    nearby: "M AZURA @ SETAPAK\n\nNearby Amenities & Connectivity\n\n🚆 Public Transportation\n\n* LRT Sri Rampai\n* LRT Wangsa Maju\n* LRT Setiawangsa\n* MRT3 Circle Line – Rejang Station (Planned)\n\n🛍️ Shopping Malls & Supermarkets\n\n* Wangsa Walk Mall\n* AEON BiG Wangsa Maju",
+    brochure: "https://deethrwnmyezwsohmhzl.supabase.co/storage/v1/object/public/photos/b/p1790718990790/1791870490193.pdf", mapUrl: "https://maps.app.goo.gl/tHkY8p8g1CAFV4Q3A?g_st=ic" } },
+  { id: "p1791516851122", slug: "m-nova-kepong", data: {
+    n: "M NOVA", l: "Kepong", d: "Mah Sing", t: "Serviced Apartment", s: "Under Construction", tenure: "Leasehold", lease: "99", year: "2026",
+    p: "RM350,000", z: "700 sqft - 1000 sqft", b: 4, maintPsf: "0.33", furn: "80% FURNISHED", height: "32", address: "M NOVA RESIDENCE", carpark: {}, desc: "", nearby: "",
+    hl: ["THE MOST AFFORDABLE IN KL", "80% FURNISHED", "EARLY COMPLETION 2026", "LUXURY FACILITIES"],
+    types: [T("Type A", "2", "700", "2", "RM350,000", "1-2"), T("Type B", "3", "850", "2", "RM430,000", "2"), T("Type C", "4", "1000", "2", "RM450,000", "2"), T("Type D", "4", "1000", "2", "RM480,000", "2")],
+    towers: [{ name: "Tower A", units: "624", floors: "32" }, { name: "Tower B ", units: "624", floors: "32" }, { name: "Tower C", units: "826", floors: "32" }],
+    furnList: ["Air-conditioners", "Wardrobe", "Kitchen cabinet", "Hob & hood", "Refrigerator", "Washing machine", "Water heater"],
+    facilities: ["Nursery (Taska)", "Kindergarten (Tadika)", "Surau", "Mailroom", "Parcel Room", "Swimming Pool", "Gym", "Badminton Court", "Laundry Room", "Co-working Space", "EV Charging Stations", "Delivery Parcel Lockers"],
+    near: { transit: [{ d: "~2.5 km", n: "MRT Metro Prima (Putrajaya Line)", t: "MRT", ai: true, ok: true }, { d: "", n: "Kepong Baru", t: "MRT", ok: true }], schools: [{ d: "~1.5 km", n: "SMK Kepong", ai: true, ok: true }], concl: { ok: false, text: "x" } },
+    brochure: "https://deethrwnmyezwsohmhzl.supabase.co/storage/v1/object/public/photos/b/p1791516851122/1791832958494.pdf", mapUrl: "https://maps.app.goo.gl/KRGjfXQy2AXhhsH8A?g_st=ic" } },
+  { id: "p1791725487465", slug: "m-araya-ampang", data: {
+    n: "M ARAYA", l: "Ampang", d: "Mah Sing", t: "Condominium", s: "Upcoming", tenure: "Freehold", lease: "", year: "2033",
+    p: "RM399,000", z: "700sqft - 1000sqft", b: 3, maintPsf: "", furn: "", height: "35", carpark: {}, types: [], layouts: [], desc: "", nearby: "",
+    address: "847, Jalan Bukit Belacan, Kampung Lembah Jaya Selatan, 68000 Ampang, Selangor ",
+    hl: ["SCENERY", "FREEHOLD", "CLOSE TO EKVE HIGHWAYS"],
+    towers: [{ name: "Tower A", units: "500", floors: "35" }, { name: "Tower B ", units: "500", floors: "35" }],
+    furnList: ["Air-conditioners", "Wardrobe", "Kitchen cabinet", "Hob & hood", "Refrigerator", "Washing machine", "Water heater"],
+    facilities: ["Playground"],
+    near: { transit: [{ d: "", n: "Ampang LRT Station (Ampang Line), exact distance unconfirmed without coordinates", t: "LRT", ai: true, ok: true }], future: [{ n: "MRT3 Circle Line (Klang Valley), alignment near Ampang not confirmed for this site", ok: false }] },
+    mapUrl: "https://maps.app.goo.gl/PTjg4EitJesKLgs87?g_st=ic" } },
+  { id: "p1791862392785", slug: "m-aria-sentul", data: {
+    n: " M ARIA", l: "Sentul", d: "Mah Sing", t: "Condominium", s: "Under Construction", tenure: "Freehold", lease: "", year: "2029",
+    p: "RM460,000", z: "800 sqft - 950 sqft", b: 4, maintPsf: "0.39", furn: "Partially Furnished", height: "38", address: "M Aria ", carpark: {}, desc: "", nearby: "",
+    hl: ["Low density 606 Units", "Freehold", "Residential", "Partially Furnished", "Shuttle Service"],
+    types: [T("Type A", "3", "800", "2", "RM460,000", "2"), T("Type B", "4", "950", "2", "RM530,000", "2-4")],
+    towers: [{ name: "1 TOWER", units: "606", floors: "38" }],
+    furnList: ["Air-conditioners", "Wardrobe", "Kitchen cabinet", "Hob & hood", "Water heater"],
+    facilities: ["Grand Entrance", "Water Feature", "Bus Stop / Taxi Stand", "Taste @ M Aria", "Open Lawn", "Terrace Seating", "Garden Path", "Green Field", "Riders’ Delivery Bay", "Pedestrian Crossing Path", "Visitor Parking", "Security Pavilion", "Parcel Room", "Taska", "Tadika", "Bicycle Docking Bay", "GrabFood Collection Kiosk", "Management Office", "Retail Space", "Arrival Foyer", "Laundrette", "EV Charging Bays", "Car Wash Bay", "Swimming Pool", "Gym", "Co-working Space"],
+    near: { transit: [{ d: "3.8km", n: "Kampung Batu", t: "MRT", ok: true }, { d: "3.8km", n: "Sentul", t: "LRT", ok: true }] },
+    brochure: "https://deethrwnmyezwsohmhzl.supabase.co/storage/v1/object/public/photos/b/p1791862392785/1791872308063.pdf", mapUrl: "https://maps.app.goo.gl/x4jMor7byP52s5qv5?g_st=ic" } },
+  { id: "p1791876187079", slug: "m-aurora-old-klang-road", data: {
+    n: "M AURORA", l: "Old Klang Road", d: "Mah Sing", t: "Serviced Apartment", s: "Under Construction", tenure: "Freehold", lease: "", year: "2030",
+    p: "RM339,000", z: "556 sqft - 1019 sqft", b: 4, maintPsf: "0.33", furn: "Partially Furnished", height: "46", address: "M Aurora", carpark: {}, desc: "", nearby: "",
+    hl: ["Freehold", "Partially Furnished", "Speed-ramp"],
+    types: [T("Type A", "1+1", "556", "1", "RM339,000", "1"), T("Type B", "2", "737", "2", "RM430,000", "1"), T("Type C", "3", "858", "2", "RM517,000", "2 (Tandem)"), T("Type D", "3", "916", "3", "RM519,000", "2 (Tandem / SBS)"), T("Type E", "4", "1019", "3", "RM587,000", "2 (SBS)")],
+    towers: [{ name: "Tower A", units: "747", floors: "46" }, { name: "Tower B", units: "797", floors: "46" }],
+    furnList: ["Air-conditioners", "Kitchen cabinet", "Hob & hood", "Water heater"],
+    facilities: ["Grand Entrance", "Aurora Garden", "Seating Alcove", "Ribbon Bench", "Green Dome", "Taska", "Tadika", "Management Office", "50m Lap Pool", "Hydrotherapy Seat", "Pool Lounge", "Jacuzzi", "Pool Seat", "Pool Shower", "Kids’ Pool", "Pool Slide", "Mushroom Play", "Tipping Bucket", "Pool Deck", "Gym", "Yoga Studio", "Co-working Space", "BBQ Area", "Glamping Dome", "Karaoke Room", "Games Room", "Badminton Court", "Pickleball Court", "Retail Shops", "EV Charging Stations", "Multi-tier Security System", "M Concierge Service", "GreenRE Certification"],
+    near: { transit: [{ d: "450m", n: "Jln Templer", t: "KTM", ok: true }, { d: "4.9km", n: "Kuchai", t: "MRT", ok: true }] },
+    brochure: "https://deethrwnmyezwsohmhzl.supabase.co/storage/v1/object/public/photos/b/p1791876187079/1791876439335.pdf", mapUrl: "https://maps.app.goo.gl/ayFDFTMLXpU9Zh5G9?g_st=ic" } },
+  { id: "p1791879300928", slug: "m-mira-wangsa-maju-2", data: {
+    n: "M MIRA", l: "Wangsa Maju", d: "Mah Sing", t: "Condominium", s: "New Launch", tenure: "Leasehold", lease: "99", year: "2030",
+    p: "RM476,000", z: "800 sqft - 1050 sqft", b: 5, maintPsf: "0.38", furn: "Partially Furnished", height: "40", address: "M MIRA", carpark: {}, desc: "", towers: [],
+    hl: ["Low Density 633 Units Only", "Partially Furnished", "MRT3 Station Nearby"],
+    types: [T("Type A", "3", "800", "2", "RM476,000", "1-2"), T("Type B", "4", "900", "2", "RM533,000", "2"), T("Type C", "5", "1050", "3", "RM629,000", "3")],
+    furnList: ["Air-conditioners", "Kitchen cabinet", "Hob & hood", "Water heater"],
+    facilities: ["Urban Farming", "Bio Pond", "Car Wash Bay", "EV Charging Bay", "Male Surau", "Female Surau", "Bicycle Bay", "E-Hailing Bay", "Mail Room", "Parcel Room & Food Delivery", "Lobby Area", "Arrival Foyer", "Drop-off Point", "Management Office", "Taska*", "Tadika*", "Retail*", "Waiting Area", "Guard House", "Visitor Parking", "Grand Entrance", "Swimming Pool", "Jacuzzi", "Gymnasium", "Yoga & Pilates Room", "Reading / Co-working"],
+    near: { transit: [{ d: "2km", n: "Wangsa Maju", t: "LRT", ok: true }, { d: "", n: "Sri Rampai", t: "LRT", ok: true }] },
+    nearby: "M MIRA @ SRI RAMPAI – ACCESSIBILITY & SURROUNDING AMENITIES\n\nHIGHWAYS / ACCESSIBILITY\n\n1. DUKE Highway\n2. Middle Ring Road 2 (MRR2)\n\nPUBLIC TRANSPORT – LRT KELANA JAYA LINE\n\n1. 650m – Sri Rampai LRT Station\n2. 820m – Wangsa Maju LRT Station\n\nCOMMERCIAL / SHOPPING MALLS\n\n1. 500m – AEON Mall\n2. 2km – Giant\n\nMEDICAL FACILITIES\n\n1. 3km – Hospital Angkatan Tentera Tuanku Mizan\n2. 4km – Columbia Asia Hospital Setapak\n\nSCHOOLS & EDUCATIONAL INSTITUTIONS\n\n1. 190m – SK Taman Seri Rampai\n2. 1.4km – Sri Utama Schools International",
+    mapUrl: "https://maps.app.goo.gl/9e3P2xPW2oNnFDQP9?g_st=ic" } },
+  { id: "p1791881032487", slug: "m-aspira-taman-desa", data: {
+    n: "M ASPIRA", l: "Taman Desa", d: "Mah Sing", t: "Serviced Apartment", s: "Under Construction", tenure: "Leasehold", lease: "99", year: "2029",
+    p: "RM399,000", z: "706 sqft - 1006 sqft", b: 4, maintPsf: "0.36", furn: "80% Furnished", height: "68", address: "M ASPIRA", carpark: {}, desc: "", nearby: "",
+    hl: ["Taman Desa KL Skyscraper", "5km to Mid Valley", "Shuttle Service to MRT Kuchai"],
+    types: [T("Type A", "2", "706", "2", "RM399,000", "1"), T("Type B", "3", "855", "2", "RM467,000", "2 (Tandem/SBS)"), T("Type C", "4", "1006", "2", "RM523,000", "2-3")],
+    towers: [{ name: "Tower A", units: "686", floors: "66" }, { name: "Tower B", units: "932", floors: "68" }],
+    furnList: ["Air-conditioners", "Wardrobe", "Kitchen cabinet", "Hob & hood", "Refrigerator", "Washing machine", "Water heater"],
+    facilities: ["Drop-off", "Entrance Lobby", "Parcel Room & Mail Room", "Nursery (Taska)", "Visitor Parking", "EV Charging Stations", "50-Metre Lap Pool", "Gymnasium", "Indoor Badminton Courts", "Pickleball Courts", "Co-working Space", "Sky Lounge (Tower B)", "Dedicated Express Car Park Ramp", "Shuttle Service to Kuchai MRT Station"],
+    near: { transit: [{ d: "5km", n: "Kuchai", t: "MRT", ok: true }] },
+    brochure: "https://deethrwnmyezwsohmhzl.supabase.co/storage/v1/object/public/photos/b/p1791881032487/1791881498565.pdf", mapUrl: "https://maps.app.goo.gl/Jc4tHqexbPQTRHuX6?g_st=ic" } },
+];
