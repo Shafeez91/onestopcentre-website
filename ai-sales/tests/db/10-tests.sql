@@ -931,8 +931,9 @@ do $$ declare n0 bigint := (select count(*) from net.calls); r jsonb; begin
   perform public.ai_wa_inbound('60123456901', 'New Buyer', 'wamid.T3', 'image', '[image]');
   insert into public.ai_messages (conversation_id, direction, sender_type, body, status) values ((r ->> 'conversation_id')::uuid, 'outbound', 'ai', 'Hai!', 'sent');
   update public.ai_leads set qualification = '{"purpose":"own_stay"}' where id = (r ->> 'lead_id')::uuid;
-  assert (select count(*) from net.calls) = n0, 'no Telegram for WhatsApp traffic';
-  assert (select count(*) from public.ai_notifications where status = 'sent' and created_at >= now()) = 0;
+  -- only the one-off "new WhatsApp client" alert (T53); none for the messages themselves, repeats, media or AI replies
+  assert (select count(*) from net.calls) = n0 + 1, 'no Telegram for WhatsApp traffic beyond the new-client alert';
+  assert (select count(*) from public.ai_notifications where status = 'sent' and created_at >= now() and kind <> 'new_whatsapp_client') = 0;
 end $$;
 rollback;
 
@@ -980,9 +981,10 @@ rollback;
 
 \echo 'T51 handovers: one alert per buyer while it waits; a person replying takes it, so the next one alerts again'
 begin;
-do $$ declare n0 bigint := (select count(*) from net.calls); r jsonb; lid uuid; begin
+do $$ declare n0 bigint; r jsonb; lid uuid; begin
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   r := public.ai_wa_inbound('60123456902', 'Lim', 'wamid.HV1', 'text', 'nak discount');
+  n0 := (select count(*) from net.calls);   -- after the one-off new-client alert (T53)
   lid := (r ->> 'lead_id')::uuid;
   insert into public.ai_handover_events (lead_id, conversation_id, reason, summary) values (lid, (r ->> 'conversation_id')::uuid, 'negotiation', '{"text":"asked for discount"}');
   insert into public.ai_handover_events (lead_id, conversation_id, reason) values (lid, (r ->> 'conversation_id')::uuid, 'low_confidence');
@@ -1003,6 +1005,32 @@ do $$ declare r jsonb; a public.ai_appointments; begin
   insert into public.ai_project_facts (project_id, showroom_address, showroom_map_url) values ('t1', 'Test Gallery, Cheras', 'https://maps.app.goo.gl/x');
   insert into public.ai_appointments (lead_id, kind, status, start_at, project_id, location) values ((r ->> 'lead_id')::uuid, 'showroom_visit', 'confirmed', now() + interval '2 days', 't1', 'Test Gallery, Cheras') returning * into a;
   assert public.ai_appt_text(a) like '%📍 Test Gallery, Cheras%🗺 https://maps.app.goo.gl/x%#/lead/%';
+end $$;
+rollback;
+
+\echo 'T53 a brand-new WhatsApp client is announced once; their next messages, redeliveries and known clients are not'
+begin;
+do $$ declare n0 bigint := (select count(*) from net.calls); r jsonb; cid uuid; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123457001', 'Dee', 'wamid.N1', 'text', 'Hi, nak tanya pasal M Mira');
+  assert (select count(*) from net.calls) = n0 + 1, 'one alert for the new client';
+  assert (select body ->> 'text' from net.calls order by id desc limit 1) like '🆕 NEW WHATSAPP CLIENT%Dee · OSC-%+60123457001%nak tanya pasal M Mira%#/inbox?c=' || (r ->> 'conversation_id') || '%wa.me/60123457001%';
+  perform public.ai_wa_inbound('60123457001', 'Dee', 'wamid.N2', 'text', 'Ada unit lagi?');
+  perform public.ai_wa_inbound('60123457001', 'Dee', 'wamid.N1', 'text', 'Hi, nak tanya pasal M Mira');   -- redelivered
+  assert (select count(*) from net.calls) = n0 + 1, 'no alert for later messages or redeliveries';
+  -- already in the CRM (e.g. a website enquiry or an older contact): no new-client alert
+  cid := public.ai_upsert_contact('0123457002', 'Old Client');
+  update public.ai_contacts set created_at = now() - interval '30 days' where id = cid;
+  perform public.ai_wa_inbound('60123457002', 'Old Client', 'wamid.N3', 'text', 'Hi again');
+  assert (select count(*) from net.calls) = n0 + 1, 'known client';
+  -- a person wrote to them first from the phone app: their reply is not a new enquiry
+  perform public.ai_wa_echo('60123457003', 'wamid.E9', 'text', 'Hi, saya dari One Stop Centre', now());
+  perform public.ai_wa_inbound('60123457003', null, 'wamid.N4', 'text', 'Ok boleh');
+  assert (select count(*) from net.calls) = n0 + 1, 'we messaged them first';
+  -- the switch for new leads also covers this alert
+  update public.ai_settings set notifications = jsonb_set(notifications, '{categories,new_website_lead}', 'false');
+  perform public.ai_wa_inbound('60123457004', 'Eve', 'wamid.N5', 'text', 'Hello');
+  assert (select count(*) from net.calls) = n0 + 1;
 end $$;
 rollback;
 

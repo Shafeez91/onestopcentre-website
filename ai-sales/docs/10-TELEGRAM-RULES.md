@@ -5,7 +5,7 @@ Every Telegram message goes through one database function, `public.ai_send_teleg
 
 | Category | Sent for |
 |---|---|
-| `new_website_lead` | A website enquiry that opens a **new** CRM lead. |
+| `new_website_lead` (shown as "New clients") | A website enquiry that opens a **new** CRM lead, and (since 28 Oct, migration 11) a brand-new number's **first** WhatsApp message: one alert per client, never for their later messages, for numbers already in the CRM, or for people we messaged first. |
 | `human_followup_reminder` | A buyer needs a person: an AI or staff handover (once while it waits), no reply from a person after the set time, a follow-up task or step due, a reply that could not be delivered (once per buyer per day), the daily AI limit, and the daily digest. |
 | `appointment_notification` | An appointment booked, confirmed, rescheduled, cancelled or a no-show, and the reminders before it. |
 
