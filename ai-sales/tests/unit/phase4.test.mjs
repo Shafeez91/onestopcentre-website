@@ -710,3 +710,117 @@ test("cancelling deletes the Google Calendar event; an event already gone counts
   status = 410; assert.equal(await cancelEvent(cfg, "EV1", { fetchImpl }), true);
   status = 403; await assert.rejects(cancelEvent(cfg, "EV1", { fetchImpl }), (e) => e.kind === "config" && /403/.test(e.message));
 });
+
+/* ================================================================ RMK pipeline (Residensi Metropolitan Kepong) */
+const RMK_CFG = { enabled: true, project_id: null, pause_if_active_hours: 6, stages: {
+  to_book: { follow_up_hours: 24, max_follow_ups: 2, template: "rmk_to_book", message_ms: "Hai {name}, tempahan unit RMK? Balas *DONE BOOKED* bila dah booking.", message_en: "Hi {name}, RMK booking? Reply *DONE BOOKED* once booked." },
+  to_portal: { follow_up_hours: 24, max_follow_ups: 3, template: "", message_ms: "Hai {name}, daftar portal RUMAWIP. Balas *DONE PORTAL*.", message_en: "" } } };
+const rmkWorld = ({ stage = "to_book", seq = 1, enrolled = true, cfg = {}, ...o } = {}) => {
+  const w = quiet(o);
+  w.ai_settings[0].rmk = { ...RMK_CFG, ...cfg };
+  w.ai_rmk_pipeline = enrolled ? [{ lead_id: "L1", stage: "to_book", status: "active", history: [] }] : [];
+  w.ai_automation_jobs = [jobOf({ kind: "rmk_follow_up", stage, seq })];
+  return w;
+};
+const rmkRpcs = { ai_rmk_advance: (a, t) => { (t.rmk_calls ||= []).push(["advance", a]); return true; }, ai_rmk_enroll: (a, t) => { (t.rmk_calls ||= []).push(["enroll", a]); return true; } };
+
+test("RMK reminder: the stage message is sent with the buyer's name, the next reminder is scheduled, nothing on Telegram", async () => {
+  const db = memdb(rmkWorld()), d = deps(db);
+  await runWorker(d);
+  assert.equal(db.t.ai_automation_jobs[0].status, "sent", JSON.stringify(db.t.ai_automation_jobs[0]));
+  assert.deepEqual(d.wa.sent.map((x) => x.msg.text), ["Hai Aina, tempahan unit RMK? Balas *DONE BOOKED* bila dah booking."]);
+  assert.deepEqual([db.t.ai_messages.at(-1).sender_type, db.t.ai_messages.at(-1).purpose], ["system", "service"]);
+  const next = db.t.ai_automation_jobs.find((j) => j.seq === 2);
+  assert.deepEqual([next.kind, next.stage, next.run_at], ["rmk_follow_up", "to_book", new Date(NOW.getTime() + 24 * 3600e3).toISOString()]);
+  assert.equal(d.llm.calls.length, 0, "fixed message, no AI call");
+  assert.equal((db.t.telegram || []).length, 0);
+});
+
+test("RMK isolation: re-checked before sending — not enrolled, other stage, other project, paused or switched off: nothing is sent", async () => {
+  const cases = [
+    [rmkWorld({ enrolled: false }), "cancelled", "lead is not in the RMK pipeline"],
+    [rmkWorld({ stage: "to_portal" }), "cancelled", "stage changed"],
+    [(() => { const w = rmkWorld({ cfg: { project_id: "p-rmk" } }); w.ai_leads[0].primary_project_id = "p1"; return w; })(), "cancelled", "the lead's project is no longer RMK"],
+    [(() => { const w = rmkWorld(); w.ai_rmk_pipeline[0].status = "paused"; return w; })(), "cancelled", "RMK automation is paused"],
+    [rmkWorld({ cfg: { enabled: false } }), "skipped", "RMK follow-ups are switched off"],
+  ];
+  for (const [w, status, reason] of cases) {
+    const db = memdb(w), d = deps(db);
+    await runWorker(d);
+    assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], [status, reason]);
+    assert.equal(d.wa.sent.length, 0, reason);
+  }
+  // a non-RMK buyer's 12-hour follow-up is untouched; an RMK buyer's is left to the RMK reminders
+  let db = memdb(quiet()), d = deps(db);
+  await runWorker(d);
+  assert.equal(db.t.ai_automation_jobs[0].status, "sent");
+  const w = quiet(); w.ai_rmk_pipeline = [{ lead_id: "L1", stage: "to_portal", status: "active" }];
+  db = memdb(w); d = deps(db);
+  await runWorker(d);
+  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].reason], ["skipped", "the RMK pipeline follows up this buyer"]);
+});
+
+test("RMK reminder waits while the buyer is talking; outside 24 h only a template, else a follow-up task; after the last reminder a person takes over", async () => {
+  // the buyer wrote an hour ago: wait until 6 h after that message
+  let w = rmkWorld(); w.ai_messages.push({ id: "M5", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Ok nanti saya booking", created_at: ago(60) });
+  let db = memdb(w), d = deps(db);
+  await runWorker(d);
+  assert.deepEqual([db.t.ai_automation_jobs[0].status, db.t.ai_automation_jobs[0].run_at], ["scheduled", new Date(NOW.getTime() + 5 * 3600e3).toISOString()]);
+  assert.equal(d.wa.sent.length, 0);
+  // 30 h since the buyer wrote, no approved template: a follow-up task, and the lead is marked for a person
+  const late = () => { const x = rmkWorld(); x.ai_conversations[0].last_inbound_at = ago(30 * 60); x.ai_messages.forEach((m) => { m.created_at = ago(30 * 60); }); return x; };
+  db = memdb(late()); d = deps(db);
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 0);
+  assert.match(db.t.ai_tasks[0].title, /^RMK: message Aina about "To book unit"/);
+  assert.equal(db.t.ai_tasks[0].source_key.split(":")[0], "rmk");
+  assert.equal(db.t.ai_rmk_pipeline[0].status, "human");
+  // with the approved template it is sent
+  w = late(); w.ai_message_templates = [{ id: "T1", name: "rmk_to_book", lang: "ms", category: "utility", active: true, wa_status: "approved", wa_template_name: "rmk_to_book_ms", body: "Hai {{1}}, peringatan tempahan RMK.", variables: ["name"] }];
+  db = memdb(w); d = deps(db);
+  await runWorker(d);
+  assert.deepEqual(d.wa.sent[0].msg, { template: { name: "rmk_to_book_ms", lang: "ms", params: ["Aina"] } });
+  // a website RMK lead with no WhatsApp chat yet: a person contacts them
+  w = rmkWorld(); w.ai_conversations = []; w.ai_automation_jobs[0].conversation_id = null; w.ai_contacts[0].full_name = "Web Buyer";
+  db = memdb(w); d = deps(db);
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 0);
+  assert.match(db.t.ai_tasks[0].title, /^RMK: contact the buyer about "To book unit" \(no WhatsApp conversation yet\)/);
+  // the check after the last reminder: no progress, a person takes over
+  db = memdb(rmkWorld({ seq: 3 })); d = deps(db);
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 0);
+  assert.match(db.t.ai_tasks[0].title, /^RMK: Aina still at "To book unit" after 2 reminders/);
+  assert.deepEqual([db.t.ai_rmk_pipeline[0].status, db.t.ai_rmk_pipeline[0].status_reason], ["human", "no progress after 2 reminders"]);
+});
+
+test("RMK and the AI: the buyer's own words move them on one stage (only the current one); a confirmed enquiry enrols them", async () => {
+  const run = async (rmk, pipeline) => {
+    const w = world(); w.ai_rmk_pipeline = pipeline ? [{ lead_id: "L1", stage: pipeline, status: "active", history: [] }] : [];
+    w.ai_messages[0].body = "Dah booking semalam";
+    const db = memdb(w, rmkRpcs), d = deps(db, { llm: llmOf(draft({ reply: "Hai! Saya pembantu AI One Stop Centre. Tahniah, booking direkod!", rmk })) });
+    await runWorker(d);
+    return { calls: db.t.rmk_calls || [], ctx: d.llm.calls[0].messages.at(-1).content };
+  };
+  let r = await run({ interest: "", stage_done: "to_book" }, "to_book");
+  assert.deepEqual(r.calls, [["advance", { p_lead: "L1", p_from: "to_book", p_by: "ai", p_via: "ai" }]]);
+  assert.match(r.ctx, /"rmk":\{"stage":"to_book","stage_label":"To book unit","automation":"active"[\s\S]*"reply_keyword_when_done":"DONE BOOKED"/);
+  r = await run({ interest: "", stage_done: "to_portal" }, "to_book");
+  assert.deepEqual(r.calls, [], "a different step does not move the buyer");
+  r = await run({ interest: "confirmed", stage_done: "" }, null);
+  assert.deepEqual(r.calls, [["enroll", { p_lead: "L1", p_source: "whatsapp", p_by: "ai" }]]);
+  r = await run({ interest: "", stage_done: "" }, null);
+  assert.deepEqual(r.calls, []);
+  assert.doesNotMatch(r.ctx, /"rmk":\{/, "no RMK context for buyers outside the pipeline");
+});
+
+test("RMK ad recognition: an ad naming RMK or Residensi Metropolitan Kepong, not other projects", async () => {
+  const { isRmkAd, rmkNext, rmkSettings } = await import("../../../sales/shared/rmk.mjs");
+  assert.equal(isRmkAd({ headline: "RMK — Residensi Metropolitan Kepong", source_url: "https://fb.me/x" }), true);
+  assert.equal(isRmkAd({ body: "Residensi Metropolitan  Kepong dari RM300k" }), true);
+  assert.equal(isRmkAd({ headline: "M MIRA Wangsa Maju" }), false);
+  assert.equal(isRmkAd({ headline: "Promosi FARMKIT" }), false);
+  assert.equal(isRmkAd(null), false);
+  assert.deepEqual(["new", "to_book", "to_portal", "to_submit_loan", "to_sign", "all_signed"].map(rmkNext), ["to_book", "to_portal", "to_submit_loan", "to_sign", "all_signed", null]);
+  assert.equal(rmkSettings({}).enabled, false, "off unless switched on");
+});

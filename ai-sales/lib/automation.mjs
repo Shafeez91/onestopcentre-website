@@ -10,6 +10,7 @@ import { inWindow } from "./whatsapp.mjs";
 import { isOpen, nextOpening, consentState, templateParams } from "./followups.mjs";
 import { confirmationText, reminderText, placeFor, formatWhen } from "./calendar.mjs";
 import { sendOutbound, buyerLanguage } from "./outbound.mjs";
+import { RMK_STAGE, rmkSettings } from "../../sales/shared/rmk.mjs";
 
 const enc = encodeURIComponent;
 const SITE = "https://onestopcentreproperty.com/sales/";
@@ -73,6 +74,8 @@ async function smartFollowUp(deps, job, settings, ck) {
   if (!ck("not already followed up for this message", !followedUp)) return { status: "cancelled", reason: "already followed up" };
   const consent = await consentOf(db, conv.contact?.id);
   if (!ck("buyer has not opted out", consent.service !== "withdrawn")) return { status: "cancelled", reason: "buyer opted out" };
+  const rmk = (await db.get(`ai_rmk_pipeline?lead_id=eq.${enc(lead.id)}&select=stage,status`))?.[0];
+  if (!ck("not followed up by the RMK pipeline", !(rmk && rmk.status === "active" && rmk.stage !== "new" && rmk.stage !== "all_signed"))) return { status: "skipped", reason: "the RMK pipeline follows up this buyer" };
   const appts = (await db.get(`ai_appointments?lead_id=eq.${enc(lead.id)}&status=eq.confirmed&start_at=gt.${enc(now.toISOString())}&select=id&limit=1`)) || [];
   if (!ck("no confirmed appointment coming up (reminders handle that)", !appts.length)) return { status: "skipped", reason: "appointment already booked; appointment reminders will follow" };
   const seq = (await db.get(`ai_follow_up_jobs?lead_id=eq.${enc(lead.id)}&status=in.(scheduled,processing,sent)&select=status,run_at,updated_at`)) || [];
@@ -186,9 +189,72 @@ async function appointmentMessage(deps, job, settings, ck) {
   return { status: "sent", message_id: s.id };
 }
 
-const HANDLERS = { smart_follow_up: smartFollowUp, human_reminder: humanReminder, appt_confirmation: appointmentMessage, appt_reminder: appointmentMessage };
+const HANDLERS = { smart_follow_up: smartFollowUp, human_reminder: humanReminder, appt_confirmation: appointmentMessage, appt_reminder: appointmentMessage, rmk_follow_up: rmkFollowUp };
+/* ---------------------------------------------------------------- RMK stage reminder */
+// Only leads in ai_rmk_pipeline get these; everything is re-checked here, right before sending.
+async function rmkFollowUp(deps, job, settings, ck) {
+  const { db } = deps, now = deps.now(), R = rmkSettings(settings.rmk), f = settings.flags || {};
+  if (!ck("RMK follow-ups switched on", R.enabled === true)) return { status: "skipped", reason: "RMK follow-ups are switched off" };
+  const p = (await db.get(`ai_rmk_pipeline?lead_id=eq.${enc(job.lead_id)}&select=*`))?.[0];
+  if (!ck("lead is in the RMK pipeline", !!p)) return { status: "cancelled", reason: "lead is not in the RMK pipeline" };
+  if (!ck("still at the stage this reminder is for", p.stage === job.stage)) return { status: "cancelled", reason: "stage changed" };
+  if (!ck("RMK automation active for this lead", p.status === "active")) return { status: "cancelled", reason: `RMK automation is ${p.status}` };
+  const lead = (await db.get(`ai_leads?id=eq.${enc(job.lead_id)}&select=id,lead_code,closed_at,primary_project_id,contact_id`))?.[0];
+  if (!ck("lead open", !!lead && !lead.closed_at)) return { status: "cancelled", reason: "lead closed" };
+  if (!ck("lead's project is RMK", !lead.primary_project_id || !R.project_id || lead.primary_project_id === R.project_id)) return { status: "cancelled", reason: "the lead's project is no longer RMK" };
+  const st = R.stages[p.stage] || {}, label = RMK_STAGE[p.stage]?.label || p.stage;
+  const max = Math.max(0, Number(st.max_follow_ups) || 0), hours = Math.max(1, Number(st.follow_up_hours) || 24);
+  const conv = (await loadConv(db, job.conversation_id)) || (await db.get(`ai_conversations?contact_id=eq.${enc(lead.contact_id)}&channel=eq.whatsapp&status=eq.open&select=id&order=updated_at.desc&limit=1`).then((r) => loadConv(db, r?.[0]?.id)));
+  const to = toOf(conv);
+  const name = conv?.contact?.full_name || "";
+  const human = async (title, reason) => {
+    await openHumanTask(deps, { conv: conv || { lead }, cause: "rmk", key: job.id, title, details: `RMK stage: ${label}.` });
+    await db.patch(`ai_rmk_pipeline?lead_id=eq.${enc(lead.id)}`, { status: "human", status_reason: reason });
+    return { status: "skipped", reason };
+  };
+  // the last reminder for this stage went unanswered: a person takes it from here
+  if (job.seq > max) return human(`RMK: ${name || "buyer"} still at "${label}" after ${max} reminder${max === 1 ? "" : "s"}`, `no progress after ${max} reminders`);
+  if (!ck("buyer has a WhatsApp conversation", !!conv && !!to && conv.status === "open")) return human(`RMK: contact ${name || "the buyer"} about "${label}" (no WhatsApp conversation yet)`, "no WhatsApp conversation to send reminders to");
+  const consent = await consentOf(db, conv.contact?.id);
+  if (!ck("buyer has not opted out", consent.service !== "withdrawn")) return { status: "cancelled", reason: "buyer opted out" };
+  if (!ck("WhatsApp sending switched on", !!f.whatsapp_outbound && !!deps.wa)) return { status: "skipped", reason: "WhatsApp sending is off" };
+  // the buyer is talking to us (AI or a person) right now: wait until the conversation has been quiet for a while
+  const pauseH = Math.max(0, Number(R.pause_if_active_hours) || 0);
+  const last = (await db.get(`ai_messages?conversation_id=eq.${enc(conv.id)}&sender_type=neq.system&order=created_at.desc&limit=1&select=created_at`))?.[0];
+  if (pauseH && last && now - new Date(last.created_at) < pauseH * 3600e3) {
+    ck("conversation quiet for a while", false);
+    return { status: "scheduled", reason: "the buyer is in an active conversation; waiting", run_at: new Date(new Date(last.created_at).getTime() + pauseH * 3600e3).toISOString() };
+  }
+  if (!isOpen(settings.business?.hours, now)) {
+    const at = nextOpening(settings.business?.hours, now);
+    ck("within business hours", false);
+    return at ? { status: "scheduled", reason: "waiting for business hours", run_at: at.toISOString() } : { status: "skipped", reason: "no business hours configured" };
+  }
+  const lang = await buyerLanguage(db, conv);
+  const fill = (t) => String(t || "").replace(/\{name\}/g, name || (lang === "en" ? "there" : "tuan/puan")).trim();
+  let s;
+  if (inWindow(conv.last_inbound_at, now)) {
+    ck("inside WhatsApp's 24-hour window (free-form message allowed)", true);
+    const text = fill(lang === "en" ? st.message_en || st.message_ms : st.message_ms || st.message_en);
+    if (!ck("message set for this stage", !!text)) return { status: "skipped", reason: "no RMK message set for this stage" };
+    s = await sendOutbound(deps, { conversation: conv, to, text, senderType: "system", purpose: "service", sourceJobId: job.id });
+  } else {
+    ck("inside WhatsApp's 24-hour window (free-form message allowed)", false);
+    const tpls = st.template ? ((await db.get(`ai_message_templates?name=eq.${enc(st.template)}&wa_status=eq.approved&active=is.true&select=*`)) || []).filter((t) => t.wa_template_name && t.category !== "marketing") : [];
+    const t = tpls.find((x) => x.lang === lang) || tpls[0];
+    if (!ck(`approved "${st.template || "(none)"}" template available`, !!t)) return human(`RMK: message ${name || "the buyer"} about "${label}" (more than 24 hours since their last message, no approved template)`, "outside the 24-hour window and no approved template");
+    s = await sendOutbound(deps, { conversation: conv, to, senderType: "system", purpose: "service", sourceJobId: job.id, template: { ...t, params: templateParams(t, { name }) } });
+  }
+  if (s.blocked) return { status: "cancelled", reason: s.error, message_id: s.id };
+  if (!s.sent) return { status: "failed", reason: s.error, message_id: s.id, retry: s.kind !== "config" };
+  // next reminder for this stage; after the last one, a check that opens a follow-up task if nothing moved
+  await db.post("ai_automation_jobs", { kind: "rmk_follow_up", conversation_id: conv.id, lead_id: lead.id, stage: p.stage, seq: job.seq + 1,
+    run_at: new Date(now.getTime() + hours * 3600e3).toISOString(), dedupe_key: `rmk:${lead.id}:${p.stage}:${job.seq + 1}:${job.id}` }).catch(() => {});
+  return { status: "sent", message_id: s.id };
+}
+
 // a job that could not run on time (worker stopped, switched off, deployed late) is dropped, not sent late in a burst
-const LATE_HOURS = { smart_follow_up: 6, human_reminder: 12, appt_confirmation: 24, appt_reminder: 3 };
+const LATE_HOURS = { smart_follow_up: 6, human_reminder: 12, appt_confirmation: 24, appt_reminder: 3, rmk_follow_up: 24 };
 
 /** Runs one claimed job and records the outcome, the checks made and the message sent (if any). */
 export async function processAutomationJob(deps, job, settings) {

@@ -72,6 +72,9 @@ export function fixtures() {
     ai_contacts: [contact], ai_activities: [{ id: "a1", lead_id: "L1", kind: "website_enquiry", body: "Berapa harga?", actor: "website", created_at: NOW }],
     ai_tasks: [], ai_appointments: [{ id: "A1", lead_id: "L1", kind: "showroom_visit", status: "pending_confirmation", preferred_text: "Sabtu pagi", start_at: null, reminders: [], created_at: NOW, lead: { id: "L1", lead_code: "OSC-000001", contact } }], ai_lead_interests: [{ lead_id: "L1", project_id: "t1", interest: "enquired" }], ai_consent_current: [], ai_consent_records: [],
     ai_handover_events: [],
+    ai_rmk_pipeline: [
+      { lead_id: "L1", stage: "to_book", status: "active", status_reason: null, source: "facebook", stage_changed_at: NOW, enrolled_at: NOW, history: [], lead: { id: "L1", lead_code: "OSC-000001", contact_id: "c1", contact } },
+      { lead_id: "L7", stage: "to_sign", status: "human", status_reason: "no progress after 3 reminders", source: "website", stage_changed_at: NOW, enrolled_at: NOW, history: [], lead: { id: "L7", lead_code: "OSC-000007", contact_id: "c7", contact: { full_name: "Rina Signer", phone_e164: "60127770000" } } }],
     ai_automation_jobs: [
       { id: "AJ1", kind: "smart_follow_up", status: "scheduled", run_at: new Date(Date.now() + 6 * 3600e3).toISOString(), conversation_id: "V1", lead: { id: "L1", lead_code: "OSC-000001", contact }, checks: [] },
       { id: "AJ2", kind: "appt_reminder", status: "sent", offset_minutes: 1440, run_at: NOW, sent_at: NOW, conversation_id: "V1", lead: { id: "L1", lead_code: "OSC-000001", contact },
@@ -161,7 +164,7 @@ export async function newPage(viewport, { signedIn = true, mutate = null } = {})
 }
 
 /** Every dashboard route the browser tests visit. */
-export const SECTIONS = ["overview", "inbox", "inbox?c=V1", "ai-test", "leads", "lead/L1", "pipeline", "appointments", "handover", "properties", "property/t1", "knowledge", "knowledge?tab=entries", "knowledge?tab=faqs", "knowledge?tab=search",
+export const SECTIONS = ["overview", "inbox", "inbox?c=V1", "ai-test", "leads", "lead/L1", "pipeline", "appointments", "handover", "rmk", "rmk?view=list", "rmk?view=settings", "properties", "property/t1", "knowledge", "knowledge?tab=entries", "knowledge?tab=faqs", "knowledge?tab=search",
   "templates", "templates?tab=templates", "followups", "campaigns", "reports", "settings", "settings?tab=persona", "settings?tab=ai", "settings?tab=scoring", "settings?tab=business", "settings?tab=compliance", "settings?tab=notifications", "settings?tab=financing", "settings/pipeline", "team", "integrations", "audit", "audit?tab=consent", "audit?tab=retention"];
 
 /** Navigates the dashboard to `#/route` and waits until that page (not the previous one) has rendered. */
