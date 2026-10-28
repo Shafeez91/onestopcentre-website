@@ -44,7 +44,7 @@ test("sign-in screen, then owner lands on the overview; mobile menu opens and cl
     await page.fill("input[name=email]", "owner@test.local");
     await page.fill("input[name=password]", "correct horse battery");
     await page.click("button.btn.pri");
-    await page.waitForSelector("#view h1:has-text('Overview')");
+    await page.waitForSelector("#view h1:has-text('Dashboard')");
     assert.equal(await page.isVisible("#side"), true);
     const box0 = await page.locator("#side").boundingBox();
     assert.ok(box0.x < 0, "menu hidden off-canvas on phones");
@@ -326,6 +326,27 @@ test("property projects: 'What the AI knows' shows listing gaps, conflicts and p
 });
 
 const toastSeen = (page, re) => page.waitForFunction((src) => [...document.querySelectorAll(".toast")].some((t) => new RegExp(src).test(t.textContent)), re.source);
+
+test("dashboard command centre: real counts, today's priorities, live WhatsApp, workflows and AI usage, each linking to its list", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.desktop);
+  try {
+    await page.goto(base + "/sales/#/overview");
+    await page.waitForSelector(".dash-grid");
+    const kpis = await page.textContent(".dash-kpis");
+    assert.match(kpis, /1\s*Open leads[\s\S]*0\s*Hot · 1 warm[\s\S]*0\s*Waiting for a person[\s\S]*1\s*Unread WhatsApp chats[\s\S]*1 to confirm/);
+    const prio = await page.textContent(".prio");
+    assert.match(prio, /Test Buyer · Showroom visit[\s\S]*Confirm visit · Preferred: Sabtu pagi/);
+    assert.match(prio, /1 workflow lead needs a person/);
+    assert.equal(await page.getAttribute(".prio li a", "href"), "#/lead/L1");
+    assert.match(await page.textContent(".convs"), /Test Buyer\s*AI handling/);
+    assert.equal(await page.getAttribute(".convs a", "href"), "#/inbox?c=V1");
+    assert.match(await page.textContent(".wf-mini"), /RMK — Residensi Metropolitan Kepong\s*Sending off[\s\S]*2 leads · 1 needs a person[\s\S]*1\s*To book unit/);
+    assert.match(await page.textContent(".mini-kpis"), /12\/200\s*Daily AI limit/);
+    await page.click(".dash-kpis a[href='#/leads?temp=hot']");
+    await page.waitForFunction(() => location.hash === "#/leads?temp=hot");
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
 
 test("app shell: grouped menu, breadcrumb, collapsible rail remembered, global search, quick add and notifications", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, errors } = await newPage(VIEWPORTS.desktop);
