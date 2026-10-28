@@ -4,7 +4,7 @@ import { json, getCaller, hasRole, moduleEnabled, disabled, userDb, audit } from
 import { inWindow } from "../../ai-sales/lib/whatsapp.mjs";
 import { liveDeps } from "../../ai-sales/lib/live.mjs";
 import { sendOutbound, loadSettings } from "../../ai-sales/lib/worker.mjs";
-import { confirmationText, placeFor } from "../../ai-sales/lib/calendar.mjs";
+import { confirmationText, placeFor, formatWhen } from "../../ai-sales/lib/calendar.mjs";
 import { templateParams } from "../../ai-sales/lib/followups.mjs";
 import { confirmAppointmentNow } from "../../ai-sales/lib/automation.mjs";
 
@@ -76,7 +76,7 @@ export default async (req) => {
       const tpl = t.find((x) => x.lang === lang) || t[0];
       if (!tpl) note = "More than 24 hours since the buyer's last message and no approved \"appointment_confirmation\" template.";
       else {
-        const when = new Intl.DateTimeFormat(tpl.lang === "en" ? "en-MY" : "ms-MY", { timeZone: "Asia/Kuala_Lumpur", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(start);
+        const when = formatWhen(start, tpl.lang);
         const s = await sendOutbound(deps, { conversation: conv, to, template: { ...tpl, params: templateParams(tpl, { name: c.full_name, appointment: when, location: [location, map].filter(Boolean).join(" ") }) }, senderType: "system", senderEmail: caller.email, purpose: "service" });
         notified = s.sent; note = s.error || null;
       }

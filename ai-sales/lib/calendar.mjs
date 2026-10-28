@@ -60,7 +60,17 @@ export async function busy(cfg, from, to, opts = {}) {
 }
 
 const overlaps = (a0, a1, list) => list.some((b) => a0 < b.end && b.start < a1);
-const fmt = (d, lang) => new Intl.DateTimeFormat(lang === "en" ? "en-MY" : "ms-MY", { timeZone: TZ, weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(d);
+const MS_DAYS = ["Ahad", "Isnin", "Selasa", "Rabu", "Khamis", "Jumaat", "Sabtu"];
+const MS_MONTHS = ["Jan", "Feb", "Mac", "Apr", "Mei", "Jun", "Jul", "Ogo", "Sep", "Okt", "Nov", "Dis"];
+/** Appointment date and time in Malaysian time: "Thu, 29 Oct, 9:00 am" / "Khamis, 29 Okt, 9:00 Pagi". */
+export function formatWhen(d, lang) {
+  d = new Date(d);
+  if (lang === "en") return new Intl.DateTimeFormat("en-MY", { timeZone: TZ, weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(d);
+  const t = new Date(d.getTime() + 8 * 3600e3), h = t.getUTCHours(); // Malaysia has no daylight saving
+  const period = h < 12 ? "Pagi" : h < 14 ? "Tengah Hari" : h < 19 ? "Petang" : "Malam";
+  return `${MS_DAYS[t.getUTCDay()]}, ${t.getUTCDate()} ${MS_MONTHS[t.getUTCMonth()]}, ${h % 12 || 12}:${String(t.getUTCMinutes()).padStart(2, "0")} ${period}`;
+}
+const fmt = formatWhen;
 const slotId = (d) => { const p = new Date(d.getTime() + 8 * 3600e3).toISOString(); return p.slice(0, 16); }; // Malaysian local "YYYY-MM-DDTHH:MM"
 
 /**
