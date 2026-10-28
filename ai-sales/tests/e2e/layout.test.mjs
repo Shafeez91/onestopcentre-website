@@ -13,7 +13,7 @@ after(stop);
 const WIDTHS = [320, 375, 390, 430, 600, 768, 820, 1024, 1180, 1280, 1440, 1600];
 const heightOf = (w) => (w < 600 ? 800 : w < 1024 ? 1100 : 900);
 // dialogs: [route, button that opens it]
-const DIALOGS = [["leads", "#new"], ["knowledge?tab=entries", "[data-edit=k1]"], ["templates?tab=templates", "[data-edit=tp1]"], ["campaigns", "[data-edit=cp1]"], ["lead/L1", "#ho"], ["appointments", "[data-confirm=A1]"], ["templates", "#no"], ["templates?tab=templates", "#nt"], ["followups", "#ns"], ["campaigns", "#nc"]];
+const DIALOGS = [["leads", "#new"], ["knowledge?tab=entries", "[data-edit=k1]"], ["templates?tab=templates", "[data-edit=tp1]"], ["campaigns", "[data-edit=cp1]"], ["lead/L1", "#ho"], ["appointments", "[data-confirm=A1]"], ["appointments", "[data-close-appt=A1]"], ["templates", "#no"], ["templates?tab=templates", "#nt"], ["followups", "#ns"], ["campaigns", "#nc"]];
 
 /** Runs in the page: returns layout problems inside `rootSel`. */
 function audit(rootSel) {

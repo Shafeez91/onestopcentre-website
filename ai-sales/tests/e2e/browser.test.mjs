@@ -269,6 +269,38 @@ test("appointments: confirm a pending request using a free calendar slot and not
   } finally { await ctx.close(); }
 });
 
+test("appointments: archive a pending request (no status change), restore it, and cancel a booked one through the server", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const NOW = new Date().toISOString(), FUTURE = new Date(Date.now() + 3 * 864e5).toISOString();
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad, { mutate: (db) => {
+    db.ai_appointments.push({ id: "A2", lead_id: "L1", kind: "showroom_visit", status: "confirmed", start_at: FUTURE, calendar_provider: "google", calendar_event_id: "EV9", reminders: [], created_at: NOW, lead: db.ai_appointments[0].lead });
+    db.ai_appointments.push({ id: "A3", lead_id: "L1", kind: "phone_call", status: "cancelled", archived_at: NOW, reminders: [], created_at: NOW, lead: db.ai_appointments[0].lead });
+  } });
+  try {
+    page.on("dialog", (d) => d.accept());
+    await page.goto(base + "/sales/#/appointments");
+    await page.click("[data-close-appt=A1]");
+    await page.click("[data-choice=archive]");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /archived/.test(t.textContent)));
+    const arch = writes.find((w) => w.table === "ai_appointments" && w.body?.archived_at);
+    assert.match(arch.query, /id=eq\.A1/);
+    assert.deepEqual(Object.keys(arch.body).sort(), ["archived_at", "archived_by"], "archiving never changes the status");
+
+    // a booked appointment still ahead cannot be archived, only closed; cancelling goes through the server (calendar)
+    await page.click("[data-close-appt=A2]");
+    assert.equal(await page.$("dialog [data-choice=archive]"), null);
+    assert.match(await page.textContent("dialog"), /Google Calendar event is deleted/);
+    await page.click("[data-choice=cancel]");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /removed from Google Calendar/.test(t.textContent)));
+    assert.equal(writes.find((w) => w.cancel).cancel.appointment_id, "A2");
+
+    await page.goto(base + "/sales/#/appointments?scope=archived");
+    await page.click("[data-restore=A3]");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /restored/.test(t.textContent)));
+    assert.deepEqual(writes.find((w) => w.table === "ai_appointments" && w.body && "archived_at" in w.body && w.body.archived_at === null).body, { archived_at: null, archived_by: null });
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("integrations: WhatsApp connection check finds the unlinked account and links it", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {

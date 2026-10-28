@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createHmac, generateKeyPairSync, createVerify } from "node:crypto";
 import { verifySignature, parseWebhook, inWindow, sendWhatsApp, textOf, WhatsAppError } from "../../lib/whatsapp.mjs";
 import { isOpen, nextOpening, decideFollowUp, consentState, renderTemplate, templateParams } from "../../lib/followups.mjs";
-import { freeSlots, signAssertion, bookSlot, calConfig, confirmationText, formatWhen, _resetTokenCache } from "../../lib/calendar.mjs";
+import { freeSlots, signAssertion, bookSlot, cancelEvent, calConfig, confirmationText, formatWhen, _resetTokenCache } from "../../lib/calendar.mjs";
 import { runWorker } from "../../lib/worker.mjs";
 import { memdb } from "./helpers/memdb.mjs";
 
@@ -682,4 +682,20 @@ test("Malay appointment times use full day names and Pagi / Tengah Hari / Petang
   assert.equal(formatWhen("2026-10-29T13:00:00Z", "ms"), "Khamis, 29 Okt, 9:00 Malam");
   assert.equal(formatWhen("2026-10-31T01:00:00Z", "ms"), "Sabtu, 31 Okt, 9:00 Pagi");
   assert.equal(formatWhen("2026-10-29T01:00:00Z", "en"), "Thu, 29 Oct, 9:00 am");
+});
+
+test("cancelling deletes the Google Calendar event; an event already gone counts as deleted; other errors throw", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const cfg = { email: "bot@p.iam.gserviceaccount.com", key: privateKey.export({ type: "pkcs8", format: "pem" }), calendarId: "cal@group" };
+  _resetTokenCache();
+  const calls = []; let status = 204;
+  const fetchImpl = async (u, i) => {
+    if (u.includes("oauth2")) return Response.json({ access_token: "AT", expires_in: 3600 });
+    calls.push([i.method, u]);
+    return status === 204 ? new Response(null, { status }) : Response.json({ error: { message: "Forbidden" } }, { status });
+  };
+  assert.equal(await cancelEvent(cfg, "EV1", { fetchImpl }), true);
+  assert.deepEqual(calls[0], ["DELETE", "https://www.googleapis.com/calendar/v3/calendars/cal%40group/events/EV1"]);
+  status = 410; assert.equal(await cancelEvent(cfg, "EV1", { fetchImpl }), true);
+  status = 403; await assert.rejects(cancelEvent(cfg, "EV1", { fetchImpl }), (e) => e.kind === "config" && /403/.test(e.message));
 });

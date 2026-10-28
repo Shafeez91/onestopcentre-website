@@ -20,7 +20,7 @@ export async function overview(el) {
     q(SB.from("ai_leads").select("id", { count: "exact", head: true }).gte("created_at", since7)),
     q(SB.from("ai_tasks").select("id,title,due_at,lead_id").eq("status", "open").eq("assignee_email", S.email).lte("due_at", today.toISOString()).order("due_at").limit(10)),
     q(SB.from("ai_handover_events").select("id", { count: "exact", head: true }).eq("status", "open")),
-    q(SB.from("ai_appointments").select("id,kind,status,start_at,preferred_text,lead_id").in("status", ["pending_confirmation", "confirmed", "rescheduled"]).or(`start_at.is.null,start_at.lte.${in7}`).order("start_at", { nullsFirst: true }).limit(10)),
+    q(SB.from("ai_appointments").select("id,kind,status,start_at,preferred_text,lead_id").is("archived_at", null).in("status", ["pending_confirmation", "confirmed", "rescheduled"]).or(`start_at.is.null,start_at.lte.${in7}`).order("start_at", { nullsFirst: true }).limit(10)),
   ]);
   const t = { hot: 0, warm: 0, nurture: 0, unqualified: 0 };
   (open || []).forEach((l) => { t[l.temperature] = (t[l.temperature] || 0) + 1; });
@@ -226,7 +226,7 @@ export async function leadDetail(el, id) {
 
     <section class="card"><h2>Appointments</h2>
       <p class="note">Advisor-recorded. AI-booked appointments are only marked confirmed after the calendar confirms them (Phase 4).</p>
-      ${(appts || []).length ? `<ul class="list">${appts.map((a) => `<li><b>${esc(kindLabel(a.kind))}</b> ${apptBadge(a.status)} ${a.project_id ? "· " + esc(projectName(a.project_id)) : ""}<small>${a.start_at ? esc(fmtDate(a.start_at)) : "Preferred: " + esc(a.preferred_text || "—")}${a.advisor_email ? " · " + esc(a.advisor_email) : ""}</small>
+      ${(appts || []).length ? `<ul class="list">${appts.map((a) => `<li><b>${esc(kindLabel(a.kind))}</b> ${apptBadge(a.status)} ${a.project_id ? "· " + esc(projectName(a.project_id)) : ""}<small>${a.start_at ? esc(fmtDate(a.start_at)) : "Preferred: " + esc(a.preferred_text || "—")}${a.advisor_email ? " · " + esc(a.advisor_email) : ""}${a.archived_at ? " · archived" : ""}</small>
         ${can("advisor") ? `<select data-appt="${attr(a.id)}" aria-label="Change status">${Object.entries(APPT).map(([k, v]) => opt(k, v[0], a.status)).join("")}</select>` : ""}
         ${a.status === "confirmed" ? `<small>WhatsApp confirmation &amp; reminders: ${a.wa_reminders === false ? "off" : "on"}${a.attendance_confirmed_at ? " · buyer confirmed they are coming" : ""}${can("advisor") ? ` <button class="link" data-wa-rem="${attr(a.id)}" data-on="${a.wa_reminders === false ? "1" : ""}">${a.wa_reminders === false ? "Turn on" : "Turn off"}</button>` : ""}</small>` : ""}</li>`).join("")}</ul>` : empty("No appointments.")}
       ${can("advisor") ? `<details><summary>Add appointment</summary><form id="fa" class="form two">
@@ -381,20 +381,63 @@ export async function pipeline(el) {
 
 /* ======================= Appointments ======================= */
 export async function appointments(el, params) {
-  const scope = params.get("scope") || "upcoming";
+  const scope = ["upcoming", "all", "archived"].includes(params.get("scope")) ? params.get("scope") : "upcoming";
   let query = SB.from("ai_appointments").select("*, lead:ai_leads(id,lead_code,contact:ai_contacts(full_name,phone_e164))").limit(500);
-  if (scope === "upcoming") query = query.in("status", ["pending_confirmation", "confirmed", "rescheduled"]).order("start_at", { nullsFirst: true });
-  else query = query.order("created_at", { ascending: false });
+  if (scope === "archived") query = query.not("archived_at", "is", null).order("archived_at", { ascending: false });
+  else {
+    query = query.is("archived_at", null);
+    if (scope === "upcoming") query = query.in("status", ["pending_confirmation", "confirmed", "rescheduled"]).order("start_at", { nullsFirst: true });
+    else query = query.order("created_at", { ascending: false });
+  }
   const rows = (await q(query)) || [];
   const adv = can("advisor");
-  el.innerHTML = `<div class="page-head"><h1>Appointments</h1><div class="seg"><a class="${scope === "upcoming" ? "on" : ""}" href="#/appointments?scope=upcoming">Upcoming &amp; pending</a><a class="${scope === "all" ? "on" : ""}" href="#/appointments?scope=all">All</a></div></div>
-  <div class="card notice"><div>${flag("calendar_booking") ? "<b>Calendar booking is on.</b> The AI offers free Google Calendar slots and books the one the buyer picks; the buyer gets a confirmation only after the event exists." : "AI-requested slots stay <b>pending confirmation</b> until you confirm them here."} Confirming creates the Google Calendar event when the calendar is connected (Integrations).</div></div>
+  const seg = (k, label) => `<a class="${scope === k ? "on" : ""}" href="#/appointments?scope=${k}">${label}</a>`;
+  el.innerHTML = `<div class="page-head"><h1>Appointments</h1><div class="seg">${seg("upcoming", "Upcoming &amp; pending")}${seg("all", "All")}${seg("archived", "Archived")}</div></div>
+  <div class="card notice"><div>${scope === "archived" ? "Archived appointments are hidden from the other lists. Nothing was deleted: <b>Restore</b> brings one back." : `${flag("calendar_booking") ? "<b>Calendar booking is on.</b> The AI offers free Google Calendar slots and books the one the buyer picks; the buyer gets a confirmation only after the event exists." : "AI-requested slots stay <b>pending confirmation</b> until you confirm them here."} Confirming creates the Google Calendar event when the calendar is connected (Integrations). Use <b>Close…</b> to mark one done, a no-show or cancelled, or to archive it.`}</div></div>
   ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Type</th><th>Buyer</th><th>Project</th><th>Advisor</th><th>Status</th><th></th></tr></thead><tbody>
   ${rows.map((a) => `<tr><td data-label="When">${a.start_at ? esc(fmtDate(a.start_at)) : `<i>Preferred: ${esc(a.preferred_text || "—")}</i>`}</td><td data-label="Type">${esc(kindLabel(a.kind))}</td>
     <td data-label="Buyer"><a href="#/lead/${attr(a.lead?.id)}">${esc(contactName(a.lead?.contact))}</a><small>${esc(a.lead?.lead_code || "")}</small></td><td data-label="Project">${esc(projectName(a.project_id)) || "—"}</td>
-    <td data-label="Advisor">${esc(a.advisor_email || "—")}</td><td data-label="Status">${apptBadge(a.status)}${a.calendar_event_id ? `<small>On Google Calendar</small>` : ""}${a.notes ? `<small>${esc(a.notes)}</small>` : ""}</td>
-    <td>${adv && ["pending_confirmation", "rescheduled"].includes(a.status) && !a.calendar_event_id ? `<button class="btn" data-confirm="${attr(a.id)}">Confirm…</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : empty("No appointments.")}`;
-  $$("[data-confirm]", el).forEach((b) => b.onclick = () => confirmAppointment(rows.find((a) => a.id === b.dataset.confirm), () => keepPlace(el, () => appointments(el, params))));
+    <td data-label="Advisor">${esc(a.advisor_email || "—")}</td><td data-label="Status">${apptBadge(a.status)}${a.calendar_event_id && a.status !== "cancelled" ? `<small>On Google Calendar</small>` : ""}${a.archived_at ? `<small>Archived ${esc(fmtDate(a.archived_at))}</small>` : ""}${a.notes ? `<small>${esc(a.notes)}</small>` : ""}</td>
+    <td class="row-actions">${!adv ? "" : a.archived_at ? `<button class="btn" data-restore="${attr(a.id)}" data-busy="Restoring…">Restore</button>`
+      : `${["pending_confirmation", "rescheduled"].includes(a.status) && !a.calendar_event_id ? `<button class="btn" data-confirm="${attr(a.id)}">Confirm…</button>` : ""}<button class="btn" data-close-appt="${attr(a.id)}">Close…</button>`}</td></tr>`).join("")}</tbody></table></div>`
+    : empty(scope === "archived" ? "No archived appointments." : "No appointments.")}`;
+  const reload = () => keepPlace(el, () => appointments(el, params));
+  const find = (id) => rows.find((a) => a.id === id);
+  $$("[data-confirm]", el).forEach((b) => b.onclick = () => confirmAppointment(find(b.dataset.confirm), reload));
+  $$("[data-close-appt]", el).forEach((b) => b.onclick = () => closeAppointment(find(b.dataset.closeAppt), reload));
+  $$("[data-restore]", el).forEach((b) => b.onclick = () => act(b, async () => {
+    await q(SB.from("ai_appointments").update({ archived_at: null, archived_by: null }).eq("id", b.dataset.restore).select("id"), { expectRows: true }); reload();
+  }, "Appointment restored"));
+}
+
+/** A confirmed appointment still ahead: reminders may go out, so it is cancelled or completed rather than hidden. */
+const stillBooked = (a) => ["confirmed", "rescheduled"].includes(a.status) && a.start_at && new Date(a.start_at) > new Date();
+
+function closeAppointment(a, done) {
+  const open = ["pending_confirmation", "confirmed", "rescheduled"].includes(a.status), booked = ["confirmed", "rescheduled"].includes(a.status);
+  const onCal = a.calendar_event_id && a.calendar_provider === "google";
+  const choice = (k, label, note, extra = "") => `<button type="button" class="btn${k === "cancel" ? " danger" : ""}" data-choice="${k}"${extra}>${label}</button><p class="note">${note}</p>`;
+  const dlg = modal("Close appointment", `<div class="close-appt">
+    <p class="note">${esc(kindLabel(a.kind))} · ${esc(contactName(a.lead?.contact))}${a.start_at ? " · " + esc(fmtDate(a.start_at)) : a.preferred_text ? " · preferred: " + esc(a.preferred_text) : ""} · ${apptBadge(a.status)}</p>
+    ${booked ? choice("completed", "Done – we met", "Marks it completed. No message is sent.") + choice("no_show", "No-show", "The buyer did not come. You get a Telegram reminder to follow up.") : ""}
+    ${open ? choice("cancel", booked ? "Cancel appointment" : "Cancel request", `Marks it cancelled and stops its WhatsApp reminders.${onCal ? " The Google Calendar event is deleted." : ""} The buyer is <b>not</b> messaged, so tell them yourself if needed.`, ' data-busy="Cancelling…"') : ""}
+    ${stillBooked(a) ? `<p class="note">To archive a booked appointment that is still ahead, cancel it or mark it done first.</p>`
+      : choice("archive", "Archive (hide from list)", "Only hides it: no message, no alert, nothing deleted. Find it under <b>Archived</b> and restore it any time.", ' data-busy="Archiving…"')}
+  </div>`);
+  $$("[data-choice]", dlg).forEach((b) => b.onclick = () => act(b, async () => {
+    const k = b.dataset.choice;
+    if (k === "cancel") {
+      if (!confirm(`Cancel this appointment?${onCal ? " Its Google Calendar event will be deleted." : ""}`)) return;
+      const r = await api("/api/sales/appointments/cancel", { method: "POST", body: JSON.stringify({ appointment_id: a.id }) });
+      dlg.done(); done(); toast(`Appointment cancelled${r.calendar ? " and removed from Google Calendar" : ""}.`);
+    } else if (k === "archive") {
+      await q(SB.from("ai_appointments").update({ archived_at: new Date().toISOString(), archived_by: S.email }).eq("id", a.id).select("id"), { expectRows: true });
+      dlg.done(); done(); toast("Appointment archived. Find it under Archived.");
+    } else {
+      await q(SB.from("ai_appointments").update({ status: k }).eq("id", a.id).select("id"), { expectRows: true });
+      dlg.done(); done(); toast(k === "completed" ? "Marked done." : "Marked as a no-show.");
+    }
+  }));
 }
 
 async function confirmAppointment(a, done) {

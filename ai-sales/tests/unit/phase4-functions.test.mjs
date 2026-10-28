@@ -39,7 +39,7 @@ const post = (path, body, headers = {}) => new Request("https://onestopcentrepro
 test("functions: paths under /api/sales/, worker scheduled every 2 minutes", () => {
   assert.equal(webhookConfig.path, "/api/sales/whatsapp/webhook");
   assert.equal(sendConfig.path, "/api/sales/whatsapp/send");
-  assert.deepEqual(apptConfig.path, ["/api/sales/appointments/slots", "/api/sales/appointments/confirm"]);
+  assert.deepEqual(apptConfig.path, ["/api/sales/appointments/slots", "/api/sales/appointments/confirm", "/api/sales/appointments/cancel"]);
   assert.equal(workerConfig.schedule, "*/2 * * * *");
 });
 
@@ -169,6 +169,27 @@ test("appointment confirm without a calendar: confirmed manually by the advisor,
   r = await appointments(post("/api/sales/appointments/confirm", { appointment_id: "A1", start_at: start, location: "", notify_buyer: false }, auth));
   assert.equal(r.status, 200);
   assert.equal(calls.find((c) => c.u.includes("/rest/v1/ai_appointments") && c.method === "PATCH").body.location, "M Mira Sales Gallery");
+});
+
+test("appointment cancel: marks it cancelled as the advisor; a calendar event needs the calendar; closed ones refused", async () => {
+  const appt = { id: "A1", lead_id: "L1", kind: "showroom_visit", status: "confirmed", reminders: [], lead: { id: "L1", contact_id: "C1", contact: {} } };
+  route(/\/rest\/v1\/ai_appointments/, (u, i) => (i.method === "PATCH" ? new Response(null, { status: 204 }) : Response.json([appt])));
+  const auth = { authorization: "Bearer tok-adv" };
+  calls.length = 0;
+  let r = await appointments(post("/api/sales/appointments/cancel", { appointment_id: "A1" }, auth));
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.deepEqual(await r.json(), { ok: true, calendar: false });
+  const p = calls.find((c) => c.u.includes("/rest/v1/ai_appointments") && c.method === "PATCH");
+  assert.deepEqual([p.body.status, p.body.reminders.at(-1).type, p.tok], ["cancelled", "cancelled", "tok-adv"]);
+  // on Google Calendar but the calendar is not connected here: nothing changes, the advisor is told what to do
+  Object.assign(appt, { calendar_provider: "google", calendar_event_id: "EV1" });
+  calls.length = 0;
+  r = await appointments(post("/api/sales/appointments/cancel", { appointment_id: "A1" }, auth));
+  assert.equal(r.status, 501); assert.match((await r.json()).error, /Delete the event in Google Calendar/);
+  assert.ok(!calls.some((c) => c.method === "PATCH"), "not marked cancelled while the event remains");
+  appt.status = "cancelled";
+  assert.equal((await appointments(post("/api/sales/appointments/cancel", { appointment_id: "A1" }, auth))).status, 409);
+  assert.equal((await appointments(post("/api/sales/appointments/cancel", { appointment_id: "A1" }, { authorization: "Bearer tok-view" }))).status, 403);
 });
 
 test("calendar key from Supabase Vault when GOOGLE_PRIVATE_KEY is not in Netlify", async () => {

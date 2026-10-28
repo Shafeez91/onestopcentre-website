@@ -1,4 +1,5 @@
-// AI Sales — appointment calendar: free slots (GET /slots) and staff confirmation (POST /confirm).
+// AI Sales — appointment calendar: free slots (GET /slots), staff confirmation (POST /confirm) and cancelling
+// (POST /cancel, which also removes the Google Calendar event).
 // With Google Calendar connected the slot is re-checked and an event is created before anything is marked confirmed.
 import { json, getCaller, hasRole, moduleEnabled, disabled, userDb, audit } from "../../ai-sales/lib/server.mjs";
 import { inWindow } from "../../ai-sales/lib/whatsapp.mjs";
@@ -30,6 +31,21 @@ export default async (req) => {
   const db = userDb(caller);
   const appt = (await db.get(`ai_appointments?id=eq.${enc(body?.appointment_id || "")}&select=*,lead:ai_leads(id,contact_id,lead_code,contact:ai_contacts(full_name,phone_e164,wa_id,preferred_language))`))?.[0];
   if (!appt) return json({ error: "Appointment not found" }, 404);
+
+  if (new URL(req.url).pathname.endsWith("/cancel")) {
+    if (["cancelled", "completed", "no_show"].includes(appt.status)) return json({ error: `This appointment is already ${appt.status.replace(/_/g, " ")}.` }, 409);
+    // the calendar first: if the event cannot be removed, nothing changes and the advisor is told why
+    let calendar = false;
+    if (appt.calendar_event_id && appt.calendar_provider === "google") {
+      if (!deps.cal) return json({ error: "This appointment is on Google Calendar, but the calendar is not connected. Delete the event in Google Calendar, then mark it cancelled on the lead page." }, 501);
+      try { calendar = await deps.cal.cancel(appt.calendar_event_id); } catch (e) { return json({ error: e.message }, e.kind === "config" ? 501 : 502); }
+    }
+    await db.patch(`ai_appointments?id=eq.${enc(appt.id)}`, { status: "cancelled",
+      reminders: [...(appt.reminders || []), { type: "cancelled", at: new Date().toISOString(), by: caller.email, calendar_event_deleted: calendar }] });
+    await audit(caller, "appointment_cancel", { table: "ai_appointments", id: appt.id, calendar_event_id: appt.calendar_event_id || null });
+    return json({ ok: true, calendar });
+  }
+
   if (!["pending_confirmation", "rescheduled"].includes(appt.status)) return json({ error: `This appointment is ${appt.status.replace(/_/g, " ")}.` }, 409);
   if (appt.calendar_event_id) return json({ error: "This appointment is already on the calendar. Change it in Google Calendar." }, 409);
   const start = new Date(body.start_at);
@@ -85,4 +101,4 @@ export default async (req) => {
   return json({ ok: true, calendar: !!eventId, buyer_notified: notified, note });
 };
 
-export const config = { path: ["/api/sales/appointments/slots", "/api/sales/appointments/confirm"], method: ["GET", "POST"] };
+export const config = { path: ["/api/sales/appointments/slots", "/api/sales/appointments/confirm", "/api/sales/appointments/cancel"], method: ["GET", "POST"] };

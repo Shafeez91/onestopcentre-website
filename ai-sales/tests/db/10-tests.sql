@@ -1034,4 +1034,35 @@ do $$ declare n0 bigint := (select count(*) from net.calls); r jsonb; cid uuid; 
 end $$;
 rollback;
 
+\echo 'T54 archiving an appointment only hides it: an advisor can archive and restore, no alert, status and reminders unchanged'
+begin;
+create temp table t54 (n bigint, j bigint, ap uuid);
+grant all on t54 to authenticated;
+insert into t54 select (select count(*) from net.calls), (select count(*) from public.ai_automation_jobs where status = 'scheduled'), null;
+set local role authenticated;
+select public.t_login('advisor@test.local');
+do $$ declare l uuid; a uuid; begin
+  l := public.ai_open_lead(public.ai_upsert_contact('0123335555', 'Hana'), null, 't1');
+  insert into public.ai_appointments (lead_id, kind, preferred_text) values (l, 'showroom_visit', 'Sabtu pagi') returning id into a;
+  update t54 set ap = a;
+end $$;
+reset role;
+update t54 set n = (select count(*) from net.calls), j = (select count(*) from public.ai_automation_jobs where status = 'scheduled');
+set local role authenticated;
+select public.t_login('advisor@test.local');
+update public.ai_appointments set archived_at = now(), archived_by = 'advisor@test.local' where id = (select ap from t54);
+reset role;
+do $$ declare a uuid := (select ap from t54); begin
+  assert (select status from public.ai_appointments where id = a) = 'pending_confirmation', 'status unchanged';
+  assert (select archived_by from public.ai_appointments where id = a) = 'advisor@test.local', 'archived by the advisor (RLS allows it)';
+  assert (select count(*) from net.calls) = (select n from t54), 'no Telegram alert for archiving';
+  assert (select count(*) from public.ai_automation_jobs where status = 'scheduled') = (select j from t54), 'jobs untouched';
+end $$;
+set local role authenticated;
+select public.t_login('advisor@test.local');
+update public.ai_appointments set archived_at = null, archived_by = null where id = (select ap from t54);
+reset role;
+do $$ begin assert (select archived_at from public.ai_appointments where id = (select ap from t54)) is null, 'restored'; end $$;
+rollback;
+
 \echo 'ALL DB TESTS PASSED'
