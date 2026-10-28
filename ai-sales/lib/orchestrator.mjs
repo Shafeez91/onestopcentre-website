@@ -172,6 +172,9 @@ export async function respond(p) {
   }, settings.scoring);
   if (changed.length || ctx.lead) actions.push({ type: "update_qualification", qualification, changed, score: scored.score, temperature: scored.temperature, rationale: scored.rationale });
   if (prefId && ctx.projects.some((x) => x.id === prefId)) actions.push({ type: "add_interest", project_id: prefId });
+  // RMK pipeline: enrol on a clear confirmation; move on one stage only from the stage the buyer is at
+  if (data.rmk?.interest === "confirmed" && !ctx.rmk && p.leadId) actions.push({ type: "rmk_enroll", source: "whatsapp" });
+  if (ctx.rmk && data.rmk?.stage_done && data.rmk.stage_done === ctx.rmk.stage && ctx.rmk.stage !== "all_signed") actions.push({ type: "rmk_advance", from: ctx.rmk.stage });
   if (fin && finChanged.length) {
     const res = fin.result, isNew = isNewAssessment(res, finSaved?.result);
     actions.push({ type: "save_financing", inputs: fin.inputs, result: res, changed: finChanged, new_assessment: isNew, profile_id: finSaved?.id || null });
@@ -229,6 +232,10 @@ export async function applyActions(db, { leadId, contactId, result, conversation
         await db.post("ai_financing_assessments", { lead_id: leadId, route: a.result.route, inputs: a.inputs, result: a.result, outcome: a.result.outcome,
           rules_version: a.result.rules_version || null, engine_version: a.result.engine_version || null, source: "ai", created_by: "ai" });
       }
+    } else if (a.type === "rmk_enroll") {
+      await db.rpc("ai_rmk_enroll", { p_lead: leadId, p_source: a.source || "whatsapp", p_by: "ai" });
+    } else if (a.type === "rmk_advance") {
+      await db.rpc("ai_rmk_advance", { p_lead: leadId, p_from: a.from, p_by: "ai", p_via: "ai" });
     } else if (a.type === "add_interest") {
       await db.post("ai_lead_interests?on_conflict=lead_id,project_id", { lead_id: leadId, project_id: a.project_id, interest: "interested" }, { prefer: "resolution=ignore-duplicates" });
     } else if (a.type === "request_appointment") {

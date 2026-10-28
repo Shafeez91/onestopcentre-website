@@ -4,6 +4,7 @@ import { SB, S, can, $, $$, esc, attr, fmtDate, ago, q, act, toast, guardForm, c
 import { normalizePhone, formatPhone } from "../shared/phone.mjs";
 import { scoreLead } from "../shared/scoring.mjs";
 import { loadFinancing, financingSection, bindFinancing } from "./financing.js";
+import { rmkLeadCard, bindRmkLeadCard } from "./rmk.js";
 
 const openStages = () => S.stages.filter((s) => s.active && !s.is_won && !s.is_lost);
 const teamOptions = (sel) => opt("", "— Unassigned —", sel) + [...new Set([...S.team.filter((m) => m.active).map((m) => m.email), S.email])].map((e) => opt(e, e, sel)).join("");
@@ -149,7 +150,7 @@ export async function leadDetail(el, id) {
   const lead = await q(SB.from("ai_leads").select("*, contact:ai_contacts(*)").eq("id", id).maybeSingle());
   if (!lead) { el.innerHTML = empty("Lead not found, or you do not have access."); return; }
   const c = lead.contact;
-  const [acts, tasks, appts, interests, consent, handovers, inbound, fin] = await Promise.all([
+  const [acts, tasks, appts, interests, consent, handovers, inbound, fin, rmkCard] = await Promise.all([
     q(SB.from("ai_activities").select("*").eq("lead_id", id).order("created_at", { ascending: false }).limit(200)),
     q(SB.from("ai_tasks").select("*").eq("lead_id", id).order("status").order("due_at")),
     q(SB.from("ai_appointments").select("*").eq("lead_id", id).order("created_at", { ascending: false })),
@@ -158,6 +159,7 @@ export async function leadDetail(el, id) {
     q(SB.from("ai_handover_events").select("*").eq("lead_id", id).order("created_at", { ascending: false })),
     SB.from("ai_messages").select("id, ai_conversations!inner(contact_id)", { count: "exact", head: true }).eq("ai_conversations.contact_id", c.id).eq("direction", "inbound"),
     loadFinancing(id),
+    rmkLeadCard(id).catch(() => ""),
   ]);
   const qf = lead.qualification || {};
   const sig = qf.signals || {};
@@ -212,6 +214,7 @@ export async function leadDetail(el, id) {
       ${(lead.score_rationale || []).length ? `<details class="why"><summary>Why this score?</summary><table class="mini"><tbody>${lead.score_rationale.map((r) => `<tr><td>${esc(r.label)}</td><td>${r.known ? `${r.points} / ${r.max}` : "unknown"}</td><td><small>${esc(r.detail)}</small></td></tr>`).join("")}</tbody></table></details>` : ""}
     </section>
     ${financingSection(fin)}
+    ${rmkCard}
    </div>
    <div class="col">
     <section class="card"><h2>Projects of interest</h2>
@@ -333,6 +336,7 @@ export async function leadDetail(el, id) {
     const ho = $("#ho", el);
     if (ho) ho.onclick = () => handoverModal(lead, c, interests, reload);
     bindFinancing(el, { leadId: id, contactId: c.id, data: fin, qualification: qf, reload });
+    bindRmkLeadCard(el, id, reload);
   }
   const er = $("#erase", el);
   if (er) er.onclick = () => {

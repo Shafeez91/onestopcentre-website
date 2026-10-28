@@ -325,6 +325,67 @@ test("property projects: 'What the AI knows' shows listing gaps, conflicts and p
   } finally { await ctx.close(); }
 });
 
+test("RMK page: board by stage, overdue shown, stage change and pause through the database functions, settings saved and rescheduled", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    await page.goto(base + "/sales/#/rmk");
+    await page.waitForSelector(".rmk-kpis");
+    assert.match(await page.textContent(".rmk-kpis"), /2\s*RMK leads[\s\S]*1\s*To book unit[\s\S]*1\s*To sign LO, SPA & LA[\s\S]*1\s*Overdue/);
+    assert.match(await page.textContent(".notice"), /RMK follow-ups are off/);
+    const board = await page.textContent(".kanban");
+    assert.match(board, /To book unit\s*1[\s\S]*Buyer replies DONE BOOKED[\s\S]*Test Buyer[\s\S]*Facebook/);
+    assert.match(board, /To sign LO, SPA & LA\s*1[\s\S]*Rina Signer[\s\S]*Needs a person/);
+    await page.goto(base + "/sales/#/rmk?view=list");
+    await page.waitForSelector("[data-stage=L1]");
+    await page.selectOption("[data-stage=L1]", "to_portal");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Stage changed: To apply portal/.test(t.textContent)));
+    assert.deepEqual(writes.find((w) => w.rpc === "ai_rmk_set_stage").body, { p_lead: "L1", p_stage: "to_portal" });
+    page.once("dialog", (d) => d.accept("buyer travelling"));
+    await page.click("[data-pause=L1]");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Paused/.test(t.textContent)));
+    assert.deepEqual(writes.find((w) => w.rpc === "ai_rmk_set_status").body, { p_lead: "L1", p_status: "paused", p_reason: "buyer travelling" });
+    // search
+    await page.goto(base + "/sales/#/rmk?view=list&q=rina");
+    await page.waitForFunction(() => /Rina Signer/.test(document.querySelector("#rmkv")?.textContent || "") && !/Test Buyer/.test(document.querySelector("#rmkv").textContent));
+    assert.equal(await page.inputValue("#rmkf input[name=q]"), "rina");
+    assert.match(await page.textContent("#rmkv"), /Rina Signer/);
+    // settings: switched on, an interval changed, then every active lead is rescheduled
+    await page.goto(base + "/sales/#/rmk?view=settings");
+    await page.waitForSelector("#rmks");
+    await page.check("#rmks input[name=enabled]");
+    await page.fill("#rmks input[name=to_book__follow_up_hours]", "12");
+    await page.fill("#rmks textarea[name=to_book__message_ms]", "Hai {name}, sudah booking RMK? Balas DONE BOOKED.");
+    await page.click("#rmks button.pri");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /RMK settings saved/.test(t.textContent)));
+    const saved = writes.find((w) => w.table === "ai_settings" && w.body?.rmk).body.rmk;
+    assert.equal(saved.enabled, true);
+    assert.deepEqual([saved.stages.to_book.follow_up_hours, saved.stages.to_book.message_ms], [12, "Hai {name}, sudah booking RMK? Balas DONE BOOKED."]);
+    assert.ok(writes.some((w) => w.rpc === "ai_rmk_reschedule_all"));
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("lead page: RMK stage shown for an RMK buyer; 'Add to RMK' for others (asks first)", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  let { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    await page.goto(base + "/sales/#/lead/L1");
+    await page.waitForSelector("#rmkc");
+    assert.match(await page.textContent("#rmkc"), /RMK pipeline\s*To book unit\s*Active/);
+    assert.equal(await page.$("#rmkadd"), null);
+  } finally { await ctx.close(); }
+  ({ page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad, { mutate: (db) => { db.ai_rmk_pipeline = []; } }));
+  try {
+    page.on("dialog", (d) => d.accept());
+    await page.goto(base + "/sales/#/lead/L1");
+    await page.waitForSelector("#rmkadd");
+    await page.selectOption("#rmkadd select[name=source]", "instagram");
+    await page.click("#rmkadd button");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Added to RMK/.test(t.textContent)));
+    assert.deepEqual(writes.find((w) => w.rpc === "ai_rmk_enroll").body, { p_lead: "L1", p_source: "instagram" });
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("integrations: WhatsApp connection check finds the unlinked account and links it", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {

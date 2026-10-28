@@ -5,7 +5,7 @@ import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearD
 
 export const AUTOMATION_DEFAULTS = { smart_follow_up: true, follow_up_delay_hours: 12, follow_up_template: "follow_up", appointment_confirmations: true,
   appointment_reminders: true, appointment_reminder_minutes: [1440, 120], human_reminders: true, human_reminder_minutes: 60 };
-const KIND = { smart_follow_up: "12-hour follow-up", human_reminder: "Reply reminder (retired)", appt_confirmation: "Appointment confirmation", appt_reminder: "Appointment reminder" };
+const KIND = { smart_follow_up: "12-hour follow-up", human_reminder: "Reply reminder (retired)", appt_confirmation: "Appointment confirmation", appt_reminder: "Appointment reminder", rmk_follow_up: "RMK stage reminder" };
 const STATUS = { scheduled: ["Pending", ""], processing: ["Sending", ""], sent: ["Sent", "ok"], skipped: ["Skipped", "warn"], cancelled: ["Cancelled", ""], failed: ["Failed", "alert"] };
 const minutesText = (m) => (m % 1440 === 0 ? m / 1440 + " day" + (m === 1440 ? "" : "s") : m % 60 === 0 ? m / 60 + " h" : m + " min");
 const list = (v) => String(v || "").split(",").map((x) => x.trim()).filter(Boolean).map(Number);

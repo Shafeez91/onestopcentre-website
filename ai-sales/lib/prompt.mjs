@@ -19,7 +19,7 @@ const FINANCING_KEYS = ["route", "age", "basic_salary", "fixed_allowances", "var
 export const REPLY_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["reply", "language", "intent", "agent", "confidence", "facts_used", "qualification_updates", "financing_updates", "appointment_request", "handover", "objection_key"],
+  required: ["reply", "language", "intent", "agent", "confidence", "facts_used", "qualification_updates", "financing_updates", "appointment_request", "handover", "objection_key", "rmk"],
   properties: {
     reply: { ...str, description: "The WhatsApp message to send to the buyer." },
     language: enumOf("ms", "en", "mixed"),
@@ -74,6 +74,14 @@ export const REPLY_SCHEMA = {
       properties: { needed: bool, reason: enumOf("", ...HANDOVER_REASONS), summary: str, next_action: str },
     },
     objection_key: str,
+    rmk: {
+      type: "object", additionalProperties: false, required: ["interest", "stage_done"],
+      description: "RMK (Residensi Metropolitan Kepong) pipeline. \"\" unless it applies.",
+      properties: {
+        interest: { ...enumOf("", "confirmed"), description: "\"confirmed\" only when the buyer has clearly confirmed their enquiry is about Residensi Metropolitan Kepong (RMK)." },
+        stage_done: { ...enumOf("", "new", "to_book", "to_portal", "to_submit_loan", "to_sign"), description: "Set to rmk.stage only when the buyer clearly says they completed that stage's step (e.g. 'dah booking' at to_book)." },
+      },
+    },
   },
 };
 
@@ -89,6 +97,7 @@ export function normalizeReply(d) {
     appointment_request: blanks(d.appointment_request),
     handover: blanks(d.handover),
     objection_key: blank(d.objection_key),
+    rmk: blanks(d.rmk),
   };
 }
 
@@ -151,6 +160,13 @@ ${calendar
 - When the buyer clearly picks one of those slots, set appointment_request.wanted = true and slot_id to that slot's id. Never say the appointment is booked or confirmed yourself: say you are booking it now and a confirmation message will follow. Never offer or accept a time that is not in available_slots; for other times, note their preference in preferred_text and say an advisor will confirm.`
     : "- You can collect a preferred day and time for a showroom visit, viewing, phone/video call or financing discussion (appointment_request). Calendar booking is not connected, so never say an appointment is booked or confirmed: say an advisor will confirm the slot."}
 
+RMK — Residensi Metropolitan Kepong (a RUMAWIP project with its own step-by-step process)
+- If rmk is in the context, this buyer is in the RMK pipeline: new (confirm interest by replying RMK) → to book a unit (reply DONE BOOKED) → register on the RUMAWIP portal (DONE PORTAL) → submit loan documents (DONE SUBMIT LOAN) → sign the LO, SPA & LA (DONE SIGNED) → all signed. Help with the buyer's current_step and tell them the keyword to reply once it is done.
+- If rmk.last_change happened just now, the buyer's message moved them on: thank them and explain the next step.
+- When the buyer clearly says, in any words, that they finished the current step ("dah booking", "portal dah daftar", "dah hantar dokumen", "semua dah sign"), set rmk.stage_done to rmk.stage. If you are not sure the step is fully done, ask, and leave stage_done "". Never move a buyer on for a different step than the current one.
+- RMK can also be a typo or another meaning: if a buyer who is not in the pipeline writes "RMK" or seems to ask about it, ask whether they mean Residensi Metropolitan Kepong. Set rmk.interest "confirmed" only once they clearly confirm.
+- Never use RMK steps, keywords or messages for any other project.
+
 Hand over to a human (handover.needed = true) when:
 - the buyer asks for a person; is ready to book, pay or sign; asks for a special price, extra discount or negotiation; asks legal, tax or contract (SPA) questions; complains or is upset; needs a professional financing assessment; what they asked is genuinely not in the context after checking every field, or the context conflicts on it; you are not confident; or anything sensitive or unusual comes up.\n- Do not hand over just because a figure is INDICATIVE or because you answered a published specification.
 - When handing over, still send a short, polite reply that a human advisor will follow up, and write a useful summary for the advisor (what they want, what was answered, what is outstanding) and a next_action.
@@ -160,7 +176,7 @@ Safety
 - Do not give legal, tax or regulated financial advice. ${c.pdpa_notice_en ? `If a buyer asks how their data is used: ${c.pdpa_notice_en}` : ""}
 
 Output
-Return only the JSON object required by the schema: reply, language, intent, agent (which specialist role you acted as), confidence (0–1), facts_used, qualification_updates, financing_updates (all 0 / "" unless the buyer gave financing figures), appointment_request, handover, objection_key.`;
+Return only the JSON object required by the schema: reply, language, intent, agent (which specialist role you acted as), confidence (0–1), facts_used, qualification_updates, financing_updates (all 0 / "" unless the buyer gave financing figures), appointment_request, handover, objection_key, rmk (both "" unless the RMK rules above apply).`;
 }
 
 const label = (verified, fresh) => (verified ? (fresh ? "VERIFIED" : "STALE") : "INDICATIVE");
@@ -195,6 +211,7 @@ export function renderContext(ctx) {
     active_promotions: ctx.promotions.map((x) => ({ key: `promo:${x.id}`, project_id: x.project_id || "all", title: x.title, details: x.details, conditions: x.conditions, valid_to: x.valid_to, label: "VERIFIED" })),
     knowledge: ctx.knowledge.map((k) => ({ key: `kb:${k.id}`, kind: k.kind, project_id: k.project_id, title: k.title, content: k.content, label: "VERIFIED" })),
     ...(ctx.financingView ? { financing_engine: ctx.financingView } : {}),
+    ...(ctx.rmk ? { rmk: ctx.rmk } : {}),
     ...(ctx.slots ? { available_slots: ctx.slots.map((x) => ({ id: x.id, label: ctx.buyer?.preferred_language === "en" ? x.label_en : x.label_ms, label_en: x.label_en, status: "FREE (VERIFIED)" })) } : {}),
   };
   return `<verified_context>\n${JSON.stringify(payload)}\n</verified_context>`;
