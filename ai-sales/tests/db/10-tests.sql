@@ -1131,37 +1131,37 @@ do $$ declare r jsonb; lid uuid; n0 bigint; j1 uuid; begin
   -- a bare "RMK" from someone not in the pipeline does not enrol them (the AI asks which project)
   r := public.ai_wa_inbound('60123457001', 'Rahim', 'wamid.K0', 'text', 'RMK');
   lid := (r ->> 'lead_id')::uuid;
-  assert not exists (select 1 from public.ai_rmk_pipeline where lead_id = lid), 'keyword alone does not enrol';
+  assert not exists (select 1 from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid), 'keyword alone does not enrol';
   -- the project's name does
   n0 := (select count(*) from net.calls);
   perform public.ai_wa_inbound('60123457001', 'Rahim', 'wamid.K1', 'text', 'Saya berminat Residensi Metropolitan Kepong');
-  assert (select stage || '/' || status || '/' || source from public.ai_rmk_pipeline where lead_id = lid) = 'new/active/whatsapp';
-  assert not exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'rmk_follow_up'), '"new": no reminders until they reply RMK';
+  assert (select stage || '/' || status || '/' || source from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) = 'new/active/whatsapp';
+  assert not exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'workflow_follow_up'), '"new": no reminders until they reply RMK';
   -- RMK → to book: one reminder scheduled for that stage
   perform public.ai_wa_inbound('60123457001', 'Rahim', 'wamid.K2', 'text', 'rmk');
-  assert (select stage from public.ai_rmk_pipeline where lead_id = lid) = 'to_book';
-  select id into j1 from public.ai_automation_jobs where lead_id = lid and kind = 'rmk_follow_up' and status = 'scheduled';
+  assert (select stage from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) = 'to_book';
+  select id into j1 from public.ai_automation_jobs where lead_id = lid and kind = 'workflow_follow_up' and status = 'scheduled';
   assert (select stage || '/' || seq from public.ai_automation_jobs where id = j1) = 'to_book/1';
   assert (select run_at from public.ai_automation_jobs where id = j1) between now() + interval '23 hours' and now() + interval '25 hours';
   -- a keyword out of order changes nothing; a repeated one neither
   perform public.ai_wa_inbound('60123457001', 'Rahim', 'wamid.K3', 'text', 'DONE PORTAL');
   perform public.ai_wa_inbound('60123457001', 'Rahim', 'wamid.K3', 'text', 'DONE PORTAL');   -- redelivered
-  assert (select stage from public.ai_rmk_pipeline where lead_id = lid) = 'to_book';
+  assert (select stage from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) = 'to_book';
   -- DONE BOOKED → to portal: the old reminder is cancelled, a new one for the new stage
   perform public.ai_wa_inbound('60123457001', 'Rahim', 'wamid.K4', 'text', 'Done booked!');
-  assert (select stage from public.ai_rmk_pipeline where lead_id = lid) = 'to_portal';
+  assert (select stage from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) = 'to_portal';
   assert (select status || '/' || reason from public.ai_automation_jobs where id = j1) = 'cancelled/stage changed';
-  assert (select count(*) from public.ai_automation_jobs where lead_id = lid and kind = 'rmk_follow_up' and status = 'scheduled' and stage = 'to_portal') = 1;
+  assert (select count(*) from public.ai_automation_jobs where lead_id = lid and kind = 'workflow_follow_up' and status = 'scheduled' and stage = 'to_portal') = 1;
   perform public.ai_wa_inbound('60123457001', 'Rahim', 'wamid.K5', 'text', 'DONE BOOKED');  -- again: no change
-  assert (select stage from public.ai_rmk_pipeline where lead_id = lid) = 'to_portal';
+  assert (select stage from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) = 'to_portal';
   perform public.ai_wa_inbound('60123457001', 'Rahim', 'wamid.K6', 'text', 'DONE PORTAL');
   perform public.ai_wa_inbound('60123457001', 'Rahim', 'wamid.K7', 'text', 'DONE SUBMIT LOAN');
-  assert (select stage from public.ai_rmk_pipeline where lead_id = lid) = 'to_sign';
-  assert (select run_at from public.ai_automation_jobs where lead_id = lid and kind = 'rmk_follow_up' and status = 'scheduled') between now() + interval '47 hours' and now() + interval '49 hours';
+  assert (select stage from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) = 'to_sign';
+  assert (select run_at from public.ai_automation_jobs where lead_id = lid and kind = 'workflow_follow_up' and status = 'scheduled') between now() + interval '47 hours' and now() + interval '49 hours';
   perform public.ai_wa_inbound('60123457001', 'Rahim', 'wamid.K8', 'text', 'DONE SIGNED');
-  assert (select stage || '/' || status from public.ai_rmk_pipeline where lead_id = lid) = 'all_signed/completed';
-  assert not exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'rmk_follow_up' and status = 'scheduled'), 'all signed: nothing pending';
-  assert (select count(*) from public.ai_rmk_pipeline, jsonb_array_elements(history) h where lead_id = lid and h ? 'from') = 5, 'five stage moves recorded';
+  assert (select stage || '/' || status from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) = 'all_signed/completed';
+  assert not exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'workflow_follow_up' and status = 'scheduled'), 'all signed: nothing pending';
+  assert (select count(*) from public.ai_workflow_leads, jsonb_array_elements(history) h where workflow_id = public.ai_rmk_wf() and lead_id = lid and h ? 'from') = 5, 'five stage moves recorded';
   assert exists (select 1 from public.ai_messages m join public.ai_conversations v on v.id = m.conversation_id where v.lead_id = lid and m.body = 'DONE SIGNED'), 'conversation kept';
   assert (select count(*) from net.calls) = n0, 'no Telegram for RMK messages or stage moves';
 end $$;
@@ -1169,47 +1169,174 @@ rollback;
 
 \echo 'T57 RMK isolation: other projects untouched; a project change pauses RMK; staff stage/pause; website lead on the RMK listing joins'
 begin;
-update public.ai_settings set notifications = notifications || '{"daily_digest": false}', rmk = rmk || '{"project_id": "t1"}';
+update public.ai_settings set notifications = notifications || '{"daily_digest": false}';
+update public.ai_workflows set project_id = 't1' where key = 'rmk';
 do $$ declare r jsonb; other uuid; lid uuid; w uuid; begin
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   -- a lead for another project sending the same keywords: no pipeline, no RMK jobs
   r := public.ai_wa_inbound('60123457002', 'Mira Buyer', 'wamid.I1', 'text', 'DONE BOOKED');
   other := (r ->> 'lead_id')::uuid;
   update public.ai_leads set primary_project_id = 't2' where id = other;
-  assert not exists (select 1 from public.ai_rmk_pipeline where lead_id = other);
-  assert not exists (select 1 from public.ai_automation_jobs where lead_id = other and kind = 'rmk_follow_up');
+  assert not exists (select 1 from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = other);
+  assert not exists (select 1 from public.ai_automation_jobs where lead_id = other and kind = 'workflow_follow_up');
   -- a lead set to the RMK listing joins; moved to another project it is paused and its reminders stop
   r := public.ai_wa_inbound('60123457003', 'Siti', 'wamid.I2', 'text', 'Hi');
   lid := (r ->> 'lead_id')::uuid;
   update public.ai_leads set primary_project_id = 't1' where id = lid;
-  assert (select stage from public.ai_rmk_pipeline where lead_id = lid) = 'new';
+  assert (select stage from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) = 'new';
   perform public.ai_wa_inbound('60123457003', 'Siti', 'wamid.I3', 'text', 'RMK');
-  assert exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'rmk_follow_up' and status = 'scheduled');
+  assert exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'workflow_follow_up' and status = 'scheduled');
   update public.ai_leads set primary_project_id = 't2' where id = lid;
-  assert (select status || '/' || status_reason from public.ai_rmk_pipeline where lead_id = lid) like 'paused/project changed to %';
-  assert not exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'rmk_follow_up' and status = 'scheduled');
+  assert (select status || '/' || status_reason from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) like 'paused/project changed to %';
+  assert not exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'workflow_follow_up' and status = 'scheduled');
   perform public.ai_wa_inbound('60123457003', 'Siti', 'wamid.I4', 'text', 'DONE BOOKED');
-  assert (select stage from public.ai_rmk_pipeline where lead_id = lid) = 'to_book', 'paused: keywords do not move it';
+  assert (select stage from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) = 'to_book', 'paused: keywords do not move it';
   update public.ai_leads set primary_project_id = 't1' where id = lid;
-  assert (select status from public.ai_rmk_pipeline where lead_id = lid) = 'active', 'back on RMK: resumed';
-  assert exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'rmk_follow_up' and status = 'scheduled');
+  assert (select status from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) = 'active', 'back on RMK: resumed';
+  assert exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'workflow_follow_up' and status = 'scheduled');
   -- staff: viewers cannot change anything; advisors can set a stage and pause
   perform public.t_login('viewer@test.local');
   begin perform public.ai_rmk_set_stage(lid, 'to_sign'); assert false, 'viewer changed a stage'; exception when raise_exception then null; end;
   perform public.t_login('advisor@test.local');
   perform public.ai_rmk_set_stage(lid, 'to_submit_loan');
-  assert (select stage from public.ai_rmk_pipeline where lead_id = lid) = 'to_submit_loan';
+  assert (select stage from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid) = 'to_submit_loan';
   perform public.ai_rmk_set_status(lid, 'paused', 'buyer travelling');
-  assert not exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'rmk_follow_up' and status = 'scheduled');
+  assert not exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'workflow_follow_up' and status = 'scheduled');
   perform public.ai_rmk_set_status(lid, 'active');
-  assert (select count(*) from public.ai_automation_jobs where lead_id = lid and kind = 'rmk_follow_up' and status = 'scheduled' and stage = 'to_submit_loan') = 1;
+  assert (select count(*) from public.ai_automation_jobs where lead_id = lid and kind = 'workflow_follow_up' and status = 'scheduled' and stage = 'to_submit_loan') = 1;
   -- a website enquiry for the RMK listing joins with source "website"
   perform set_config('request.jwt.claims', '{"role":"anon"}', true);
   set local role anon;
   insert into public.leads (name, phone, project, message, consent) values ('Web RMK', '0127771111', 'Test Residence', 'RMK info', true);
   reset role;
   select a.lead_id into w from public.ai_activities a where a.kind = 'website_enquiry' and a.body = 'RMK info';
-  assert (select stage || '/' || source from public.ai_rmk_pipeline where lead_id = w) = 'new/website', coalesce((select stage || '/' || source from public.ai_rmk_pipeline where lead_id = w), 'not enrolled; lead project=' || coalesce((select primary_project_id from public.ai_leads where id = w), 'null'));
+  assert (select stage || '/' || source from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = w) = 'new/website', coalesce((select stage || '/' || source from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = w), 'not enrolled; lead project=' || coalesce((select primary_project_id from public.ai_leads where id = w), 'null'));
+end $$;
+rollback;
+
+\echo 'T58 RMK copied into the workflow tables unchanged: stages, keywords, intervals, templates, messages, sending switch'
+begin;
+do $$ declare w public.ai_workflows; c jsonb := (select rmk from public.ai_settings where id = 1); r record; begin
+  select * into w from public.ai_workflows where key = 'rmk';
+  assert w.id is not null and w.sending_enabled = false and w.pause_if_active_hours = 6 and w.status = 'active';
+  assert (select string_agg(key, ',' order by position) from public.ai_workflow_stages where workflow_id = w.id) = 'new,to_book,to_portal,to_submit_loan,to_sign,all_signed';
+  assert (select follow_up_hours || '/' || max_follow_ups || '/' || template from public.ai_workflow_stages where workflow_id = w.id and key = 'to_book') = '24/3/rmk_to_book';
+  assert (select follow_up_hours || '/' || template from public.ai_workflow_stages where workflow_id = w.id and key = 'to_sign') = '48/rmk_to_sign';
+  for r in select * from public.ai_workflow_stages where workflow_id = w.id and key <> 'all_signed' and key <> 'new' loop
+    assert r.message_ms = c -> 'stages' -> r.key ->> 'message_ms' and r.message_en = c -> 'stages' -> r.key ->> 'message_en', 'message kept: ' || r.key;
+  end loop;
+  assert (select keywords from public.ai_workflow_stages where workflow_id = w.id and key = 'to_book') = array['DONE BOOKED','DONE BOOKING','DONE BOOK'];
+  assert (select is_final from public.ai_workflow_stages where workflow_id = w.id and key = 'all_signed');
+  assert exists (select 1 from public.ai_workflow_changes where workflow_id = w.id and action = 'created');
+  assert public.ai_wf_next(w.id, 'to_sign') = 'all_signed' and public.ai_wf_next(w.id, 'all_signed') is null;
+end $$;
+rollback;
+
+\echo 'T59 workflow builder: managers only, whole-workflow validation, new project workflow works end to end, audit trail'
+begin;
+update public.ai_settings set notifications = notifications || '{"daily_digest": false}';
+create temp table t59 (wid uuid);
+grant all on t59 to authenticated;
+do $$ declare wid uuid; p jsonb; r jsonb; lid uuid; jn uuid; n0 bigint; begin
+  p := '{"key":"heights","name":"Test Heights buyers","project_id":"t2","sending_enabled":true,"pause_if_active_hours":0,
+         "entry":{"message_phrases":["test heights"],"ad_phrases":["heights launch"]},
+         "stages":[
+           {"key":"interested","name":"Interested","keywords":["YES HEIGHTS"],"follow_up_hours":0,"max_follow_ups":0},
+           {"key":"docs","name":"Send documents","keywords":["DONE DOCS","Docs sent"],"follow_up_hours":12,"max_follow_ups":2,"template":"heights_docs","message_ms":"Hai {{name}}, sila hantar dokumen untuk {{project_name}}.","message_en":"Hi {{name}}, please send the documents for {{project_name}}."},
+           {"key":"skipme","name":"Inactive step","keywords":["DONE SKIP"],"active":false},
+           {"key":"visit","name":"Visit","keywords":["DONE VISIT"],"human_on_enter":true},
+           {"key":"done","name":"Completed","is_final":true}]}';
+  -- viewers and advisors cannot change workflows
+  perform public.t_login('advisor@test.local');
+  begin perform public.ai_wf_save(p); assert false, 'advisor saved a workflow'; exception when raise_exception then null; end;
+  perform public.t_login('manager@test.local');
+  -- the whole workflow is checked: duplicate keyword, no final stage, reminders without a message, a missing next stage
+  begin perform public.ai_wf_save(jsonb_set(p, '{stages,1,keywords}', '["YES HEIGHTS"]')); assert false, 'duplicate keyword'; exception when raise_exception then null; end;
+  begin perform public.ai_wf_save(jsonb_set(p, '{stages,4,is_final}', 'false')); assert false, 'no final stage'; exception when raise_exception then null; end;
+  begin perform public.ai_wf_save(jsonb_set(jsonb_set(p, '{stages,1,message_ms}', '""'), '{stages,1,message_en}', '""')); assert false, 'no message'; exception when raise_exception then null; end;
+  begin perform public.ai_wf_save(jsonb_set(p, '{stages,0,next_stage_key}', '"nowhere"')); assert false, 'bad next stage'; exception when raise_exception then null; end;
+  begin perform public.ai_wf_save(jsonb_set(p, '{key}', '"rmk"')); assert false, 'key taken'; exception when raise_exception then null; end;
+  assert not exists (select 1 from public.ai_workflows where key = 'heights'), 'nothing saved by a refused save';
+  wid := public.ai_wf_save(p);
+  insert into t59 values (wid);
+  assert (select count(*) from public.ai_workflow_stages where workflow_id = wid) = 5;
+  assert exists (select 1 from public.ai_workflow_changes where workflow_id = wid and action = 'created' and by = 'manager@test.local');
+  -- a second active workflow for the same project is refused
+  begin perform public.ai_wf_save(jsonb_set(p, '{key}', '"heights2"')); assert false, 'two workflows per project'; exception when raise_exception then null; end;
+
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123458001', 'Hana', 'wamid.W1', 'text', 'Nak tahu pasal Test Heights');
+  lid := (r ->> 'lead_id')::uuid;
+  n0 := (select count(*) from net.calls);   -- after the new-client alert
+  assert (select stage || '/' || source from public.ai_workflow_leads where workflow_id = wid and lead_id = lid) = 'interested/whatsapp', 'entry phrase enrols';
+  assert not exists (select 1 from public.ai_workflow_leads where workflow_id = public.ai_rmk_wf() and lead_id = lid), 'not in RMK';
+  -- RMK keywords mean nothing here; this workflow's do
+  perform public.ai_wa_inbound('60123458001', 'Hana', 'wamid.W2', 'text', 'DONE BOOKED');
+  perform public.ai_wa_inbound('60123458001', 'Hana', 'wamid.W3', 'text', 'yes heights!');
+  assert (select stage from public.ai_workflow_leads where workflow_id = wid and lead_id = lid) = 'docs';
+  select id into jn from public.ai_automation_jobs where workflow_id = wid and lead_id = lid and status = 'scheduled';
+  assert (select kind || '/' || stage || '/' || seq from public.ai_automation_jobs where id = jn) = 'workflow_follow_up/docs/1';
+  assert (select run_at from public.ai_automation_jobs where id = jn) between now() + interval '11 hours' and now() + interval '13 hours';
+  -- an alias works too; the inactive stage is skipped; entering "Visit" opens a follow-up task for a person
+  perform public.ai_wa_inbound('60123458001', 'Hana', 'wamid.W4', 'text', 'Docs sent');
+  assert (select stage from public.ai_workflow_leads where workflow_id = wid and lead_id = lid) = 'visit', 'inactive stage skipped';
+  assert (select status from public.ai_automation_jobs where id = jn) = 'cancelled';
+  assert exists (select 1 from public.ai_tasks where lead_id = lid and status = 'open' and source_key like 'wf-heights:visit:%'), 'person follows up on entering Visit';
+
+  -- reorder + explicit next stage: "visit" now goes straight to "done"; renaming a stage keeps its leads
+  perform public.t_login('manager@test.local');
+  p := public.ai_wf_snapshot(wid);
+  p := jsonb_set(p, '{stages,3,name}', '"Showroom visit"');
+  perform public.ai_wf_save(p);
+  assert (select name from public.ai_workflow_stages where workflow_id = wid and key = 'visit') = 'Showroom visit';
+  assert (select stage from public.ai_workflow_leads where workflow_id = wid and lead_id = lid) = 'visit';
+  assert (select count(*) from public.ai_workflow_changes where workflow_id = wid) = 2, 'each save recorded';
+  assert (select before -> 'stages' -> 3 ->> 'name' from public.ai_workflow_changes where workflow_id = wid and action = 'updated') = 'Visit';
+  -- archiving a stage that has leads needs a stage to move them to
+  begin perform public.ai_wf_save(jsonb_set(p, '{stages,3,archived}', 'true')); assert false, 'archived a stage with leads'; exception when raise_exception then null; end;
+  perform public.ai_wf_save(jsonb_set(jsonb_set(p, '{stages,3,archived}', 'true'), '{stages,3,move_to}', '"docs"'));
+  assert (select stage from public.ai_workflow_leads where workflow_id = wid and lead_id = lid) = 'docs', 'moved off the archived stage';
+  assert exists (select 1 from public.ai_automation_jobs where workflow_id = wid and lead_id = lid and status = 'scheduled'), 'reminders for the new stage';
+  assert public.ai_wf_next(wid, 'docs') = 'done', 'archived and inactive stages are skipped';
+  -- archiving the workflow stops its reminders; the leads and history stay
+  perform public.ai_wf_save(jsonb_set(public.ai_wf_snapshot(wid), '{status}', '"archived"'));
+  assert not exists (select 1 from public.ai_automation_jobs where workflow_id = wid and status = 'scheduled');
+  assert exists (select 1 from public.ai_workflow_leads where workflow_id = wid and lead_id = lid);
+  assert exists (select 1 from public.ai_workflow_changes where workflow_id = wid and action = 'archived');
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  perform public.ai_wa_inbound('60123458001', 'Hana', 'wamid.W5', 'text', 'DONE DOCS');
+  assert (select stage from public.ai_workflow_leads where workflow_id = wid and lead_id = lid) = 'docs', 'archived workflow: keywords do nothing';
+  assert (select count(*) from net.calls) = n0 + 1, 'only the one follow-up task went to Telegram';
+end $$;
+rollback;
+
+\echo 'T60 workflows: ad entry, project listing entry/pause, staff moves, viewers read only'
+begin;
+update public.ai_settings set notifications = notifications || '{"daily_digest": false}';
+do $$ declare wid uuid; r jsonb; lid uuid; n int; begin
+  perform public.t_login('manager@test.local');
+  wid := public.ai_wf_save('{"key":"res","name":"Test Residence","project_id":"t1","entry":{"ad_phrases":["test residence"]},
+    "stages":[{"key":"a","name":"A","keywords":["DONE A"]},{"key":"b","name":"B","keywords":["DONE B"]},{"key":"z","name":"Done","is_final":true}]}');
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123458002', 'Ali', 'wamid.X1', 'text', 'Hi');
+  lid := (r ->> 'lead_id')::uuid;
+  n := public.ai_wf_enroll_from_ad(lid, 'Unrelated ad', 'facebook');
+  assert n = 0 and not exists (select 1 from public.ai_workflow_leads where lead_id = lid);
+  n := public.ai_wf_enroll_from_ad(lid, 'Test Residence — new launch', 'instagram');
+  assert n = 1 and (select source from public.ai_workflow_leads where workflow_id = wid and lead_id = lid) = 'instagram';
+  -- moved to another project: paused; back: resumed
+  update public.ai_leads set primary_project_id = 't2' where id = lid;
+  assert (select status from public.ai_workflow_leads where workflow_id = wid and lead_id = lid) = 'paused';
+  update public.ai_leads set primary_project_id = 't1' where id = lid;
+  assert (select status from public.ai_workflow_leads where workflow_id = wid and lead_id = lid) = 'active';
+  -- staff: viewers read but cannot move; advisors move and complete
+  perform public.t_login('viewer@test.local');
+  assert (select count(*) from public.ai_workflows) >= 2, 'viewers can read workflows';
+  begin perform public.ai_wf_set_stage(wid, lid, 'b'); assert false, 'viewer moved a lead'; exception when raise_exception then null; end;
+  perform public.t_login('advisor@test.local');
+  perform public.ai_wf_set_stage(wid, lid, 'z');
+  assert (select stage || '/' || status from public.ai_workflow_leads where workflow_id = wid and lead_id = lid) = 'z/completed';
+  begin perform public.ai_wf_set_stage(wid, lid, 'nope'); assert false, 'unknown stage'; exception when raise_exception then null; end;
 end $$;
 rollback;
 

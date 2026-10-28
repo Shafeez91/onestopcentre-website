@@ -325,63 +325,175 @@ test("property projects: 'What the AI knows' shows listing gaps, conflicts and p
   } finally { await ctx.close(); }
 });
 
-test("RMK page: board by stage, overdue shown, stage change and pause through the database functions, settings saved and rescheduled", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+const toastSeen = (page, re) => page.waitForFunction((src) => [...document.querySelectorAll(".toast")].some((t) => new RegExp(src).test(t.textContent)), re.source);
+
+test("workflow page: board by stage, overdue shown, stage change and pause through the database functions; the old RMK link still works", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {
     await page.goto(base + "/sales/#/rmk");
-    await page.waitForSelector(".rmk-kpis");
-    assert.match(await page.textContent(".rmk-kpis"), /2\s*RMK leads[\s\S]*1\s*To book unit[\s\S]*1\s*To sign LO, SPA & LA[\s\S]*1\s*Overdue/);
-    assert.match(await page.textContent(".notice"), /RMK follow-ups are off/);
+    await page.waitForSelector(".wf-kpis");
+    assert.match(await page.textContent(".wf-kpis"), /2\s*Leads[\s\S]*1\s*To book unit[\s\S]*1\s*To sign LO, SPA & LA[\s\S]*1\s*Overdue/);
+    assert.match(await page.textContent(".notice"), /Sending is off/);
     const board = await page.textContent(".kanban");
     assert.match(board, /To book unit\s*1[\s\S]*Buyer replies DONE BOOKED[\s\S]*Test Buyer[\s\S]*Facebook/);
     assert.match(board, /To sign LO, SPA & LA\s*1[\s\S]*Rina Signer[\s\S]*Needs a person/);
-    await page.goto(base + "/sales/#/rmk?view=list");
+    assert.equal(await page.getAttribute("[data-nav=workflows]", "class"), "on");
+    await page.goto(base + "/sales/#/workflow/rmk?view=list");
     await page.waitForSelector("[data-stage=L1]");
     await page.selectOption("[data-stage=L1]", "to_portal");
-    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Stage changed: To apply portal/.test(t.textContent)));
-    assert.deepEqual(writes.find((w) => w.rpc === "ai_rmk_set_stage").body, { p_lead: "L1", p_stage: "to_portal" });
+    await toastSeen(page, /Stage changed: To apply portal/);
+    assert.deepEqual(writes.find((w) => w.rpc === "ai_wf_set_stage").body, { p_wf: "WF1", p_lead: "L1", p_stage: "to_portal" });
     page.once("dialog", (d) => d.accept("buyer travelling"));
     await page.click("[data-pause=L1]");
-    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Paused/.test(t.textContent)));
-    assert.deepEqual(writes.find((w) => w.rpc === "ai_rmk_set_status").body, { p_lead: "L1", p_status: "paused", p_reason: "buyer travelling" });
-    // search
-    await page.goto(base + "/sales/#/rmk?view=list&q=rina");
-    await page.waitForFunction(() => /Rina Signer/.test(document.querySelector("#rmkv")?.textContent || "") && !/Test Buyer/.test(document.querySelector("#rmkv").textContent));
-    assert.equal(await page.inputValue("#rmkf input[name=q]"), "rina");
-    assert.match(await page.textContent("#rmkv"), /Rina Signer/);
-    // settings: switched on, an interval changed, then every active lead is rescheduled
-    await page.goto(base + "/sales/#/rmk?view=settings");
-    await page.waitForSelector("#rmks");
-    await page.check("#rmks input[name=enabled]");
-    await page.fill("#rmks input[name=to_book__follow_up_hours]", "12");
-    await page.fill("#rmks textarea[name=to_book__message_ms]", "Hai {name}, sudah booking RMK? Balas DONE BOOKED.");
-    await page.click("#rmks button.pri");
-    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /RMK settings saved/.test(t.textContent)));
-    const saved = writes.find((w) => w.table === "ai_settings" && w.body?.rmk).body.rmk;
-    assert.equal(saved.enabled, true);
-    assert.deepEqual([saved.stages.to_book.follow_up_hours, saved.stages.to_book.message_ms], [12, "Hai {name}, sudah booking RMK? Balas DONE BOOKED."]);
-    assert.ok(writes.some((w) => w.rpc === "ai_rmk_reschedule_all"));
+    await toastSeen(page, /Paused/);
+    assert.deepEqual(writes.find((w) => w.rpc === "ai_wf_set_status").body, { p_wf: "WF1", p_lead: "L1", p_status: "paused", p_reason: "buyer travelling" });
+    await page.goto(base + "/sales/#/workflow/rmk?view=list&q=rina");
+    await page.waitForFunction(() => /Rina Signer/.test(document.querySelector("#wfv")?.textContent || "") && !/Test Buyer/.test(document.querySelector("#wfv").textContent));
+    assert.equal(await page.inputValue("#wff input[name=q]"), "rina");
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
 
-test("lead page: RMK stage shown for an RMK buyer; 'Add to RMK' for others (asks first)", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+test("workflow list and new workflow: cards with real counts; a copy of RMK for another project is created with sending off", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.desktop);
+  try {
+    await page.goto(base + "/sales/#/workflows");
+    await page.waitForSelector(".wf-card");
+    const c = await page.textContent(".wf-card");
+    assert.match(c, /RMK — Residensi Metropolitan Kepong[\s\S]*Sending off[\s\S]*6 stages[\s\S]*2\s*Leads[\s\S]*1\s*Active[\s\S]*1\s*Need a person/);
+    assert.match(await page.textContent(".wf-flow"), /New RMK enquiry\s*→\s*To book unit[\s\S]*All signed/);
+    await page.click("#wfnew");
+    await page.fill("#wfn input[name=name]", "Test Residence buyers");
+    assert.equal(await page.inputValue("#wfn input[name=key]"), "test_residence_buyers");
+    await page.selectOption("#wfn select[name=project_id]", "t1");
+    await page.selectOption("#wfn select[name=from]", "WF1");
+    await page.click("#wfn button.pri");
+    await toastSeen(page, /Workflow created/);
+    const p = writes.find((w) => w.rpc === "ai_wf_save").body.p;
+    assert.deepEqual([p.id, p.key, p.name, p.project_id, p.sending_enabled, p.status], [undefined, "test_residence_buyers", "Test Residence buyers", "t1", false, "active"]);
+    assert.deepEqual(p.stages.map((s) => [s.key, s.id, s.follow_up_hours, s.template]), [["new", undefined, 0, ""], ["to_book", undefined, 24, "rmk_to_book"], ["to_portal", undefined, 24, "rmk_to_portal"],
+      ["to_submit_loan", undefined, 48, "rmk_to_submit_loan"], ["to_sign", undefined, 48, "rmk_to_sign"], ["all_signed", undefined, 0, ""]]);
+    await page.waitForFunction(() => location.hash === "#/workflow/test_residence_buyers?view=stages");
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("stage builder: edit interval and message with live preview, add / reorder / archive stages, validation before saving, one save with every stage", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    page.on("dialog", (d) => d.accept());
+    await page.goto(base + "/sales/#/workflow/rmk?view=stages");
+    await page.waitForSelector("#wfb");
+    const card = (i) => `#wfb details.wf-stage[data-i="${i}"]`;
+    assert.match(await page.textContent(`${card(1)} summary`), /2\s*To book unit[\s\S]*reply DONE BOOKED · every 24 h × 3 · template rmk_to_book/);
+    await page.click(`${card(1)} summary`);
+    await page.fill(`${card(1)} input[data-f=follow_up_hours]`, "12");
+    await page.fill(`${card(1)} textarea[data-f=message_ms]`, "Hai ");
+    await page.click(`${card(1)} button[data-var=name]`);
+    await page.type(`${card(1)} textarea[data-f=message_ms]`, ", langkah: ");
+    await page.click(`${card(1)} button[data-var=current_stage]`);
+    await page.type(`${card(1)} textarea[data-f=message_ms]`, ". Balas ");
+    await page.click(`${card(1)} button[data-var=keyword]`);
+    assert.equal(await page.inputValue(`${card(1)} textarea[data-f=message_ms]`), "Hai {{name}}, langkah: {{current_stage}}. Balas {{keyword}}");
+    assert.equal(await page.textContent(`${card(1)} [data-pv=ms]`), "Hai Aina, langkah: To book unit. Balas DONE BOOKED");
+    // a new stage goes before the final one; a keyword already used elsewhere is caught before saving
+    await page.click("#wfadd");
+    const added = card(5);
+    await page.fill(`${added} input[data-f=name]`, "Key collection");
+    await page.fill(`${added} input[data-f=key]`, "keys");
+    await page.fill(`${added} input[data-f=keywords]`, "done booked");
+    await page.fill(`${added} textarea[data-f=message_ms]`, "Hai {{name}}, kunci sedia.");
+    await page.click("#wfb button.pri");
+    await page.waitForSelector("#wferr .error");
+    assert.match(await page.textContent("#wferr"), /Keyword “done booked” is used by “To book unit” and “Key collection”/);
+    assert.ok(!writes.some((w) => w.rpc === "ai_wf_save"), "nothing saved while invalid");
+    await page.fill(`${added} input[data-f=keywords]`, "DONE KEYS, Kunci dah ambil");
+    // move it up above "To sign"; archive "To apply portal" (no leads there)
+    await page.click(`${added} button[data-op=up]`);
+    await page.click(`${card(2)} summary`);
+    await page.click(`${card(2)} button[data-op=archive]`);
+    await page.fill("#wfb input[name=change_note]", "shorter booking reminder");
+    await page.click("#wfb button.pri");
+    await toastSeen(page, /Workflow saved/);
+    const p = writes.find((w) => w.rpc === "ai_wf_save").body.p;
+    assert.equal(p.change_note, "shorter booking reminder");
+    assert.deepEqual(p.stages.map((s) => [s.key, !!s.archived]), [["new", false], ["to_book", false], ["to_portal", true], ["to_submit_loan", false], ["keys", false], ["to_sign", false], ["all_signed", false]]);
+    const tb = p.stages[1];
+    assert.deepEqual([tb.id, tb.follow_up_hours, tb.max_follow_ups, tb.template, tb.message_ms], ["S-to_book", 12, 3, "rmk_to_book", "Hai {{name}}, langkah: {{current_stage}}. Balas {{keyword}}"]);
+    assert.deepEqual(p.stages[4].keywords, ["DONE KEYS", "Kunci dah ambil"]);
+    assert.equal(p.stages[4].id, undefined);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("stage builder: archiving a stage that has leads asks where to move them; unsaved edits survive a reload", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.phone);
+  try {
+    page.on("dialog", (d) => d.accept());
+    await page.goto(base + "/sales/#/workflow/rmk?view=stages");
+    await page.waitForSelector("#wfb");
+    await page.click('#wfb details.wf-stage[data-i="1"] summary');
+    await page.fill('#wfb details.wf-stage[data-i="1"] input[data-f=name]', "Book a unit");
+    await page.reload();
+    await page.waitForSelector("#wfb .notice");
+    assert.match(await page.textContent("#wfb .notice"), /Unsaved changes restored/);
+    await page.click('#wfb details.wf-stage[data-i="1"] summary');
+    assert.equal(await page.inputValue('#wfb details.wf-stage[data-i="1"] input[data-f=name]'), "Book a unit");
+    await page.click('#wfb details.wf-stage[data-i="1"] button[data-op=archive]');
+    await page.click("#wfb button.pri");
+    await page.waitForSelector("#wferr .error");
+    assert.match(await page.textContent("#wferr"), /choose where to move its leads/);
+    await page.selectOption('#wfb details.wf-stage[data-i="1"] select[data-f=move_to]', "to_portal");
+    await page.click("#wfb button.pri");
+    await toastSeen(page, /Workflow saved/);
+    const st = writes.find((w) => w.rpc === "ai_wf_save").body.p.stages[1];
+    assert.deepEqual([st.key, st.archived, st.move_to, st.name], ["to_book", true, "to_portal", "Book a unit"]);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("workflow settings: entry rules and sending saved in one call; history lists what changed", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    page.on("dialog", (d) => d.accept());
+    await page.goto(base + "/sales/#/workflow/rmk?view=settings");
+    await page.waitForSelector("#wfs");
+    assert.equal(await page.inputValue("#wfs input[name=ad_phrases]"), "metropolitan kepong, RMK");
+    await page.check("#wfs input[name=sending_enabled]");
+    await page.fill("#wfs input[name=message_phrases]", "metropolitan kepong, residensi kepong");
+    await page.selectOption("#wfs select[name=project_id]", "t1");
+    await page.click("#wfs button.pri");
+    await toastSeen(page, /Settings saved/);
+    const p = writes.find((w) => w.rpc === "ai_wf_save").body.p;
+    assert.deepEqual([p.id, p.sending_enabled, p.project_id, p.entry.message_phrases, p.stages.length], ["WF1", true, "t1", ["metropolitan kepong", "residensi kepong"], 6]);
+    await page.goto(base + "/sales/#/workflow/rmk?view=history");
+    await page.waitForSelector(".timeline");
+    const h = await page.textContent("#wfv");
+    assert.match(h, /updated by manager@test\.local — “shorter booking reminder”/);
+    assert.match(h, /Stage added: Extra step/);
+    assert.match(h, /To book unit: interval/);
+    assert.match(h, /Test Buyer:\s*New RMK enquiry → To book unit/);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("lead page: the buyer's workflow stage is shown; 'Add to workflow' for others (asks first)", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   let { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {
     await page.goto(base + "/sales/#/lead/L1");
-    await page.waitForSelector("#rmkc");
-    assert.match(await page.textContent("#rmkc"), /RMK pipeline\s*To book unit\s*Active/);
-    assert.equal(await page.$("#rmkadd"), null);
+    await page.waitForSelector("#wfc");
+    assert.match(await page.textContent("#wfc"), /Follow-up workflows\s*RMK — Residensi Metropolitan Kepong: To book unit\s*Active/);
+    assert.equal(await page.$("#wfadd"), null);
   } finally { await ctx.close(); }
-  ({ page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad, { mutate: (db) => { db.ai_rmk_pipeline = []; } }));
+  ({ page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad, { mutate: (db) => { db.ai_workflow_leads = []; } }));
   try {
     page.on("dialog", (d) => d.accept());
     await page.goto(base + "/sales/#/lead/L1");
-    await page.waitForSelector("#rmkadd");
-    await page.selectOption("#rmkadd select[name=source]", "instagram");
-    await page.click("#rmkadd button");
-    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Added to RMK/.test(t.textContent)));
-    assert.deepEqual(writes.find((w) => w.rpc === "ai_rmk_enroll").body, { p_lead: "L1", p_source: "instagram" });
+    await page.waitForSelector("#wfadd");
+    await page.selectOption("#wfadd select[name=source]", "instagram");
+    await page.click("#wfadd button");
+    await toastSeen(page, /Added to RMK/);
+    assert.deepEqual(writes.find((w) => w.rpc === "ai_wf_enroll").body, { p_wf: "WF1", p_lead: "L1", p_source: "instagram" });
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });

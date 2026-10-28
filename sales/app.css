@@ -274,10 +274,24 @@ dialog::backdrop{background:rgba(6,15,38,.5)}
 .close-appt{display:grid;gap:4px}
 .close-appt .btn{justify-self:start;margin-top:8px}
 .close-appt .note{margin:0}
-.rmk-kpis{grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
 .kcard.overdue,tr.overdue td{border-left:3px solid var(--bad)}
-.rmk-stage{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.rmk-stage legend{font-weight:700;padding:0 6px}
-.rmk-stage .full{grid-column:1/-1}
-@media (max-width:600px){.rmk-stage{grid-template-columns:1fr}}
+/* follow-up workflows */
+.wf-kpis{grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
+.wf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr));gap:14px;margin-top:12px}
+.wf-card .wf-card-h{display:flex;gap:8px;align-items:flex-start;justify-content:space-between}
+.wf-card h2 a{color:inherit;text-decoration:none}
+.wf-flow{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;font-size:.82rem;color:var(--mute);margin:.6rem 0}
+.wf-flow span{background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+.wf-flow i{font-style:normal}
+.wf-stage>summary{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center}
+.wf-stage>summary small{flex-basis:100%;padding-left:34px}
+.wf-stage .wf-n{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--navy);color:#fff;font-size:.8rem;font-weight:700}
+.wf-stage.archived{opacity:.75}
+.wf-stage .row-actions{margin-top:10px;flex-wrap:wrap}
+.wf-vars{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.wf-vars small{display:inline}
+.wf-preview{display:block;margin-top:6px;padding:8px 10px;border-radius:10px;background:var(--ok-bg);color:var(--ink);font-size:.85rem;white-space:pre-wrap}
+.wf-preview::before{content:"Preview: ";font-weight:700}
+.wf-save{position:sticky;bottom:8px;z-index:2;display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+.wf-save label{flex:1 1 240px}
 .note.sm{font-size:.8rem;margin:0 0 6px}

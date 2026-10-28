@@ -3,7 +3,6 @@
 // Every request is checked against WHATSAPP_APP_SECRET; redelivered events change nothing (message ids are unique).
 import { env, json, moduleEnabled } from "../../ai-sales/lib/server.mjs";
 import { verifySignature, parseWebhook } from "../../ai-sales/lib/whatsapp.mjs";
-import { isRmkAd } from "../../sales/shared/rmk.mjs";
 import { liveDeps } from "../../ai-sales/lib/live.mjs";
 import { runWorker } from "../../ai-sales/lib/worker.mjs";
 
@@ -33,10 +32,11 @@ export default async (req, context) => {
     for (const m of messages) {
       const r = await deps.db.rpc("ai_wa_inbound", { p_wa_id: m.wa_id, p_name: m.name, p_wamid: m.wamid, p_type: m.type, p_body: m.text, p_sent_at: m.sent_at });
       if (r && !r.duplicate && r.job_id) queued++;
-      // a click-to-WhatsApp ad about RMK: the buyer joins the RMK pipeline (the ad, not a typed keyword, says so)
-      const ref = m.raw?.referral;
-      if (r?.lead_id && !r.duplicate && isRmkAd(ref)) {
-        await deps.db.rpc("ai_rmk_enroll", { p_lead: r.lead_id, p_source: /instagram/i.test(ref.source_url || "") ? "instagram" : "facebook", p_by: "ad" }).catch(() => {});
+      // a click-to-WhatsApp ad: the buyer joins each follow-up workflow whose ad phrases are in the ad (the ad, not a
+      // typed keyword, says which project they came for)
+      const ref = m.raw?.referral, adText = ref ? [ref.headline, ref.body, ref.source_url].filter(Boolean).join(" ") : "";
+      if (r?.lead_id && !r.duplicate && adText) {
+        await deps.db.rpc("ai_wf_enroll_from_ad", { p_lead: r.lead_id, p_text: adText, p_source: /instagram/i.test(ref.source_url || "") ? "instagram" : "facebook" }).catch(() => {});
       }
     }
     for (const s of statuses) await deps.db.rpc("ai_wa_status", { p_wamid: s.wamid, p_status: s.status, p_error: s.error });

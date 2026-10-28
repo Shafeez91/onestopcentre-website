@@ -86,25 +86,25 @@ test("webhook: replies sent from the phone app are stored as echoes", async () =
   assert.ok(!calls.some((c) => c.u.endsWith("/rpc/ai_claim_jobs")), "an echo starts no AI work");
 });
 
-test("webhook: a click-to-WhatsApp ad about RMK puts the buyer in the RMK pipeline; other ads and redeliveries do not", async () => {
-  const adEvent = (headline, wamid) => JSON.stringify({ object: "whatsapp_business_account", entry: [{ changes: [{ field: "messages", value: { metadata: { phone_number_id: "PN1" },
+test("webhook: a click-to-WhatsApp ad's text is matched against the workflows' ad phrases (in the database); redeliveries are not", async () => {
+  const adEvent = (headline, wamid, referral = true) => JSON.stringify({ object: "whatsapp_business_account", entry: [{ changes: [{ field: "messages", value: { metadata: { phone_number_id: "PN1" },
     contacts: [{ wa_id: "60123456789", profile: { name: "Aina" } }],
     messages: [{ id: wamid, from: "60123456789", timestamp: "1793156400", type: "text", text: { body: "Saya berminat" },
-      referral: { source_url: "https://www.instagram.com/p/abc", source_type: "ad", source_id: "1", headline, body: "Dari RM300k" } }] } }] }] });
+      ...(referral ? { referral: { source_url: "https://www.instagram.com/p/abc", source_type: "ad", source_id: "1", headline, body: "Dari RM300k" } } : {}) }] } }] }] });
   const send = (b) => webhook(post("/api/sales/whatsapp/webhook", b, { "x-hub-signature-256": sign(b) }), {});
   let dup = false;
   route(/rpc\/ai_wa_inbound$/, () => Response.json({ duplicate: dup, lead_id: "L9" }));
-  route(/rpc\/ai_rmk_enroll$/, () => Response.json(true));
+  route(/rpc\/ai_wf_enroll_from_ad$/, () => Response.json(1));
   calls.length = 0;
   assert.equal((await send(adEvent("RMK — Residensi Metropolitan Kepong", "wamid.ad1"))).status, 200);
-  assert.deepEqual(calls.find((c) => c.u.endsWith("/rpc/ai_rmk_enroll")).body, { p_lead: "L9", p_source: "instagram", p_by: "ad" });
+  assert.deepEqual(calls.find((c) => c.u.endsWith("/rpc/ai_wf_enroll_from_ad")).body, { p_lead: "L9", p_text: "RMK — Residensi Metropolitan Kepong Dari RM300k https://www.instagram.com/p/abc", p_source: "instagram" });
   calls.length = 0;
-  await send(adEvent("M MIRA Wangsa Maju", "wamid.ad2"));
-  assert.ok(!calls.some((c) => c.u.endsWith("/rpc/ai_rmk_enroll")), "an ad for another project");
+  await send(adEvent("", "wamid.ad2", false));
+  assert.ok(!calls.some((c) => c.u.endsWith("/rpc/ai_wf_enroll_from_ad")), "no ad, nothing to match");
   dup = true;
   calls.length = 0;
   await send(adEvent("RMK — Residensi Metropolitan Kepong", "wamid.ad1"));
-  assert.ok(!calls.some((c) => c.u.endsWith("/rpc/ai_rmk_enroll")), "a redelivered message");
+  assert.ok(!calls.some((c) => c.u.endsWith("/rpc/ai_wf_enroll_from_ad")), "a redelivered message");
 });
 
 test("webhook: a new message is answered straight away in the background (waitUntil)", async () => {

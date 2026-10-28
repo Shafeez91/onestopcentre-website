@@ -23,7 +23,7 @@ function match(row, col, expr) {
     case "eq": return String(v) === raw;
     case "neq": return String(v) !== raw;
     case "is": return raw === "null" ? v === null || v === undefined : String(v) === raw;
-    case "in": return raw.replace(/^\(|\)$/g, "").split(",").includes(String(v));
+    case "in": return raw.replace(/^\(|\)$/g, "").split(",").map((x) => x.replace(/^"|"$/g, "")).includes(String(v));
     case "gt": return v != null && asCmp(v) > asCmp(raw);
     case "gte": return v != null && asCmp(v) >= asCmp(raw);
     case "lt": return v != null && asCmp(v) < asCmp(raw);

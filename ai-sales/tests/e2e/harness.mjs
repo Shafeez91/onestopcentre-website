@@ -72,9 +72,24 @@ export function fixtures() {
     ai_contacts: [contact], ai_activities: [{ id: "a1", lead_id: "L1", kind: "website_enquiry", body: "Berapa harga?", actor: "website", created_at: NOW }],
     ai_tasks: [], ai_appointments: [{ id: "A1", lead_id: "L1", kind: "showroom_visit", status: "pending_confirmation", preferred_text: "Sabtu pagi", start_at: null, reminders: [], created_at: NOW, lead: { id: "L1", lead_code: "OSC-000001", contact } }], ai_lead_interests: [{ lead_id: "L1", project_id: "t1", interest: "enquired" }], ai_consent_current: [], ai_consent_records: [],
     ai_handover_events: [],
-    ai_rmk_pipeline: [
-      { lead_id: "L1", stage: "to_book", status: "active", status_reason: null, source: "facebook", stage_changed_at: NOW, enrolled_at: NOW, history: [], lead: { id: "L1", lead_code: "OSC-000001", contact_id: "c1", contact } },
-      { lead_id: "L7", stage: "to_sign", status: "human", status_reason: "no progress after 3 reminders", source: "website", stage_changed_at: NOW, enrolled_at: NOW, history: [], lead: { id: "L7", lead_code: "OSC-000007", contact_id: "c7", contact: { full_name: "Rina Signer", phone_e164: "60127770000" } } }],
+    ai_workflows: [
+      { id: "WF1", key: "rmk", name: "RMK — Residensi Metropolitan Kepong", description: "RUMAWIP project", project_id: null, status: "active", sending_enabled: false, pause_if_active_hours: 6,
+        entry: { ad_phrases: ["metropolitan kepong", "RMK"], message_phrases: ["metropolitan kepong"], project_listing: true, ai_confirm: true, exclusive_project: true }, ai_instructions: "Ask whether RMK means Residensi Metropolitan Kepong.", version: 1 }],
+    ai_workflow_stages: [
+      ["new", 10, "New RMK enquiry", ["RMK"], 0, 0, "", "", ""],
+      ["to_book", 20, "To book unit", ["DONE BOOKED", "DONE BOOKING", "DONE BOOK"], 24, 3, "rmk_to_book", "Hai {name} 👋 Ini peringatan untuk tempahan unit RMK. Kalau dah buat booking, balas *DONE BOOKED*.", "Hi {name} 👋 A reminder about booking your RMK unit. Once booked, reply *DONE BOOKED*."],
+      ["to_portal", 30, "To apply portal (RUMAWIP)", ["DONE PORTAL"], 24, 3, "rmk_to_portal", "Hai {name}, daftar di portal RUMAWIP. Balas *DONE PORTAL*.", ""],
+      ["to_submit_loan", 40, "To submit loan documents", ["DONE SUBMIT LOAN"], 48, 3, "rmk_to_submit_loan", "Hai {name}, hantar dokumen pinjaman. Balas *DONE SUBMIT LOAN*.", ""],
+      ["to_sign", 50, "To sign LO, SPA & LA", ["DONE SIGNED"], 48, 3, "rmk_to_sign", "Hai {name}, tandatangan LO, SPA & LA. Balas *DONE SIGNED*.", ""],
+      ["all_signed", 60, "All signed", [], 0, 0, "", "", ""],
+    ].map(([key, position, name, keywords, follow_up_hours, max_follow_ups, template, message_ms, message_en]) => ({ id: "S-" + key, workflow_id: "WF1", key, position, name, step_en: name, step_ms: "", keywords,
+      follow_up_hours, max_follow_ups, template, message_ms, message_en, next_stage_key: null, is_final: key === "all_signed", human_on_enter: false, escalate_after_max: true, active: true, archived_at: null })),
+    ai_workflow_leads: [
+      { id: "E1", workflow_id: "WF1", lead_id: "L1", stage: "to_book", status: "active", status_reason: null, source: "facebook", stage_changed_at: NOW, enrolled_at: NOW, history: [{ at: NOW, to: "new", by: "ad", via: "enrolled" }, { at: NOW, from: "new", to: "to_book", by: "buyer", via: "keyword" }], lead: { id: "L1", lead_code: "OSC-000001", contact_id: "c1", contact } },
+      { id: "E7", workflow_id: "WF1", lead_id: "L7", stage: "to_sign", status: "human", status_reason: "no progress after 3 reminders", source: "website", stage_changed_at: NOW, enrolled_at: NOW, history: [], lead: { id: "L7", lead_code: "OSC-000007", contact_id: "c7", contact: { full_name: "Rina Signer", phone_e164: "60127770000" } } }],
+    ai_workflow_changes: [{ id: "WC1", workflow_id: "WF1", at: NOW, by: "manager@test.local", action: "updated", summary: "shorter booking reminder",
+      before: { name: "RMK", sending_enabled: false, stages: [{ id: "S-to_book", key: "to_book", name: "To book unit", follow_up_hours: 48 }] },
+      after: { name: "RMK", sending_enabled: false, stages: [{ id: "S-to_book", key: "to_book", name: "To book unit", follow_up_hours: 24 }, { id: "S-x", key: "x", name: "Extra step" }] } }],
     ai_automation_jobs: [
       { id: "AJ1", kind: "smart_follow_up", status: "scheduled", run_at: new Date(Date.now() + 6 * 3600e3).toISOString(), conversation_id: "V1", lead: { id: "L1", lead_code: "OSC-000001", contact }, checks: [] },
       { id: "AJ2", kind: "appt_reminder", status: "sent", offset_minutes: 1440, run_at: NOW, sent_at: NOW, conversation_id: "V1", lead: { id: "L1", lead_code: "OSC-000001", contact },
@@ -129,6 +144,7 @@ export async function newPage(viewport, { signedIn = true, mutate = null } = {})
       if (rpc[1] === "ai_take_over") return json({ mode: "human" });
       if (rpc[1] === "ai_resume_ai") return json({ mode: "ai", handovers_resolved: 0 });
       if (rpc[1] === "ai_cancel_automation_job") return json(true);
+      if (rpc[1] === "ai_wf_save") return json("WF-new");
       return json([]);
     }
     const t = u.pathname.replace("/rest/v1/", "");
@@ -164,7 +180,7 @@ export async function newPage(viewport, { signedIn = true, mutate = null } = {})
 }
 
 /** Every dashboard route the browser tests visit. */
-export const SECTIONS = ["overview", "inbox", "inbox?c=V1", "ai-test", "leads", "lead/L1", "pipeline", "appointments", "handover", "rmk", "rmk?view=list", "rmk?view=settings", "properties", "property/t1", "knowledge", "knowledge?tab=entries", "knowledge?tab=faqs", "knowledge?tab=search",
+export const SECTIONS = ["overview", "inbox", "inbox?c=V1", "ai-test", "leads", "lead/L1", "pipeline", "appointments", "handover", "workflows", "workflow/rmk", "workflow/rmk?view=list", "workflow/rmk?view=stages", "workflow/rmk?view=settings", "workflow/rmk?view=history", "properties", "property/t1", "knowledge", "knowledge?tab=entries", "knowledge?tab=faqs", "knowledge?tab=search",
   "templates", "templates?tab=templates", "followups", "campaigns", "reports", "settings", "settings?tab=persona", "settings?tab=ai", "settings?tab=scoring", "settings?tab=business", "settings?tab=compliance", "settings?tab=notifications", "settings?tab=financing", "settings/pipeline", "team", "integrations", "audit", "audit?tab=consent", "audit?tab=retention"];
 
 /** Navigates the dashboard to `#/route` and waits until that page (not the previous one) has rendered. */
