@@ -111,6 +111,15 @@ export async function bookSlot(cfg, { start, end, summary, description, location
   return ev.id;
 }
 
+/** Deletes the calendar event of a cancelled appointment. An event that is already gone counts as deleted. */
+export async function cancelEvent(cfg, eventId, opts = {}) {
+  const token = await accessToken(cfg, opts);
+  const r = await (opts.fetchImpl || fetch)(`${API}/calendars/${encodeURIComponent(cfg.calendarId)}/events/${encodeURIComponent(eventId)}`, { method: "DELETE", headers: { authorization: "Bearer " + token } });
+  if (r.ok || r.status === 404 || r.status === 410) return true;
+  const d = await r.json().catch(() => ({}));
+  throw new CalendarError(`Google Calendar error (${r.status}): ${d.error?.message || "unknown"}`, { kind: r.status === 403 ? "config" : "error", status: r.status });
+}
+
 export const KIND_LABEL = {
   ms: { showroom_visit: "Lawatan showroom", property_viewing: "Lawatan hartanah", phone_call: "Panggilan telefon", video_call: "Panggilan video", financing_discussion: "Perbincangan pembiayaan" },
   en: { showroom_visit: "Showroom visit", property_viewing: "Property viewing", phone_call: "Phone call", video_call: "Video call", financing_discussion: "Financing discussion" },

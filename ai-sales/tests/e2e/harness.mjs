@@ -147,6 +147,7 @@ export async function newPage(viewport, { signedIn = true, mutate = null } = {})
   await page.route("**/api/sales/appointments/slots", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ slots: [
     { id: "s1", start: "2030-01-05T02:00:00.000Z", end: "2030-01-05T03:00:00.000Z", label_en: "Sat, 5 Jan, 10:00 am", label_ms: "Sab, 5 Jan, 10:00 PG" },
     { id: "s2", start: "2030-01-07T06:00:00.000Z", end: "2030-01-07T07:00:00.000Z", label_en: "Mon, 7 Jan, 2:00 pm", label_ms: "Isn, 7 Jan, 2:00 PTG" }] }) }));
+  await page.route("**/api/sales/appointments/cancel", (r) => { writes.push({ cancel: JSON.parse(r.request().postData() || "{}") }); r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, calendar: true }) }); });
   await page.route("**/api/sales/appointments/confirm", (r) => { writes.push({ confirm: JSON.parse(r.request().postData() || "{}") }); r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, calendar: true, buyer_notified: true, note: null }) }); });
   await page.route("**/api/sales/whatsapp/setup", (r) => { const b = JSON.parse(r.request().postData() || "{}"); writes.push({ setup: b });
     const linked = b.action === "subscribe";

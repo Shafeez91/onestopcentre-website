@@ -3,7 +3,7 @@
 import { env, serviceDb } from "./server.mjs";
 import { callClaude } from "./llm.mjs";
 import { waConfig, sendWhatsApp } from "./whatsapp.mjs";
-import { calConfig, busy, freeSlots, bookSlot, CalendarError } from "./calendar.mjs";
+import { calConfig, busy, freeSlots, bookSlot, cancelEvent, CalendarError } from "./calendar.mjs";
 
 /**
  * Calendar service, or null when the calendar is not configured. The private key comes from GOOGLE_PRIVATE_KEY,
@@ -24,6 +24,7 @@ export function calendarService(db, cfg = calConfig(env)) {
       return freeSlots({ hours: settings.business?.hours, appointments: a, busy: await busy(c, now, until), now });
     },
     book: async (details) => bookSlot(await config(), details),
+    cancel: async (eventId) => cancelEvent(await config(), eventId),
   };
 }
 

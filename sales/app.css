@@ -270,3 +270,7 @@ dialog::backdrop{background:rgba(6,15,38,.5)}
 .note.own{margin:.25rem 0}
 .auto-row{display:flex;flex-wrap:wrap;gap:.25rem 1.25rem;margin:.25rem 0 .5rem}
 .auto-row .check{min-width:0}
+.row-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.close-appt{display:grid;gap:4px}
+.close-appt .btn{justify-self:start;margin-top:8px}
+.close-appt .note{margin:0}
