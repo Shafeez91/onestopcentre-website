@@ -8,6 +8,7 @@ import { sendOutbound, loadSettings } from "../../ai-sales/lib/worker.mjs";
 import { confirmationText, placeFor, formatWhen } from "../../ai-sales/lib/calendar.mjs";
 import { templateParams } from "../../ai-sales/lib/followups.mjs";
 import { confirmAppointmentNow } from "../../ai-sales/lib/automation.mjs";
+import { buyerLanguage } from "../../ai-sales/lib/outbound.mjs";
 
 const enc = encodeURIComponent;
 
@@ -81,7 +82,7 @@ export default async (req) => {
   if (viaJob) { notified = viaJob.status === "sent"; note = notified ? null : viaJob.reason || null; }
   else if (body.notify_buyer) {
     const conv = (await deps.db.get(`ai_conversations?contact_id=eq.${enc(appt.lead.contact_id)}&channel=eq.whatsapp&status=eq.open&select=*`))?.[0];
-    const to = c.wa_id || c.phone_e164, lang = c.preferred_language === "en" ? "en" : "ms";
+    const to = c.wa_id || c.phone_e164, lang = await buyerLanguage(deps.db, conv, c);
     if (!settings.flags?.whatsapp_outbound || !deps.wa) note = "WhatsApp sending is off or not connected.";
     else if (!conv || !to) note = "The buyer has no WhatsApp conversation yet.";
     else if (inWindow(conv.last_inbound_at, new Date())) {

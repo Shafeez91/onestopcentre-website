@@ -19,10 +19,22 @@ const HUMAN = [
 ];
 
 const MS_WORDS = /\b(saya|nak|boleh|berapa|harga|rumah|bilik|tak|tidak|ada|untuk|dengan|ini|itu|bila|mana|kat|dekat|bulan|tuan|puan|encik|terima kasih|tq|projek|lokasi|bulanan|sewa|beli|ke|lah|kah|dah|sudah|belum)\b/gi;
-const EN_WORDS = /\b(i|my|the|is|are|how|much|price|what|when|where|can|please|thanks|thank you|house|unit|room|bedroom|monthly|rent|buy|want|interested|available|loan)\b/gi;
+const EN_WORDS = /\b(i|my|the|is|are|how|much|price|what|when|where|can|please|thanks|thank you|house|unit|room|bedroom|monthly|rent|buy|want|interested|available|loan|hi|hello|this|that|you|your|have|got|will|for|and|with|about|abt|any|there|morning|afternoon|evening|tomorrow|today|weekend|saturday|sunday|good|sure|yes|okay|sir|see|visit|need|still)\b/gi;
 
 export const isOptOut = (text) => OPT_OUT.some((r) => r.test(String(text || "")));
 export const wantsHuman = (text) => HUMAN.some((r) => r.test(String(text || "")));
+
+/**
+ * The language to write to a buyer in: their saved choice when it is "en" or "ms"; otherwise what their own
+ * messages are mostly written in (English when English words outnumber Malay ones), else `fallback`.
+ */
+export function replyLanguage(preferred, texts = [], fallback = "ms") {
+  if (preferred === "en" || preferred === "ms") return preferred;
+  const t = (Array.isArray(texts) ? texts : [texts]).join("\n");
+  const ms = (t.match(MS_WORDS) || []).length, en = (t.match(EN_WORDS) || []).length;
+  if (!ms && !en) return fallback;
+  return en > ms ? "en" : "ms";
+}
 
 /** Rough language of a message: "ms", "en" or "mixed" (Manglish). Used for fixed replies and as a hint to the AI. */
 export function detectLanguage(text, fallback = "ms") {

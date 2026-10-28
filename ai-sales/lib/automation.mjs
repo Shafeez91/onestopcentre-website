@@ -9,7 +9,7 @@ import { composeFollowUp } from "./orchestrator.mjs";
 import { inWindow } from "./whatsapp.mjs";
 import { isOpen, nextOpening, consentState, templateParams } from "./followups.mjs";
 import { confirmationText, reminderText, placeFor, formatWhen } from "./calendar.mjs";
-import { sendOutbound } from "./outbound.mjs";
+import { sendOutbound, buyerLanguage } from "./outbound.mjs";
 
 const enc = encodeURIComponent;
 const SITE = "https://onestopcentreproperty.com/sales/";
@@ -117,7 +117,7 @@ async function smartFollowUp(deps, job, settings, ck) {
     return { status: "sent", message_id: s.id };
   }
   ck("inside WhatsApp's 24-hour window (free-form message allowed)", false);
-  const lang = conv.contact?.preferred_language === "en" ? "en" : "ms";
+  const lang = await buyerLanguage(db, conv);
   const tpls = ((await db.get(`ai_message_templates?name=eq.${enc(A.follow_up_template || "follow_up")}&wa_status=eq.approved&active=is.true&select=*`)) || []).filter((t) => t.wa_template_name && t.category !== "marketing");
   const tpl = tpls.find((t) => t.lang === lang) || tpls[0];
   if (!ck(`approved "${A.follow_up_template || "follow_up"}" template available`, !!tpl)) return needHuman("more than 24 hours since the buyer's message and no approved follow-up template");
@@ -176,7 +176,7 @@ async function appointmentMessage(deps, job, settings, ck) {
   const place = await placeFor(db, a, settings);
   const location = a.location || place.location, map = location === place.location ? place.map : "";
   const project = await projectName(db, a.project_id || a.lead?.primary_project_id);
-  const lang = conv.contact?.preferred_language === "en" ? "en" : "ms";
+  const lang = await buyerLanguage(db, conv);
   const sendText = async (text) => sendOutbound(deps, { conversation: conv, to, text, senderType: "system", purpose: "service", sourceJobId: job.id });
   let s;
   if (inWindow(conv.last_inbound_at, now)) {

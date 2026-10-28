@@ -76,3 +76,13 @@ test("document chunking: paragraphs stay together, long text is split, tables ke
   assert.equal(t.map((c) => c.content.split("\n").length - 1).reduce((a, b) => a + b, 0), 200, "no rows lost");
   assert.deepEqual(chunkText([{ title: "x", text: "   " }]), []);
 });
+
+test("reply language: saved choice first, else the buyer's own words (English when English outnumbers Malay)", async () => {
+  const { replyLanguage } = await import("../../../sales/shared/guard.mjs");
+  assert.equal(replyLanguage("mixed", ["Thanks boss", "Hi, Boss. how abt 2pm this saturday?", "Okok"]), "en");
+  assert.equal(replyLanguage(null, ["Saya nak tengok rumah ni, berapa harga?"]), "ms");
+  assert.equal(replyLanguage("mixed", ["Bro unit tu ada lagi tak? nak tengok"]), "ms");
+  assert.equal(replyLanguage(null, ["👍"]), "ms");
+  assert.equal(replyLanguage("en", ["saya nak"]), "en");
+  assert.equal(replyLanguage("ms", ["Hi, how much is this?"]), "ms");
+});

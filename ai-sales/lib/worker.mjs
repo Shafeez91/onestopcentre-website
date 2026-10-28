@@ -8,10 +8,10 @@
 //
 // deps: { db (service-role adapter), llm, wa: { send(to, msg) } | null, cal: { slots(settings, now), book(details) } | null, now() }
 import { respond, applyActions, logRun, composeFollowUp } from "./orchestrator.mjs";
-import { isOptOut, wantsHuman, detectLanguage, fixedReply } from "../../sales/shared/guard.mjs";
+import { isOptOut, wantsHuman, fixedReply, replyLanguage } from "../../sales/shared/guard.mjs";
 import { decideFollowUp, consentState, templateParams } from "./followups.mjs";
 import { confirmationText, placeFor } from "./calendar.mjs";
-import { sendOutbound } from "./outbound.mjs";
+import { sendOutbound, buyerLanguage } from "./outbound.mjs";
 import { runAutomation, confirmAppointmentNow, automationOf, alertHumanAbout } from "./automation.mjs";
 
 export { sendOutbound };
@@ -64,7 +64,7 @@ export async function processReplyJob(deps, job, settings) {
 
   let result;
   if (!readable && !guard) {
-    const lang = contact?.preferred_language === "en" ? "en" : "ms";
+    const lang = replyLanguage(contact?.preferred_language, msgs.filter((m) => m.direction === "inbound").map((m) => m.body).filter(Boolean));
     const kinds = [...new Set(pending.flatMap((m) => (m.media || []).map((x) => x.type)))].join(", ") || "media";
     result = { decision: "handover", reply: fixedReply("safe_fallback", lang), language: lang, intent: "other", agent: "handover", confidence: 1, message,
       actions: [{ type: "handover", reason: "other", summary: `Buyer sent ${kinds}, which the AI cannot read.`, next_action: "Open the WhatsApp conversation and reply personally." }, { type: "cancel_follow_ups", reason: "conversation needs a human" }] };
@@ -117,7 +117,7 @@ export async function bookAppointment(deps, { ref, conv, to, contact, lead, sett
   const appt = (await db.get(`ai_appointments?${q}&select=*`))?.[0];
   if (!appt || appt.status !== "pending_confirmation" || !appt.start_at) return { booked: false };
   const { location, map } = await placeFor(db, appt, settings);
-  const lang = contact?.preferred_language === "en" ? "en" : detectLanguage(appt.preferred_text || "", "ms");
+  const lang = await buyerLanguage(db, conv, contact);
   try {
     const eventId = await deps.cal.book({ start: appt.start_at, end: appt.end_at || new Date(new Date(appt.start_at).getTime() + 3600e3).toISOString(),
       summary: `${appt.kind.replace(/_/g, " ")} · ${nameOf(contact) || "+" + to} (${lead.lead_code || ""})`, description: `Booked by the AI assistant on WhatsApp.\nBuyer: ${nameOf(contact) || ""} +${to}\nhttps://onestopcentreproperty.com/sales/#/lead/${lead.id}${map ? "\nMap: " + map : ""}`, location });
@@ -158,7 +158,7 @@ export async function processFollowUp(deps, fj, settings) {
     marketingSentThisWeek = ((await db.get(`ai_messages?conversation_id=eq.${enc(conv.id)}&direction=eq.outbound&purpose=eq.marketing&created_at=gte.${enc(since)}&status=neq.failed&select=id`)) || []).length;
   }
   const templates = step.template ? (await db.get(`ai_message_templates?name=eq.${enc(step.template)}&select=*`)) || [] : [];
-  const d = decideFollowUp({ step, lead, conversation: conv, consent, marketingSentThisWeek, settings, templates, now });
+  const d = decideFollowUp({ step, lead, conversation: { ...conv, lang: await buyerLanguage(db, conv) }, consent, marketingSentThisWeek, settings, templates, now });
 
   if (d.action === "cancel") { await finish("cancelled", d.reason); return { status: "cancelled", reason: d.reason }; }
   if (d.action === "defer") { await finish("scheduled", d.reason, { run_at: d.runAt.toISOString(), attempts: 0 }); return { status: "deferred" }; }
