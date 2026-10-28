@@ -349,3 +349,50 @@ dialog::backdrop{background:rgba(6,15,38,.5)}
 .wf-save{position:sticky;bottom:8px;z-index:2;display:flex;flex-wrap:wrap;gap:10px;align-items:end}
 .wf-save label{flex:1 1 240px}
 .note.sm{font-size:.8rem;margin:0 0 6px}
+
+/* ---------------------------------------------------------------- dashboard (command centre) */
+.eyebrow{margin:0 0 4px;font-size:.75rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--gold)}
+.dash-head{align-items:flex-end}
+.btn .cnt,.cnt{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--hot);color:#fff;font-size:.72rem;font-weight:700}
+.dash-kpis{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+.kpi{display:flex;flex-direction:column;gap:2px;transition:border-color .15s,transform .15s}
+a.kpi:hover{border-color:var(--gold2);transform:translateY(-1px)}
+.kpi .ki{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:var(--gold-soft);color:var(--gold);margin-bottom:8px}
+.kpi.hot .ki{background:var(--bad-bg);color:var(--hot)}
+.kpi.alert .ki{background:var(--bad-bg);color:var(--hot)}
+.kpi.alert b{color:var(--hot)}
+.dash-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
+.dash-grid>.card{margin:0}
+.dash-grid .span2{grid-column:span 2}
+.main{container-type:inline-size}
+@container (max-width:1100px){.dash-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:700px){.dash-grid{grid-template-columns:minmax(0,1fr)}.dash-grid .span2{grid-column:auto}}
+.card-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px}
+.card-h h2{margin:0}
+.card-h .link{text-decoration:none;font-size:.82rem;font-weight:600}
+.prio,.convs{list-style:none;margin:0;padding:0}
+.prio li a,.convs li a{display:flex;align-items:center;gap:12px;padding:10px 8px;border-radius:10px;text-decoration:none;color:var(--ink)}
+.prio li a:hover,.convs li a:hover{background:var(--bg)}
+.prio li+li,.convs li+li{border-top:1px solid var(--line)}
+.prio .pt,.convs .pt{flex:1;min-width:0}
+.prio .pt b,.convs .pt b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prio .go{color:var(--mute);font-size:1.3rem}
+.prio .more a{justify-content:center;font-size:.85rem;color:var(--acc)}
+.pi{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;flex:none;background:var(--bg);color:var(--ink2)}
+.pi.alert{background:var(--bad-bg);color:var(--hot)}.pi.warn{background:var(--warn-bg);color:var(--warn)}
+.allclear{display:flex;flex-direction:column;align-items:center;gap:4px;padding:22px 10px;text-align:center;color:var(--mute)}
+.allclear svg{color:var(--ok)}.allclear b{color:var(--ink)}
+.convs .av{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:var(--navy);color:var(--gold2);font-weight:700;flex:none}
+.bars li a{color:var(--ink);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bars i{background:var(--navy)}
+.wf-mini{padding:8px 0}.wf-mini+.wf-mini{border-top:1px solid var(--line)}
+.wf-mini>a{color:var(--ink);text-decoration:none}
+.wf-steps{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.wf-steps span{display:flex;align-items:center;gap:5px;font-size:.74rem;color:var(--mute);background:var(--bg);border-radius:999px;padding:2px 9px 2px 3px}
+.wf-steps span b{display:grid;place-items:center;min-width:18px;height:18px;border-radius:999px;background:var(--card);color:var(--mute);font-size:.7rem}
+.wf-steps span.has{color:var(--ink);background:var(--gold-soft)}.wf-steps span.has b{background:var(--gold);color:#fff}
+.mini-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.mini-kpis b{display:block;font-size:1.3rem}.mini-kpis span{font-size:.76rem;color:var(--mute)}
+.meter{height:8px;border-radius:999px;background:var(--bg);overflow:hidden;margin-bottom:12px}
+.meter i{display:block;height:100%;width:var(--w);background:linear-gradient(90deg,var(--gold),var(--gold2));border-radius:999px}
+.head-actions .btn svg{margin-right:2px}

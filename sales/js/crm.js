@@ -11,60 +11,6 @@ const teamOptions = (sel) => opt("", "— Unassigned —", sel) + [...new Set([.
 const projectOptions = (sel, blank = "— None —") => opt("", blank, sel) + S.projects.map((p) => opt(p.id, p.name + (p.area ? " · " + p.area : "") + (p.published ? "" : " (unpublished)"), sel)).join("");
 const contactName = (c) => (c && (c.full_name || (c.phone_e164 ? formatPhone(c.phone_e164) : c.email))) || "(no name)";
 
-/* ======================= Overview ======================= */
-export async function overview(el) {
-  const since7 = new Date(Date.now() - 7 * 864e5).toISOString();
-  const in7 = new Date(Date.now() + 7 * 864e5).toISOString();
-  const today = new Date(); today.setHours(23, 59, 59, 999);
-  const [open, recent, tasks, handovers, appts] = await Promise.all([
-    q(SB.from("ai_leads").select("temperature, stage_id").is("closed_at", null).limit(5000)),
-    q(SB.from("ai_leads").select("id", { count: "exact", head: true }).gte("created_at", since7)),
-    q(SB.from("ai_tasks").select("id,title,due_at,lead_id").eq("status", "open").eq("assignee_email", S.email).lte("due_at", today.toISOString()).order("due_at").limit(10)),
-    q(SB.from("ai_handover_events").select("id", { count: "exact", head: true }).eq("status", "open")),
-    q(SB.from("ai_appointments").select("id,kind,status,start_at,preferred_text,lead_id").is("archived_at", null).in("status", ["pending_confirmation", "confirmed", "rescheduled"]).or(`start_at.is.null,start_at.lte.${in7}`).order("start_at", { nullsFirst: true }).limit(10)),
-  ]);
-  const t = { hot: 0, warm: 0, nurture: 0, unqualified: 0 };
-  (open || []).forEach((l) => { t[l.temperature] = (t[l.temperature] || 0) + 1; });
-  let pendingWeb = null;
-  if (can("advisor")) {
-    try {
-      const [{ count: web }, { count: done }] = await Promise.all([
-        SB.from("leads").select("id", { count: "exact", head: true }),
-        SB.from("ai_activities").select("id", { count: "exact", head: true }).eq("kind", "website_enquiry"),
-      ]);
-      if (web !== null && done !== null) pendingWeb = Math.max(0, web - done);
-    } catch { /* staff who are not website admins cannot count website enquiries */ }
-  }
-  const flags = S.settings.flags || {};
-  el.innerHTML = `
-  <div class="page-head"><h1>Overview</h1><p class="sub">Measured from CRM records · ${esc(fmtDate(new Date()))}</p></div>
-  <div class="kpis">
-    <a class="kpi" href="#/leads?status=open"><b>${(open || []).length}</b><span>Open leads</span></a>
-    <a class="kpi hot" href="#/leads?temp=hot"><b>${t.hot}</b><span>Hot</span></a>
-    <a class="kpi warm" href="#/leads?temp=warm"><b>${t.warm}</b><span>Warm</span></a>
-    <a class="kpi" href="#/leads?temp=nurture"><b>${t.nurture}</b><span>Nurture</span></a>
-    <a class="kpi" href="#/leads?since=7"><b>${recent ?? 0}</b><span>New in 7 days</span></a>
-    <a class="kpi ${handovers ? "alert" : ""}" href="#/handover"><b>${handovers ?? 0}</b><span>Waiting for a human</span></a>
-  </div>
-  ${pendingWeb ? `<div class="card notice"><div><b>${pendingWeb} website enquir${pendingWeb === 1 ? "y" : "ies"}</b> not yet in the CRM.</div>
-     <button class="btn pri" id="imp"${flags.website_lead_import ? "" : " disabled title='Switched off in Settings'"}>Import into CRM</button></div>` : ""}
-  <div class="grid2">
-    <section class="card"><h2>My tasks due</h2>${(tasks || []).length ? `<ul class="list">${tasks.map((x) => `<li><a href="#/lead/${attr(x.lead_id)}">${esc(x.title)}</a><small class="${new Date(x.due_at) < Date.now() ? "late" : ""}">${esc(fmtDate(x.due_at))}</small></li>`).join("")}</ul>` : empty("Nothing due. 🎉")}</section>
-    <section class="card"><h2>Upcoming &amp; pending appointments</h2>${(appts || []).length ? `<ul class="list">${appts.map((a) => `<li><a href="#/lead/${attr(a.lead_id)}">${esc(kindLabel(a.kind))}</a> ${apptBadge(a.status)}<small>${a.start_at ? esc(fmtDate(a.start_at)) : "Preferred: " + esc(a.preferred_text || "—")}</small></li>`).join("")}</ul>` : empty("No appointments in the next 7 days.")}</section>
-  </div>
-  <section class="card"><h2>Automation status</h2>
-    <div class="flags">${[["ai_auto_reply", "AI auto-reply"], ["whatsapp_outbound", "WhatsApp sending"], ["follow_ups", "Automated follow-ups"], ["calendar_booking", "Calendar booking"]]
-      .map(([k, l]) => `<span class="flag ${flags[k] ? "on" : ""}">${flags[k] ? "●" : "○"} ${esc(l)}: ${flags[k] ? "On" : "Off"}</span>`).join("")}</div>
-    <p class="note">AI replies, WhatsApp and calendar integrations are delivered in Phases 3–4. Until then these stay off and nothing is sent to customers automatically.</p>
-  </section>`;
-  const b = $("#imp", el);
-  if (b) b.onclick = () => act(b, async () => {
-    const r = await q(SB.rpc("ai_import_website_leads", { max_rows: 500 }));
-    toast(`Imported ${r.imported} enquir${r.imported === 1 ? "y" : "ies"}${r.skipped_no_contact ? ` · ${r.skipped_no_contact} skipped (no phone or email)` : ""}`);
-    overview(el);
-  });
-}
-
 /* ======================= Leads list ======================= */
 export async function leads(el, params) {
   const f = { status: params.get("status") || "open", temp: params.get("temp") || "", stage: params.get("stage") || "", owner: params.get("owner") || "", since: params.get("since") || "", q: params.get("q") || "" };
@@ -146,7 +92,7 @@ function newLeadModal() {
 const KIND = { showroom_visit: "Showroom visit", property_viewing: "Property viewing", phone_call: "Phone consultation", video_call: "Video consultation", financing_discussion: "Financing discussion" };
 const kindLabel = (k) => KIND[k] || k;
 const APPT = { pending_confirmation: ["Pending confirmation", "warn"], confirmed: ["Confirmed", "ok"], rescheduled: ["Rescheduled", "warn"], cancelled: ["Cancelled", ""], completed: ["Completed", "ok"], no_show: ["No-show", "alert"] };
-const apptBadge = (s) => badge((APPT[s] || [s])[0], (APPT[s] || [, ""])[1]);
+export const apptBadge = (s) => badge((APPT[s] || [s])[0], (APPT[s] || [, ""])[1]);
 
 export async function leadDetail(el, id) {
   const lead = await q(SB.from("ai_leads").select("*, contact:ai_contacts(*)").eq("id", id).maybeSingle());
