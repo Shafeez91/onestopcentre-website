@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cleanUpdates, statusOf, showValue, PROFILE_FIELDS, QUAL_FIELDS } from "../../../sales/shared/profile.mjs";
-import { applyInsights, profileContext, INSIGHTS_SCHEMA } from "../../lib/insights.mjs";
+import { applyInsights, profileContext, INSIGHTS_SCHEMA, INSIGHT_RULES } from "../../lib/insights.mjs";
 import { memdb } from "./helpers/memdb.mjs";
 
 const NOW = new Date("2026-10-29T02:00:00Z");
@@ -30,8 +30,11 @@ test("profile fields: known keys only, options checked, numbers parsed, nothing 
   assert.equal(statusOf("KLCC", { status: "confirmed", conflict: { value: "Bangsar" } }), "conflict");
   assert.equal(showValue("commute_mode", ["rail", "bus"]), "LRT / MRT / Monorail, Bus");
   assert.equal(showValue("max_monthly_instalment", 2500), "RM2,500");
-  // the schema offers the AI exactly these fields
-  assert.deepEqual(INSIGHTS_SCHEMA.properties.profile_updates.items.properties.field.enum, [...PROFILE_FIELDS, ...QUAL_FIELDS].map((f) => f.key));
+  // the instructions list exactly these fields; the schema keeps `field` as plain text (an enum of every key inside
+  // the array made the API's compiled grammar too large) and cleanUpdates drops any other key
+  for (const f of [...PROFILE_FIELDS, ...QUAL_FIELDS]) assert.match(INSIGHT_RULES, new RegExp(`\\b${f.key}\\b`), f.key);
+  assert.equal(INSIGHTS_SCHEMA.properties.profile_updates.items.properties.field.type, "string");
+  assert.equal(INSIGHTS_SCHEMA.properties.profile_updates.items.properties.field.enum, undefined);
 });
 
 test("insights are written through the database rules, tied to the buyer's message", async () => {

@@ -2,11 +2,11 @@
 //   guards (opt-out, human request) -> verified context -> AI draft -> business-rule validation
 //   (one corrected retry) -> decision (reply / handover / blocked / opt_out / paused / error) -> proposed CRM actions.
 // In "simulate" mode nothing is written; applyActions() performs the writes for live channels (Phase 4).
-import { isOptOut, wantsHuman, detectLanguage, fixedReply } from "../../sales/shared/guard.mjs";
+import { isOptOut, wantsHuman, detectLanguage, fixedReply, languagePreference, requestedLanguage } from "../../sales/shared/guard.mjs";
 import { validateReply } from "../../sales/shared/validator.mjs";
 import { scoreLead } from "../../sales/shared/scoring.mjs";
 import { loadContext } from "./context.mjs";
-import { buildSystemPrompt, renderContext, buildMessages, REPLY_SCHEMA, normalizeReply } from "./prompt.mjs";
+import { buildSystemPrompt, renderContext, buildMessages, REPLY_SCHEMA, REPLY_SCHEMA_CORE, normalizeReply } from "./prompt.mjs";
 import { DEFAULT_MODEL, LlmError } from "./llm.mjs";
 import { applyInsights } from "./insights.mjs";
 import { mergeFinancing, attachFinancing, renderFinancing, cleanInputs, isNewAssessment, advisorSummary } from "./financing.mjs";
@@ -33,6 +33,21 @@ export const retrievalTrace = (ctx) => ({
   conflicts: Object.fromEntries(ctx.projects.filter((p) => p.inFocus && p.conflicts.length).map((p) => [p.name, p.conflicts.map((c) => c.field)])),
 });
 
+/**
+ * One model call with the reply schema. If the API refuses that schema (kind "schema"), it is retried once without
+ * the insights part, and `base.degraded` records that, so the reply still comes from the AI and the run log says why
+ * insights are missing. Any other error is thrown as is.
+ */
+async function callReply(llm, params, base) {
+  if (base.degraded) return llm({ ...params, schema: REPLY_SCHEMA_CORE }); // already refused for this message
+  try { return await llm({ ...params, schema: REPLY_SCHEMA }); }
+  catch (e) {
+    if (!(e instanceof LlmError) || e.kind !== "schema") throw e;
+    base.degraded = `Insights skipped: the full reply schema was refused (${e.message}).`;
+    return await llm({ ...params, schema: REPLY_SCHEMA_CORE });
+  }
+}
+
 const summariseViolations = (vs) => vs.map((v) => `- ${v.code}: ${v.detail}`).join("\n");
 
 /**
@@ -50,7 +65,9 @@ export async function respond(p) {
   if (!message) return finish({ decision: "ignored", reply: null, reason: "empty message" });
 
   // 1) deterministic guards — honoured regardless of the AI
-  const guessLang = detectLanguage(message);
+  // a language the buyer explicitly asked for (now or earlier in the chat) beats a guess from the words they used
+  const askedLang = languagePreference(message, history);
+  const guessLang = askedLang || detectLanguage(message);
   if (isOptOut(message)) {
     return finish({
       decision: "opt_out", reply: fixedReply("opt_out", guessLang), language: guessLang, intent: "opt_out", agent: "reception", confidence: 1,
@@ -69,6 +86,7 @@ export async function respond(p) {
 
   // 2) verified context
   const ctx = await loadContext(p.db, { leadId: p.leadId, message, history, now });
+  if (askedLang) ctx.buyer = { ...(ctx.buyer || {}), language_requested: askedLang };
   if (ctx.aiPaused && p.mode === "live") return finish({ decision: "paused", reply: null, reason: "AI is paused for this lead; a human handles replies." });
   const settings = ctx.settings || {};
   const model = settings.ai?.model || DEFAULT_MODEL;
@@ -91,10 +109,10 @@ export async function respond(p) {
     let quota;
     try { quota = await p.reserve(); } catch (e) { quota = { allowed: false, error: e?.message || String(e) }; }
     if (!quota?.allowed) {
-      const lang = ctx.buyer?.preferred_language === "en" ? "en" : guessLang;
+      const lang = askedLang || (ctx.buyer?.preferred_language === "en" ? "en" : guessLang);
       const why = quota?.error ? `AI usage could not be checked (${quota.error})` : `the daily AI limit (${quota.cap}) has been reached`;
       return finish({
-        decision: "capped", reply: fixedReply("safe_fallback", lang), language: lang, agent: "handover", confidence: 0, quota,
+        decision: "capped", reply: fixedReply("safe_fallback", lang), language: lang, agent: "handover", confidence: null, quota,
         actions: [{ type: "handover", reason: "other", summary: `Not answered by the AI: ${why}. Buyer wrote: "${message.slice(0, 300)}"`, next_action: "Reply to the buyer personally." }],
       });
     }
@@ -107,7 +125,7 @@ export async function respond(p) {
   let finChanged = [], recalculated = false, retried = false;
   try {
     for (let attempt = 1; attempt <= 3; attempt++) {
-      const r = await p.llm({ system, messages: buildMessages(history, contextText, message, feedback), schema: REPLY_SCHEMA, model, effort });
+      const r = await callReply(p.llm, { system, messages: buildMessages(history, contextText, message, feedback), model, effort }, base);
       data = normalizeReply(r.data); servedBy = r.model || model;
       usage.input_tokens += r.usage?.input_tokens || 0; usage.output_tokens += r.usage?.output_tokens || 0;
       if (finOn && !recalculated) {
@@ -129,9 +147,9 @@ export async function respond(p) {
     }
   } catch (e) {
     if (e instanceof LlmError && e.kind === "config") throw e;
-    const lang = ctx.buyer?.preferred_language === "en" ? "en" : guessLang;
+    const lang = askedLang || (ctx.buyer?.preferred_language === "en" ? "en" : guessLang);
     return finish({
-      decision: "error", error: e.message, errorKind: e.kind || "error", reply: fixedReply("safe_fallback", lang), language: lang, agent: "handover", confidence: 0,
+      decision: "error", error: e.message, errorKind: e.kind || "error", reply: fixedReply("safe_fallback", lang), language: lang, agent: "handover", confidence: null,
       actions: [{ type: "handover", reason: e.kind === "refusal" ? "sensitive" : "low_confidence", summary: `The AI could not answer (${e.message}). Buyer wrote: "${message.slice(0, 300)}"`, next_action: "Reply to the buyer personally." }],
     });
   }
@@ -203,6 +221,9 @@ export async function respond(p) {
       ...(slot ? { slot_id: slot.id, start_at: slot.start, end_at: slot.end, appointment_id: pending?.id || null } : {}) });
   }
   if (decision !== "reply") actions.push({ type: "cancel_follow_ups", reason: "conversation needs a human" });
+  // remember a language the buyer asked for in this message, so later replies and follow-ups use it
+  const askedNow = requestedLanguage(message);
+  if (askedNow && askedNow !== ctx.buyer?.preferred_language) actions.push({ type: "set_language", language: askedNow });
   // what the AI learnt about the client (profile, summary, next action, confirmed milestone): written last, by the rules
   if (p.leadId && insights) actions.push({ type: "insights", insights, buyer_text: message });
 
@@ -225,6 +246,8 @@ export async function applyActions(db, { leadId, contactId, result, conversation
   for (const a of result.actions || []) {
     if (a.type === "record_consent") {
       await db.post("ai_consent_records", { contact_id: contactId, channel: a.channel, purpose: a.purpose, status: a.status, source: "whatsapp_stop", evidence: a.evidence });
+    } else if (a.type === "set_language") {
+      if (contactId) await db.patch(`ai_contacts?id=eq.${encodeURIComponent(contactId)}`, { preferred_language: a.language });
     } else if (a.type === "pause_ai") {
       await db.patch(`ai_leads?id=eq.${encodeURIComponent(leadId)}`, { ai_paused: true });
       if (conversationId) await db.patch(`ai_conversations?id=eq.${encodeURIComponent(conversationId)}`, { mode: "human" });
@@ -277,9 +300,10 @@ export async function logRun(db, { result, leadId = null, conversationId = null,
       lead_id: leadId, conversation_id: conversationId, agent: result.agent || "orchestrator", intent: result.intent || null, model: result.model,
       input: { channel, message: result.message, ...input },
       // financing figures stay in the access-controlled financing tables, not in the run log
-      output: { reply: result.reply, draft: result.draft, attempts: result.attempts, retrieval: result.retrieval || null,
+      output: { reply: result.reply, draft: result.draft, attempts: result.attempts, retrieval: result.retrieval || null, degraded: result.degraded || null, error_kind: result.errorKind || null,
         actions: (result.actions || []).map((a) => (a.type === "save_financing" ? { type: a.type, changed: a.changed, outcome: a.result?.outcome || null, new_assessment: a.new_assessment } : a)) },
-      confidence: isFinite(result.confidence) ? Math.max(0, Math.min(1, result.confidence)) : null, decision: result.decision,
+      // confidence null = the model gave none (a fixed reply or a failed call)
+      confidence: Number.isFinite(result.confidence) ? Math.max(0, Math.min(1, result.confidence)) : null, decision: result.decision,
       validation: { ok: !(result.violations || []).length, violations: result.violations }, input_tokens: result.usage?.input_tokens ?? null,
       output_tokens: result.usage?.output_tokens ?? null, latency_ms: result.latency_ms, error: result.error || null,
     }, { prefer: "return=representation" });
@@ -307,7 +331,7 @@ export async function composeFollowUp(p) {
   const contextText = renderContext(ctx);
   let feedback = null, check = null, usage = { input_tokens: 0, output_tokens: 0 }, served = model;
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const r = await p.llm({ system, messages: buildMessages(history, contextText, "", feedback, { task: p.instruction }), schema: REPLY_SCHEMA, model, effort: settings.ai?.effort || "low" });
+    const r = await p.llm({ system, messages: buildMessages(history, contextText, "", feedback, { task: p.instruction }), schema: REPLY_SCHEMA_CORE, model, effort: settings.ai?.effort || "low" });
     const data = normalizeReply(r.data); served = r.model || model;
     usage.input_tokens += r.usage?.input_tokens || 0; usage.output_tokens += r.usage?.output_tokens || 0;
     if (data.handover?.needed) return { skipped: "the AI judged that a person should follow up", usage, model: served };

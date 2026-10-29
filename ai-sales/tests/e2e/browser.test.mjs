@@ -188,6 +188,41 @@ test("AI test console: sends the conversation, shows the draft, the checker resu
   } finally { await ctx.close(); }
 });
 
+test("AI test console: an outage is labelled as one (no fake confidence); a normal reply shows project, language and sources", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    const results = [
+      { decision: "error", errorKind: "unavailable", error: "AI service busy or unavailable (HTTP 529).", reply: "Thanks for your question. I need to confirm this with our advisor first so the answer is accurate. One of our advisors will get back to you shortly.",
+        language: "en", agent: "handover", confidence: null, model: null, latency_ms: 3100, attempts: [], actions: [{ type: "handover", reason: "low_confidence", summary: "The AI could not answer" }] },
+      { decision: "reply", reply: "M Mira is in Wangsa Maju. Type A is 850 sq ft with 3 bedrooms, from RM400,000. Would you like the price list?", intent: "project_info", agent: "knowledge", language: "en", confidence: 0.86,
+        model: "claude-opus-5-5", latency_ms: 9800, attempts: [{ attempt: 1, reply: "x", violations: [] }], facts_used: ["layout:mm:Type A"], actions: [{ type: "set_language", language: "en" }],
+        retrieval: { focus: ["M Mira"], focus_source: "named in the buyer's current message", ambiguous: false, not_on_record: { "M Mira": ["maintenance_fee"] }, conflicts: {} } },
+    ];
+    await page.route("**/api/sales/ai/simulate", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...results.shift(), simulated: true }) }));
+    await page.goto(base + "/sales/#/ai-test");
+    await page.waitForSelector("#msg");
+    await page.evaluate(() => sessionStorage.clear());
+    await page.fill("#msg", "Send info M Mira");
+    await page.click("#say button");
+    await page.waitForSelector(".msg.ai .why");
+    const why = await page.textContent(".msg.ai .why");
+    assert.match(why, /AI service busy or down — fixed safe reply \+ human alert/);
+    assert.match(why, /Self-rating: not available/);
+    assert.doesNotMatch(why, /0%/);
+    await page.click(".msg.ai details summary");
+    assert.match(await page.textContent(".msg.ai details"), /No answer — AI service busy or down/);
+    await page.fill("#msg", "Send info M Mira");
+    await page.click("#say button");
+    await page.waitForFunction(() => document.querySelectorAll(".msg.ai").length === 2);
+    const second = page.locator(".msg.ai").nth(1);
+    assert.match(await second.locator(".why").textContent(), /AI reply — would send.*AI self-rating 86%/s);
+    await second.locator("details summary").click();
+    const d = await second.locator("details").textContent();
+    for (const re of [/Answered \(claude-opus-5-5\)/, /project info · knowledge step/, /English/, /M Mira \(named in the buyer's current message\)/, /M Mira: maintenance fee/, /layout:mm:Type A/, /Remember the buyer's language: English/]) assert.match(d, re);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("AI settings: shows today's usage and saves a valid daily limit", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {
