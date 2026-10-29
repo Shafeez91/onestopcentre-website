@@ -47,6 +47,7 @@ export function liveDeps() {
  */
 export function researchDeps(db, { web = true } = {}) {
   const key = env("GOOGLE_MAPS_API_KEY");
-  // time budget (functions stop at 60 s): research only if the first draft took under 18 s, and at most 20 s of it
+  // web research may take up to 20 s; whether it fits is decided per request from its time budget (Netlify stops a
+  // request at 30 s): the test console runs it as a separate step, the WhatsApp worker does not run it
   return { maps: mapsService({ key, db }), research: (q) => researchClaude(q), web, webStartWithinMs: 18000, webTimeoutMs: 20000 };
 }

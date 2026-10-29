@@ -46,8 +46,9 @@ export default async (req, context) => {
     return json({ error: "Could not store the event: " + (e?.message || e) }, 500); // Meta retries; storing is idempotent
   }
   if (queued) {
-    // answer now; the 2-minute scheduled worker picks up anything this run does not finish
-    const work = runWorker(deps, { maxJobs: 5, followUps: false, reminders: false }).catch((e) => console.error("worker:", e?.message || e));
+    // answer now; the 2-minute scheduled worker picks up anything this run does not finish. Netlify stops the function
+    // at 30 s, so jobs are claimed one at a time while one can still finish (26-second budget)
+    const work = runWorker(deps, { maxJobs: 5, followUps: false, reminders: false, budgetMs: 26000 }).catch((e) => console.error("worker:", e?.message || e));
     if (typeof context?.waitUntil === "function") context.waitUntil(work); else await work;
   }
   return json({ ok: true, messages: messages.length, statuses: statuses.length, echoes: echoes.length });

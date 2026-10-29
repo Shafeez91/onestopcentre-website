@@ -240,6 +240,82 @@ test("AI test console: an outage is labelled as one (no fake confidence); a norm
   } finally { await ctx.close(); }
 });
 
+test("AI test console: a 504 keeps the typed message and history and says what happened; Send works again; double clicks send once", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx } = await newPage(VIEWPORTS.phone);
+  try {
+    let n = 0, release;
+    const gate = new Promise((r) => { release = r; });
+    await page.route("**/api/sales/ai/simulate", async (r) => {
+      n++;
+      if (n === 1) return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ decision: "reply", reply: "LRT Sri Rampai is the nearest station.", messages: ["LRT Sri Rampai is the nearest station."], intent: "project_info", language: "en", confidence: 0.85, model: "m", latency_ms: 9000, attempts: [], actions: [], simulated: true }) });
+      if (n === 2) { await gate; return r.fulfill({ status: 504, contentType: "text/html", body: "<html>Gateway Timeout</html>" }); }
+      return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ decision: "reply", reply: "Yes, a shuttle is listed.", messages: ["Yes, a shuttle is listed."], intent: "project_info", language: "en", confidence: 0.85, model: "m", latency_ms: 9000, attempts: [], actions: [], simulated: true }) });
+    });
+    await page.goto(base + "/sales/#/ai-test");
+    await page.waitForSelector("#msg");
+    await page.evaluate(() => sessionStorage.clear());
+    await page.fill("#msg", "How far m mira from nearest public transport?");
+    await page.click("#say button");
+    await page.waitForSelector(".msg.ai");
+    await page.fill("#msg", "Does it has shuttle service?");
+    await page.click("#say button");
+    await page.locator("#say button").click({ force: true }).catch(() => {}); // a second click while the first is running
+    await page.keyboard.press("Enter");
+    release();
+    await page.waitForSelector(".chat .card.error");
+    assert.equal(n, 2, "one request for the message, however often Send was pressed");
+    assert.match(await page.textContent(".chat .card.error"), /longer than the 30-second limit.*Your message is kept/);
+    assert.equal(await page.inputValue("#msg"), "Does it has shuttle service?", "the typed message is kept");
+    assert.equal(await page.locator(".msg.ai").count(), 1, "the earlier reply is still there");
+    assert.equal(await page.locator(".msg.buyer").count(), 1, "the failed message is not left as a sent bubble");
+    assert.equal(await page.isDisabled("#say button"), false);
+    await page.click("#say button");
+    await page.waitForFunction(() => document.querySelectorAll(".msg.ai").length === 2);
+    assert.match(await page.locator(".msg.ai").nth(1).textContent(), /shuttle is listed/);
+  } finally { await ctx.close(); }
+});
+
+test("AI test console: a reply that needs outside research shows the draft, then checks sources, then shows the final reply", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.phone);
+  try {
+    const sent = [];
+    const steps = [
+      { decision: "handover", reply: "Shuttle details aren't in our project info yet; our advisor will confirm.", messages: ["Shuttle details aren't in our project info yet; our advisor will confirm."], intent: "project_info", language: "en", confidence: 0.8, model: "m", latency_ms: 14000, attempts: [], actions: [{ type: "handover", reason: "conflicting_info" }],
+        timings: { context_ms: 400, ai_ms: [13000], total_ms: 14000 }, request_id: "rid-1", step: "reply", continuation: { step: "research", token: "T1" } },
+      { step: "research", research: { web: { question: "Does it has shuttle service?", found: true, sources: [{ url: "https://www.mahsing.com.my/m-mira", title: "M MIRA" }], searches: 1 } }, timings: { web_ms: 15000, total_ms: 15000 }, continuation: { step: "redraft", token: "T2" } },
+      { decision: "reply", reply: "The developer's page lists a direct shuttle to LRT Sri Rampai; timing to be confirmed.", messages: ["The developer's page lists a direct shuttle to LRT Sri Rampai; timing to be confirmed."], intent: "project_info", language: "en", confidence: 0.8, model: "m", latency_ms: 12000, attempts: [], actions: [],
+        research: { web: { question: "Does it has shuttle service?", found: true, sources: [{ url: "https://www.mahsing.com.my/m-mira", title: "M MIRA" }], searches: 1 } }, timings: { context_ms: 300, ai_ms: [11000], total_ms: 12000 }, request_id: "rid-3", step: "redraft" },
+    ];
+    let hold;
+    await page.route("**/api/sales/ai/simulate", async (r) => {
+      sent.push(JSON.parse(r.request().postData()));
+      const body = steps.shift();
+      if (body.step === "research") await new Promise((res) => { hold = res; });
+      r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...body, simulated: true }) });
+    });
+    await page.goto(base + "/sales/#/ai-test");
+    await page.waitForSelector("#msg");
+    await page.evaluate(() => sessionStorage.clear());
+    await page.fill("#msg", "Does it has shuttle service?");
+    await page.click("#say button");
+    await page.waitForFunction(() => /Checking outside sources/.test(document.querySelector("#say button")?.textContent || ""));
+    assert.match(await page.textContent(".msg.ai .bubble"), /our advisor will confirm/, "the draft is shown while research runs");
+    assert.match(await page.textContent(".msg.ai .why"), /Checking outside sources/);
+    hold();
+    await page.waitForFunction(() => /direct shuttle/.test(document.querySelector(".msg.ai .bubble")?.textContent || ""));
+    assert.equal(await page.locator(".msg.ai").count(), 1, "the final reply replaces the draft: one turn");
+    assert.deepEqual(sent.map((b) => b.continue || null), [null, "T1", "T2"]);
+    assert.ok(sent.every((b) => b.message === "Does it has shuttle service?"));
+    await page.click(".msg.ai details summary");
+    const why = await page.textContent(".msg.ai details");
+    assert.match(why, /Web research\s*Found/);
+    assert.match(why, /Timing.*data 0\.3 s.*AI 11\.0 s.*web 15\.0 s.*total 12\.0 s/s);
+    assert.match(why, /Request rid-3/);
+    assert.equal(await page.isDisabled("#say button"), false);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("AI test console: a turn of three WhatsApp messages shows three bubbles in order; a one-message turn shows one", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, errors } = await newPage(VIEWPORTS.phone);
   try {

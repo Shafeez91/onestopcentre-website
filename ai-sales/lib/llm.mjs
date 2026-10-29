@@ -14,7 +14,9 @@ export class LlmError extends Error {
 
 /**
  * One structured call: returns the parsed JSON object matching `schema`.
- * @param {object} p { system, messages, schema, model, effort, maxTokens, apiKey, fetchImpl, retries }
+ * @param {object} p { system, messages, schema, model, effort, maxTokens, apiKey, fetchImpl, retries, deadline }
+ *   deadline: epoch ms by which the call must be over (Netlify ends a request at 30 s). The request is aborted at the
+ *   deadline (LlmError kind "timeout") and a retry is only made while there is still time for it.
  */
 export async function callClaude(p) {
   const apiKey = p.apiKey || env("ANTHROPIC_API_KEY");
@@ -30,17 +32,26 @@ export async function callClaude(p) {
     fallbacks: "default",                               // server-side refusal fallback, routed by refusal category
   };
   const retries = p.retries ?? 2;
+  const left = () => (p.deadline ? p.deadline - Date.now() : Infinity);
+  const timedOut = () => new LlmError("The AI service did not answer within this request's time limit.", { kind: "timeout" });
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt) await new Promise((r) => setTimeout(r, Math.min(8000, 800 * 2 ** (attempt - 1)) * (p.backoffScale ?? 1)));
+    if (attempt) {
+      const wait = Math.min(8000, 800 * 2 ** (attempt - 1)) * (p.backoffScale ?? 1);
+      if (left() < wait + 5000) break; // no time for another try: report the last error now, not a gateway timeout later
+      await new Promise((r) => setTimeout(r, wait));
+    }
+    if (left() < 1500) throw timedOut();
     let res;
     try {
       res = await fetchImpl(API, {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": API_VERSION, "anthropic-beta": FALLBACK_BETA },
         body: JSON.stringify(body),
+        ...(p.deadline ? { signal: AbortSignal.timeout(Math.max(1000, left())) } : {}),
       });
     } catch (e) {
+      if (e?.name === "TimeoutError" || e?.name === "AbortError") throw timedOut();
       lastErr = new LlmError("Network error calling the AI service: " + (e?.message || e), { kind: "network", retryable: true });
       continue;
     }
@@ -49,7 +60,10 @@ export async function callClaude(p) {
       continue;
     }
     let json;
-    try { json = await res.json(); } catch { throw new LlmError(`Unreadable response from the AI service (HTTP ${res.status}).`, { kind: "bad_response", status: res.status }); }
+    try { json = await res.json(); } catch (e) {
+      if (e?.name === "TimeoutError" || e?.name === "AbortError") throw timedOut();
+      throw new LlmError(`Unreadable response from the AI service (HTTP ${res.status}).`, { kind: "bad_response", status: res.status });
+    }
     if (!res.ok) {
       const msg = json?.error?.message || "unknown error";
       // "schema" = the request's output schema was refused (e.g. its compiled grammar is too large): our bug, not an outage
@@ -63,7 +77,7 @@ export async function callClaude(p) {
     try { data = JSON.parse(text); } catch { throw new LlmError("The AI reply was not valid JSON.", { kind: "bad_response" }); }
     return { data, model: json.model, usage: json.usage || {}, stopReason: json.stop_reason };
   }
-  throw lastErr;
+  throw lastErr || timedOut();
 }
 
 /**

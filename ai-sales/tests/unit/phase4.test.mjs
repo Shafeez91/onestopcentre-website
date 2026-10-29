@@ -338,6 +338,23 @@ test("a photo with words: the AI answers the words (no automatic hand-over); a p
   assert.match(d.wa.sent[0].msg.text, /voice note/);
 });
 
+test("a live reply that runs out of time is retried once on the next run; the second time the buyer gets the safe reply", async () => {
+  const { LlmError } = await import("../../lib/llm.mjs");
+  const slow = async () => { throw new LlmError("The AI service did not answer within this request's time limit.", { kind: "timeout" }); };
+  // like the real ai_claim_jobs: one job, and a failed one only once its retry time has come
+  const claim = (args, t) => { const j = t.ai_jobs.find((x) => ["queued", "failed"].includes(x.status) && (!x.run_at || x.run_at <= NOW.toISOString())); if (!j) return []; j.status = "running"; j.attempts = (j.attempts || 0) + 1; return [structuredClone(j)]; };
+  const db = memdb(world(), { ai_claim_jobs: claim }), d = deps(db, { llm: slow });
+  await runWorker(d, { budgetMs: 26000, followUps: false, reminders: false });
+  assert.equal(d.wa.sent.length, 0, "nothing sent on the first timeout");
+  assert.equal(db.t.ai_jobs[0].status, "failed");
+  assert.match(db.t.ai_jobs[0].last_error, /timed out; retrying/);
+  db.t.ai_jobs[0].run_at = NOW.toISOString();
+  await runWorker(d, { budgetMs: 26000, followUps: false, reminders: false });
+  assert.equal(d.wa.sent.length, 1, "second timeout: the safe reply, and an advisor is alerted");
+  assert.equal(db.t.ai_jobs[0].status, "done");
+  assert.equal(db.t.ai_handover_events.length, 1);
+});
+
 test("WhatsApp sending switched off: the AI drafts, nothing goes to the buyer, no Telegram alert", async () => {
   const db = memdb(world()); flags(db, { whatsapp_outbound: false });
   const d = deps(db);
