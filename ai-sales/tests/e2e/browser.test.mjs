@@ -438,6 +438,75 @@ test("leads: follow-up queue lists only the leads that need someone now, with th
   } finally { await ctx.close(); }
 });
 
+test("inbox: three panels on a wide screen — conversations with last message and filters, the chat, the client with summary and next action", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  // the fake database does not join tables: give the chat its lead as Supabase would
+  const { page, ctx, errors } = await newPage({ width: 1600, height: 1000 }, { mutate: (db) => { db.ai_conversations[0].lead = { ...db.ai_leads[0] }; } });
+  try {
+    await page.goto(base + "/sales/#/inbox?c=V1");
+    await page.waitForSelector("#ibxctx .ctx-sum");
+    const item = await page.textContent(".conv-list li.on");
+    assert.match(item, /Test Buyer[\s\S]*(You|AI|Auto): |Salam/);
+    assert.match(item, /Follow-up pending|AI active/);
+    assert.match(await page.textContent(".ibx-f"), /All\s*1[\s\S]*Unread\s*1/);
+    const ctx = await page.textContent("#ibxctx");
+    assert.match(ctx, /Works in KLCC and takes the LRT[\s\S]*Main property\s*Test Residence[\s\S]*Budget\s*RM500,000/);
+    assert.match(ctx, /Next action\s*Send the Type A floor plan/);
+    assert.equal(await page.getAttribute("#ibxctx a.btn.pri", "href"), "#/lead/L1");
+    // all three side by side
+    const [l, t, c] = await Promise.all([".ibx-list", "#thread", "#ibxctx"].map((sel) => page.locator(sel).boundingBox()));
+    assert.ok(l.x < t.x && t.x < c.x && Math.abs(l.y - c.y) < 40, "list · chat · client in one row");
+    // search and filter keep working through the URL
+    await page.fill("#ibxqi", "nobody-matches");
+    await page.press("#ibxqi", "Enter");
+    await page.waitForFunction(() => /No conversations match/.test(document.querySelector(".conv-list")?.textContent || ""));
+    await page.goto(base + "/sales/#/inbox?f=person");
+    await page.waitForSelector(".ibx-f a.on");
+    assert.match(await page.textContent(".ibx-f a.on"), /Waiting for a person/);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("calendar: month grid with visits and follow-up tasks; an agenda on phones; tasks list across leads", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const soon = new Date(Date.now() + 2 * 3600e3).toISOString(), NOW = new Date().toISOString();
+  const mutate = (db) => {
+    db.ai_appointments.push({ id: "A5", lead_id: "L1", kind: "showroom_visit", status: "confirmed", start_at: soon, project_id: "t1", reminders: [], created_at: NOW, lead: db.ai_appointments[0].lead });
+    db.ai_tasks.push({ id: "T1", lead_id: "L1", title: "Call about Type A", due_at: soon, status: "open", assignee_email: "owner@test.local", lead: db.ai_appointments[0].lead },
+      { id: "T2", lead_id: "L1", title: "Reply to the buyer: the AI's reply could not be delivered", due_at: new Date(Date.now() - 864e5).toISOString(), status: "open", source_key: "undelivered:x", assignee_email: "owner@test.local", lead: db.ai_appointments[0].lead });
+  };
+  let { page, ctx, writes, errors } = await newPage(VIEWPORTS.desktop, { mutate });
+  try {
+    await page.goto(base + "/sales/#/appointments?view=calendar");
+    await page.waitForSelector(".cal-grid");
+    assert.equal(await page.locator(".cal-h").count(), 7);
+    const today = await page.textContent(".cal-day.today");
+    assert.match(today, /Test Buyer/);
+    assert.match(today, /Call about Type A/);
+    assert.equal(await page.locator(".cal-day.today .ev.conf").count(), 1, "confirmed visit");
+    assert.match(await page.textContent(".card:has(h2:text('Waiting for a time'))"), /Test Buyer[\s\S]*Preferred: Sabtu pagi/);
+    await page.click(".cal-legend a.task");
+    await page.waitForFunction(() => !/Call about Type A/.test(document.querySelector(".cal-grid").textContent));
+    // the tasks list: overdue first, automatic ones marked, done in one tap
+    await page.goto(base + "/sales/#/appointments?view=tasks&who=all");
+    await page.waitForSelector(".tasks-l");
+    const t = await page.textContent("#view");
+    assert.match(t, /Overdue[\s\S]*Reply to the buyer[\s\S]*automatic[\s\S]*Today[\s\S]*Call about Type A/);
+    await page.click("[data-done=T1]");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((x) => /Task done/.test(x.textContent)));
+    assert.deepEqual(writes.find((w) => w.table === "ai_tasks" && w.method === "PATCH").body, { status: "done" });
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+  ({ page, ctx, errors } = await newPage(VIEWPORTS.phone, { mutate }));
+  try {
+    await page.goto(base + "/sales/#/appointments?view=calendar");
+    await page.waitForSelector(".cal-grid");
+    assert.equal(await page.isVisible(".cal-h"), false, "no weekday grid on a phone");
+    assert.match(await page.textContent(".cal-day.today .cal-d"), /\d+\s*\w+day/);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    assert.ok(overflow <= 1, `no sideways scroll (${overflow}px)`);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("app shell: grouped menu, breadcrumb, collapsible rail remembered, global search, quick add and notifications", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, errors } = await newPage(VIEWPORTS.desktop);
   try {

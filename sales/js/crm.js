@@ -2,6 +2,7 @@
 import { SB, S, can, $, $$, esc, attr, fmtDate, ago, q, act, toast, guardForm, clearDraft, formData, modal, tempBadge, badge, opt, empty, ro,
   projectName, stageName, sourceName, projectPriceFrom, toLocalInput, fromLocalInput, flag, errText, api, keepPlace } from "./core.js";
 import { normalizePhone, formatPhone } from "../shared/phone.mjs";
+import { calendar, tasks, scheduleTabs } from "./schedule.js";
 
 const openStages = () => S.stages.filter((s) => s.active && !s.is_won && !s.is_lost);
 export const teamOptions = (sel) => opt("", "— Unassigned —", sel) + [...new Set([...S.team.filter((m) => m.active).map((m) => m.email), S.email])].map((e) => opt(e, e, sel)).join("");
@@ -128,6 +129,9 @@ export async function pipeline(el) {
 
 /* ======================= Appointments ======================= */
 export async function appointments(el, params) {
+  const view = params.get("view");
+  if (view === "calendar") return calendar(el, params);
+  if (view === "tasks") return tasks(el, params);
   const scope = ["upcoming", "all", "archived"].includes(params.get("scope")) ? params.get("scope") : "upcoming";
   let query = SB.from("ai_appointments").select("*, lead:ai_leads(id,lead_code,contact:ai_contacts(full_name,phone_e164))").limit(500);
   if (scope === "archived") query = query.not("archived_at", "is", null).order("archived_at", { ascending: false });
@@ -139,7 +143,8 @@ export async function appointments(el, params) {
   const rows = (await q(query)) || [];
   const adv = can("advisor");
   const seg = (k, label) => `<a class="${scope === k ? "on" : ""}" href="#/appointments?scope=${k}">${label}</a>`;
-  el.innerHTML = `<div class="page-head"><h1>Appointments</h1><div class="seg">${seg("upcoming", "Upcoming &amp; pending")}${seg("all", "All")}${seg("archived", "Archived")}</div></div>
+  el.innerHTML = `<div class="page-head"><div><h1>Tasks &amp; appointments</h1><p class="sub">Visits, calls and viewings with buyers.</p></div>${scheduleTabs("list")}</div>
+  <div class="seg">${seg("upcoming", "Upcoming &amp; pending")}${seg("all", "All")}${seg("archived", "Archived")}</div>
   <div class="card notice"><div>${scope === "archived" ? "Archived appointments are hidden from the other lists. Nothing was deleted: <b>Restore</b> brings one back." : `${flag("calendar_booking") ? "<b>Calendar booking is on.</b> The AI offers free Google Calendar slots and books the one the buyer picks; the buyer gets a confirmation only after the event exists." : "AI-requested slots stay <b>pending confirmation</b> until you confirm them here."} Confirming creates the Google Calendar event when the calendar is connected (Integrations). Use <b>Close…</b> to mark one done, a no-show or cancelled, or to archive it.`}</div></div>
   ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Type</th><th>Buyer</th><th>Project</th><th>Advisor</th><th>Status</th><th></th></tr></thead><tbody>
   ${rows.map((a) => `<tr><td data-label="When">${a.start_at ? esc(fmtDate(a.start_at)) : `<i>Preferred: ${esc(a.preferred_text || "—")}</i>`}</td><td data-label="Type">${esc(kindLabel(a.kind))}</td>
@@ -248,21 +253,6 @@ export function ownership(c, pendingFollowUp = false) {
   if (c.mode !== "ai" || c.lead?.ai_paused) return ["Human takeover", "warn"];
   if (pendingFollowUp) return ["Follow-up pending", "ok"];
   return ["AI active", "ok"];
-}
-
-export async function inbox(el, params) {
-  const sel = params?.get("c") || "";
-  const rows = (await q(SB.from("ai_conversations").select("*, contact:ai_contacts(full_name,phone_e164,wa_id), lead:ai_leads(id,lead_code,ai_paused,closed_at)").eq("status", "open").order("last_inbound_at", { ascending: false, nullsFirst: false }).limit(200))) || [];
-  // scheduled 12-hour follow-ups (the list still works on a database without automation jobs)
-  let pending = new Set();
-  try { pending = new Set(((await q(SB.from("ai_automation_jobs").select("conversation_id").eq("status", "scheduled").eq("kind", "smart_follow_up").limit(500))) || []).map((j) => j.conversation_id)); } catch { /* not installed yet */ }
-  const on = flag("whatsapp_outbound");
-  el.innerHTML = `<div class="page-head"><h1>WhatsApp inbox</h1><p class="sub">${rows.length} open conversation${rows.length === 1 ? "" : "s"}</p></div>
-  ${on ? "" : `<div class="card notice"><div><b>WhatsApp sending is off.</b> Messages from buyers still arrive here once WhatsApp is connected (Integrations), but nothing is sent until an owner switches on "WhatsApp sending" in Settings → Feature switches.</div></div>`}
-  <div class="inbox${sel ? " has-thread" : ""}"><ul class="conv-list card">${rows.length ? rows.map((c) => { const [label, kind] = ownership(c, pending.has(c.id)); return `<li class="${c.id === sel ? "on" : ""}"><a href="#/inbox?c=${attr(c.id)}"><b>${esc(contactName(c.contact))}</b>
-      ${badge(label, kind)} ${c.unread_count ? badge(String(c.unread_count), "alert") : ""}<small>${esc(c.lead?.lead_code || "")} · ${esc(ago(c.last_inbound_at || c.created_at))}</small></a></li>`; }).join("") : `<li>${empty("No WhatsApp conversations yet.")}</li>`}</ul>
-    <section class="thread card" id="thread">${sel ? "" : `<p class="note">Choose a conversation.</p>`}</section></div>`;
-  if (sel) await thread($("#thread", el), rows.find((c) => c.id === sel), pending.has(sel), () => keepPlace(el, () => inbox(el, params)));
 }
 
 export async function thread(box, c, pendingFollowUp, reload, { embedded = false } = {}) {
