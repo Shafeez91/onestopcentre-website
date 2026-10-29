@@ -132,12 +132,12 @@ const WANT_1 = "Based on the illustrative figures, M Azura Type A has a lower es
 const WANT_2 = "M Aurora is freehold, while M Azura is leasehold. We should also compare the layout, location and total ownership costs before deciding.\n\nAre you buying for own stay or investment?";
 
 test("readability: the owner's example passes; the long real message is flagged; limits are 3 paragraphs / 40 words / 5 bullets / 65 words", () => {
-  assert.deepEqual(STYLE, { maxParagraphs: 3, maxParagraphWords: 40, maxBullets: 5, maxMessageWords: 65 });
+  assert.deepEqual(STYLE, { maxParagraphs: 3, maxParagraphWords: 40, maxBullets: 5, maxMessageWords: 65, maxTurnWords: 80 });
   assert.deepEqual(messageStyle(WANT_1), []);
   assert.deepEqual(messageStyle(WANT_2), []);
   assert.deepEqual(messageStyle(JUN_1), [], "a compact comparison with two bullets is fine");
   assert.deepEqual(messageStyle(JUN_2, 2).map((v) => v.code), ["long_paragraph", "long_message"]);
-  assert.match(messageStyle(JUN_2, 2)[0].detail, /Message 2, paragraph 1 is 47 words/);
+  assert.match(messageStyle(JUN_2, 2)[0].detail, /Message 2, paragraph 1 is 46 words/);
   assert.deepEqual(messageStyle("A.\n\nB.\n\nC.\n\nD.").map((v) => v.code), ["too_many_paragraphs"]);
   assert.deepEqual(messageStyle("Pilihan:\n• 1\n• 2\n• 3\n• 4\n• 5\n• 6").map((v) => v.code), ["long_list"]);
   assert.deepEqual(messageStyle("Harga dari RM570,000."), [], "a short answer");
@@ -174,4 +174,61 @@ test("guarantee rule: 'penjamin' (guarantor / co-applicant) is not a promise; 'd
   for (const t of ["Loan confirm dijamin lulus!", "Saya jamin tuan dapat.", "This is guaranteed approval.", "Kami menjamin keuntungan.", "Ada jaminan untung 10%."]) {
     assert.ok(validateReply(t, {}).violations.some((v) => v.code === "guarantee_language"), t);
   }
+});
+
+/* ---------- shorter turns (29 Oct 2026): about 80 words per turn; no monthly instalment the buyer did not ask for ---------- */
+import { MONTHLY_Q } from "../../lib/orchestrator.mjs";
+const codes = (msgs, rules = {}) => checkTurn({ messages: msgs, reply: msgs.join("\n\n") }, rules).styleNotes.map((v) => v.code);
+// live replies of 29 Oct 2026, after the 3-paragraph update
+const MIRA_PRICE = ["Hi! I'm Hafiz_Ai, an AI assistant for One Stop Centre 😊\n\nM MIRA (Wangsa Maju) starts from around RM476,000. Indicative prices by layout:\n• Type A – 800 sqft, 3R2B: from RM476,000\n• Type B – 900 sqft, 4R2B: from RM533,000\n• Type C – 1050 sqft, 5R3B: from RM629,000\n\nFinal price is confirmed at booking.",
+  "As an illustration, Type A works out to roughly RM2,009/month (100% financing, 3.65%, 35 years), plus about RM304 maintenance. Not a loan offer, just a rough guide.\n\nIs this for your own stay or investment? 😊"];
+const PRICE_GOOD = ["Hi! I'm Hafiz_Ai, an AI assistant for One Stop Centre 😊\n\nOur Mah Sing projects in KL start from around RM339,000 (M AURORA, Old Klang Road) up to RM629,000, depending on project and layout. Final price is confirmed at booking.",
+  "Which area or project are you interested in? I can share the exact layouts and prices 😊"];
+const MONTHLY_ANSWER = ["Untuk M AZURA Type C (dari RM570,000), anggaran ansuran sekitar RM2,406 sebulan (100% pembiayaan bank, 3.65% setahun, 35 tahun). Campur maintenance ~RM330, jumlahnya sekitar RM2,736 sebulan.\n\nIni ilustrasi sahaja, bukan tawaran loan."];
+
+test("turn length: the whole turn is about 80 words at most; bullet marks are not words", () => {
+  assert.deepEqual(codes(PRICE_GOOD), [], "a short price answer and one question");
+  assert.ok(codes(MIRA_PRICE).includes("long_turn"), "price list + monthly example + question is too long for 'how much'");
+  assert.match(checkTurn({ messages: MIRA_PRICE }, {}).styleNotes.find((v) => v.code === "long_turn").detail, /across 2 messages/);
+  assert.deepEqual(messageStyle("• Type A – from RM476,000"), []);
+  const w40 = "kata ".repeat(40).trim();
+  assert.ok(!codes(["• – " + w40, "• – " + w40]).includes("long_turn"), "80 words plus bullet marks is within the limit");
+  assert.ok(codes([w40, w40 + " lagi"]).includes("long_turn"), "81 words is not");
+});
+
+test("monthly instalment only when the buyer asked about monthly payments, loans or financing", () => {
+  assert.ok(codes(MIRA_PRICE, { buyerAskedMonthly: false }).includes("unasked_instalment"), "'how much' answered with RM2,009/month");
+  assert.ok(!codes(MIRA_PRICE, { buyerAskedMonthly: true }).includes("unasked_instalment"));
+  assert.ok(!codes(MONTHLY_ANSWER, {}).includes("unasked_instalment"), "not checked where the buyer's words are unknown (follow-ups)");
+  assert.deepEqual(codes(MONTHLY_ANSWER, { buyerAskedMonthly: true }), []);
+  assert.deepEqual(codes(PRICE_GOOD, { buyerAskedMonthly: false }), [], "prices alone are fine");
+  assert.deepEqual(codes(["M AZURA dari RM380,000. Maintenance RM0.33 psf."], { buyerAskedMonthly: false }), [], "a price per sqft is not an instalment");
+  for (const q of ["Monthly berapa?", "can share Type B monthly?", "ansuran type C?", "Kalau joint loan dengan family", "gaji saya 5k layak tak", "Bank loan", "LPPSA boleh?"]) assert.ok(MONTHLY_Q.test(q), q);
+  for (const q of ["How much is M Mira", "Boleh tahu harga M Mira?", "sy kerja kat Bangsar", "Hi bang"]) assert.ok(!MONTHLY_Q.test(q), q);
+});
+
+test("respond(): a 'how much' reply with an unasked monthly figure is rewritten once without it; asking 'monthly?' keeps it", async () => {
+  const long = { ...base, messages: [AI + " M MIRA dari RM476,000 (anggaran).", "Type A ansuran ~RM2,009 sebulan (100%, 3.65%, 35 tahun). Ini ilustrasi, bukan tawaran loan.\n\nUntuk duduk sendiri atau pelaburan?"] };
+  const short = { ...base, messages: [AI + " M MIRA dari RM476,000 (anggaran), harga akhir disahkan masa booking.", "Untuk duduk sendiri atau pelaburan?"] };
+  let llm = llmOf(long, short);
+  let r = await respond({ db: fakeDb(), llm, message: "Boleh tahu harga M Mira?", now: NOW });
+  assert.equal(llm.calls.length, 2);
+  assert.match(llm.calls[1].messages.at(-1).content, /unasked_instalment/);
+  assert.deepEqual(r.messages, short.messages);
+  llm = llmOf(long, short);
+  const noNote = (r) => !r.attempts[0].violations.some((v) => v.code === "unasked_instalment");
+  r = await respond({ db: fakeDb(), llm, message: "M Mira monthly berapa?", now: NOW });
+  assert.ok(noNote(r), "the buyer asked: the monthly figure is wanted");
+  // asked a few messages ago, still in the same topic
+  llm = llmOf(long, short);
+  r = await respond({ db: fakeDb(), llm, message: "Type A pula?", history: [{ role: "user", text: "M Mira monthly berapa?" }, { role: "assistant", text: "..." }], now: NOW });
+  assert.ok(noNote(r));
+});
+
+test("prompt: whole-turn limit, price answers without unasked monthly figures, at most 2–3 recommended projects", () => {
+  const sys = buildSystemPrompt({}, []);
+  assert.match(sys, /whole turn \(all messages together\): at most about 80 words/);
+  assert.match(sys, /Price questions: give the price only/);
+  assert.match(sys, /No monthly instalment, maintenance or package details unless the buyer asked/);
+  assert.match(sys, /Recommendations: at most 2–3 projects/);
 });
