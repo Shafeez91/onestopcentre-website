@@ -163,3 +163,15 @@ test("readability problems are rewritten once and never block a reply; business-
   r = await respond({ db: fakeDb(), llm: llmOf(bad, bad), message: "loan lulus?", now: NOW });
   assert.equal(r.decision, "blocked");
 });
+
+test("guarantee rule: 'penjamin' (guarantor / co-applicant) is not a promise; 'dijamin lulus' still is (3 live replies were blocked by this)", async () => {
+  const { validateReply } = await import("../../../sales/shared/validator.mjs");
+  // the real drafts of 29 Oct 2026 (joint loan question) that were blocked
+  for (const t of ["Boleh, permohonan bersama memang antara cara untuk naikkan kelayakan. Cuma gaji minimum yang perlu ditambah bergantung pada polisi bank, umur dan pendapatan penjamin, jadi saya tak nak teka angka.",
+    "Joint loan memang boleh bantu, sebab pendapatan penjamin tanpa komitmen akan menambah kelayakan.", "A guarantor (penjamin) may be needed."]) {
+    assert.deepEqual(validateReply(t, {}).violations.filter((v) => v.code === "guarantee_language"), [], t);
+  }
+  for (const t of ["Loan confirm dijamin lulus!", "Saya jamin tuan dapat.", "This is guaranteed approval.", "Kami menjamin keuntungan.", "Ada jaminan untung 10%."]) {
+    assert.ok(validateReply(t, {}).violations.some((v) => v.code === "guarantee_language"), t);
+  }
+});
