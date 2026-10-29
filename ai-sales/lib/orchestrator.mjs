@@ -51,12 +51,18 @@ async function callReply(llm, params, base) {
 }
 
 // Readability rules for one WhatsApp message (owner's style: at most 3 short paragraphs, short lists, about 20–60
-// words, more only when needed). Unlike the business rules they never block a reply: a draft that breaks them is
-// rewritten once with the feedback, and if the rewrite still slightly breaks them it is sent as it is.
-export const STYLE = { maxParagraphs: 3, maxParagraphWords: 40, maxBullets: 5, maxMessageWords: 65 };
-export const STYLE_CODES = new Set(["too_long", "too_many_paragraphs", "long_paragraph", "long_list", "long_message"]);
+// words, more only when needed) and for the whole turn (about 80 words in all; no monthly instalment the buyer did
+// not ask for). Unlike the business rules they never block a reply: a draft that breaks them is rewritten once with
+// the feedback, and if the rewrite still slightly breaks them it is sent as it is.
+export const STYLE = { maxParagraphs: 3, maxParagraphWords: 40, maxBullets: 5, maxMessageWords: 65, maxTurnWords: 80 };
+export const STYLE_CODES = new Set(["too_long", "too_many_paragraphs", "long_paragraph", "long_list", "long_message", "long_turn", "unasked_instalment"]);
 const BULLET = /^\s*(?:[•*\-–]|\d{1,2}[.)])\s+/;
-const wordCount = (t) => (String(t).match(/\S+/g) || []).length;
+// words only: bullet marks and dashes ("•", "–") are not words
+const wordCount = (t) => (String(t).match(/\S*[\p{L}\p{N}]\S*/gu) || []).length;
+// the buyer asking about monthly payments or financing (BM, English, Manglish)
+export const MONTHLY_Q = /(bulanan|sebulan|\bbulan\b|ansuran|monthly|per\s+month|a\s+month|instal+ments?|\bloan|pinjaman|pembiayaan|financing|lppsa|\bgaji\b|salary|income|deposit|down\s*payment|\bdp\b|kelayakan|layak|eligib|afford|mampu|komitmen|commitment)/i;
+// a monthly instalment figure in the reply
+const MONTHLY_FIGURE = /(ansuran|instal+ment|RM\s?[\d,.]+\s*(?:k\b)?\s*(?:\/\s*(?:month|mth|mo|bulan|bln)\b|sebulan|a\s+month|per\s+month|monthly|bulanan))/i;
 
 /** Style problems of one message: [{ code, detail }] */
 export function messageStyle(text, i = 1, style = STYLE) {
@@ -88,6 +94,10 @@ export function checkTurn(data, rules = {}) {
   const frags = list.map((m, i) => [i + 1, m]).filter(([, m]) => (list.length > 1 ? words(m) < 3 : words(m) < 1));
   if (frags.length) check.violations.push({ code: "fragment", detail: frags.map(([i, m]) => `Message ${i} ("${String(m).slice(0, 20)}") is not a complete message; fold it into another message or remove it.`).join(" ") });
   list.forEach((m, i) => check.violations.push(...messageStyle(m, i + 1)));
+  const total = list.reduce((n, m) => n + wordCount(m), 0);
+  if (total > STYLE.maxTurnWords) check.violations.push({ code: "long_turn", detail: `The whole reply is ${total} words${list.length > 1 ? ` across ${list.length} messages` : ""}; keep the whole turn to about ${STYLE.maxTurnWords} words: answer what was asked and leave out the rest.` });
+  // rules.buyerAskedMonthly is set for replies to a buyer (false = they have not asked about monthly payments or loans)
+  if (rules.buyerAskedMonthly === false && MONTHLY_FIGURE.test(data.reply || list.join("\n\n"))) check.violations.push({ code: "unasked_instalment", detail: "The buyer did not ask about monthly payments or loans: leave out the monthly instalment (and its assumptions). You may offer it in a short question instead, e.g. \"Nak saya kira anggaran bulanan?\"" });
   const styleNotes = check.violations.filter((v) => STYLE_CODES.has(v.code));
   return { ok: check.violations.length === 0, hardOk: check.violations.length === styleNotes.length, violations: check.violations, styleNotes };
 }
@@ -173,6 +183,8 @@ export async function respond(p) {
   ctx.rules.allowedMinutes = [...extractMinutes(contextText), ...extractMinutes(said)].map((d) => d.value);
   ctx.rules.usedMaps = ctx.routeLookups.some((l) => l.routes?.length || l.straight_line_m != null);
   ctx.rules.usedWeb = !!found.web?.found;
+  // monthly figures only once the buyer has asked about monthly payments, loans or financing (now or recently)
+  ctx.rules.buyerAskedMonthly = MONTHLY_Q.test([message, ...history.filter((h) => h.role !== "assistant").slice(-4).map((h) => h.text)].join("\n"));
   for (const l of ctx.routeLookups) if (l.maps_link) ctx.rules.allowedUrls.push(l.maps_link);
 
   // 3) daily cost cap: reserve one AI reply before calling the model (fail closed if usage can't be checked)
