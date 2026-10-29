@@ -903,3 +903,96 @@ test("live reply: insights are written after the reply's other changes; a person
   // the AI's own context carries what is known and the milestones it may set
   assert.match(d.llm.calls[0].messages.at(-1).content, /"client_profile":\{"known":\{"purpose":\{"value":"investment","status":"confirmed"\}\}/);
 });
+
+/* ================================================================ several WhatsApp messages in one AI turn */
+const THREE = ["Hai! Saya OSC Property Assistant, pembantu AI. Stesen paling dekat ialah LRT Sri Rampai.", "MRT3 Circle Line pula masih dalam perancangan, jadi buat masa ini LRT ialah pilihan utama.", "Tuan/puan kerja di kawasan mana? Saya boleh semak laluan yang paling mudah."];
+const multi = (n = 3, o = {}) => draft({ reply: undefined, messages: THREE.slice(0, n), ...o });
+const outbound = (db) => db.t.ai_messages.filter((m) => m.direction === "outbound");
+// a WhatsApp stub that can run something right after a given message goes out (a take-over, a new buyer message…)
+function waAfter(n, fn, { failAt = null } = {}) {
+  const sent = [];
+  return { sent, send: async (to, msg) => {
+    if (failAt && sent.length + 1 === failAt) { failAt = null; throw Object.assign(new Error("timeout"), { kind: "network" }); }
+    sent.push({ to, msg }); if (sent.length === n) await fn(); return "wamid.out" + sent.length; } };
+}
+const depsM = (db, o = {}) => ({ ...deps(db, o), messageGapMs: 0 });
+
+test("one AI turn, three WhatsApp messages: sent separately and in order, one record each, CRM updated once", async () => {
+  const db = memdb(world()), d = depsM(db, { llm: llmOf(multi(3)) });
+  await runWorker(d);
+  assert.deepEqual(d.wa.sent.map((s) => s.msg.text), THREE, "three separate sends, in order");
+  const out = outbound(db);
+  assert.deepEqual(out.map((m) => [m.body, m.status, m.purpose, m.sender_type]), THREE.map((t) => [t, "sent", "reply", "ai"]));
+  assert.equal(out[0].source_job_id, "J1", "the first keeps the job's own key");
+  assert.equal(new Set(out.map((m) => m.source_job_id)).size, 3, "each message has its own idempotency key");
+  assert.equal(db.t.ai_agent_runs.length, 1, "one AI run");
+  assert.equal(d.llm.calls.length, 1);
+  assert.deepEqual(db.t.started, [{ p_lead: "L1", p_lead_type: "new_enquiry" }], "follow-ups started once");
+  assert.equal((db.t.telegram || []).length, 0, "no Telegram for an answered message");
+  assert.equal(db.t.ai_leads.length, 1);
+  // redelivered job: nothing is sent or recorded again
+  db.t.ai_jobs[0].status = "queued";
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 3);
+  assert.equal(outbound(db).length, 3);
+  assert.equal(d.llm.calls.length, 1);
+});
+
+test("a single-message turn is unchanged: one send, keyed by the job", async () => {
+  const db = memdb(world()), d = depsM(db, { llm: llmOf(multi(1)) });
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 1);
+  assert.deepEqual(outbound(db).map((m) => [m.source_job_id, m.status]), [["J1", "sent"]]);
+});
+
+test("a person takes over after the first message: the rest are never sent", async () => {
+  const db = memdb(world());
+  const d = depsM(db, { llm: llmOf(multi(3)), wa: waAfter(1, async () => { db.t.ai_conversations[0].mode = "human"; }) });
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 1);
+  assert.deepEqual(outbound(db).map((m) => m.status), ["sent", "skipped", "skipped"]);
+  assert.match(outbound(db)[1].status_reason, /person took over/);
+  assert.equal(db.t.ai_jobs[0].status, "done", "not retried");
+  db.t.ai_jobs[0].status = "queued"; db.t.ai_conversations[0].mode = "ai";
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 1, "skipped parts stay unsent, even if the AI is switched back on");
+});
+
+test("the buyer writes again during delivery: remaining parts are dropped and the new message gets a fresh reply that knows what was sent", async () => {
+  const w = world(), db = memdb(w);
+  const d = depsM(db, { llm: llmOf(multi(3), multi(1, { messages: ["Baik, saya faham. Wangsa Maju memang dekat dengan pejabat tuan/puan."] })), wa: waAfter(1, async () => {
+    db.t.ai_messages.push({ id: "M2", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Saya kerja di Wangsa Maju", created_at: new Date(Date.now() + 5).toISOString(), status: "received" });
+    db.t.ai_jobs.push({ id: "J2", kind: "wa_reply", payload: { conversation_id: "V1", message_id: "M2" }, status: "queued", attempts: 0, max_attempts: 5 });
+  }) });
+  await runWorker(d);
+  assert.deepEqual(outbound(db).filter((m) => m.source_job_id !== "J2").map((m) => m.status), ["sent", "skipped", "skipped"]);
+  assert.match(outbound(db)[1].status_reason, /buyer wrote again/);
+  await runWorker(d); // J2 (if not already handled in the same run)
+  assert.equal(d.llm.calls.length, 2);
+  const second = d.llm.calls[1].messages;
+  const text = second.map((m) => m.content).join("\n");
+  assert.match(text, /Stesen paling dekat ialah LRT Sri Rampai/, "what was sent is history");
+  assert.doesNotMatch(text, /MRT3 Circle Line pula masih dalam perancangan/, "what was never sent is not");
+  assert.match(second.at(-1).content, /<buyer_message>\nSaya kerja di Wangsa Maju\n<\/buyer_message>/, "only the new message is answered");
+  assert.equal(d.wa.sent.length, 2);
+});
+
+test("a failed second message is retried alone: the first is never sent twice and the AI is not called again", async () => {
+  const db = memdb(world()), d = depsM(db, { llm: llmOf(multi(3)), wa: waAfter(99, async () => {}, { failAt: 2 }) });
+  const r1 = await runWorker(d);
+  assert.equal(r1.errors.length, 1);
+  assert.deepEqual(outbound(db).map((m) => m.status), ["sent", "failed", "queued"]);
+  db.t.ai_jobs[0].status = "queued";
+  await runWorker(d);
+  assert.deepEqual(d.wa.sent.map((s) => s.msg.text), THREE, "each message exactly once, in order");
+  assert.deepEqual(outbound(db).map((m) => m.status), ["sent", "sent", "sent"]);
+  assert.equal(d.llm.calls.length, 1);
+  assert.equal(db.t.ai_agent_runs.length, 1);
+});
+
+test("hand-overs and safe replies are one message, whatever the model drafted", async () => {
+  const db = memdb(world()), d = depsM(db, { llm: llmOf(multi(3, { handover: { needed: true, reason: "negotiation", summary: "wants a discount", next_action: "call" } })) });
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 1);
+  assert.equal(d.wa.sent[0].msg.text, THREE.join("\n\n"));
+});

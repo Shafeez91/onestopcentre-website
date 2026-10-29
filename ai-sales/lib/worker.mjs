@@ -14,6 +14,7 @@ import { decideFollowUp, consentState, templateParams } from "./followups.mjs";
 import { confirmationText, placeFor } from "./calendar.mjs";
 import { sendOutbound, buyerLanguage } from "./outbound.mjs";
 import { runAutomation, confirmAppointmentNow, automationOf, openHumanTaskAbout } from "./automation.mjs";
+import { createHash } from "node:crypto";
 
 export { sendOutbound };
 
@@ -23,7 +24,55 @@ const flagsOf = (settings) => ({ module: settings?.flags?.module_enabled !== fal
 
 export async function loadSettings(db) { return (await db.get("ai_settings?id=eq.1&select=*"))?.[0] || {}; }
 
-const historyOf = (msgs) => msgs.filter((m) => m.body).map((m) => ({ role: m.direction === "inbound" ? "user" : "assistant", text: m.body }));
+// a part of a reply that was never delivered (a person took over, or the buyer wrote again first) is not history
+const delivered = (m) => !(m.direction === "outbound" && m.status === "skipped");
+const historyOf = (msgs) => msgs.filter((m) => m.body && delivered(m)).map((m) => ({ role: m.direction === "inbound" ? "user" : "assistant", text: m.body }));
+
+/**
+ * The idempotency key (ai_messages.source_job_id) of message i of a reply job: the job id for the first, exactly as
+ * before, and a fixed UUID derived from it for the second and third. A retried job finds the same keys, so no
+ * message is recorded or sent twice.
+ */
+export function segmentKey(jobId, i) {
+  if (!i) return jobId;
+  const h = createHash("sha256").update(`${jobId}:message:${i}`).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h[16], 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+/**
+ * Sends the messages of one reply turn in order, each as its own WhatsApp message and ai_messages row.
+ * All rows are recorded first (status queued, keyed per message), then sent one by one. Before every message after
+ * the first: a short pause, and a check that the buyer has not written again (their newer message gets a fresh
+ * reply that sees what was already sent). sendOutbound re-checks who owns the conversation before each AI message.
+ * Anything not sent because of a take-over or a newer buyer message is marked skipped and never sent later.
+ * Returns { sent: number, total, blocked?, superseded?, error?, kind? }.
+ */
+export async function sendTurn(deps, { conversation, to, messages, senderType, runId = null, jobId, inboundId }) {
+  const { db } = deps;
+  const keys = messages.map((_, i) => segmentKey(jobId, i));
+  for (let i = 0; i < messages.length; i++) {
+    await db.post("ai_messages?on_conflict=source_job_id", { conversation_id: conversation.id, direction: "outbound", sender_type: senderType, body: messages[i],
+      provider: "whatsapp_cloud", status: "queued", purpose: "reply", agent_run_id: runId, source_job_id: keys[i] }, { prefer: "return=minimal,resolution=ignore-duplicates" });
+  }
+  const skipRest = (from, reason) => db.patch(`ai_messages?source_job_id=in.(${keys.slice(from).join(",")})&status=in.(queued,failed)`, { status: "skipped", status_reason: reason });
+  let sent = 0;
+  for (let i = 0; i < messages.length; i++) {
+    if (i > 0) {
+      const pause = deps.messageGapMs ?? 1200;
+      if (pause) await new Promise((r) => setTimeout(r, pause));
+      const newest = (await db.get(`ai_messages?conversation_id=eq.${enc(conversation.id)}&direction=eq.inbound&order=created_at.desc,id.desc&limit=1&select=id`))?.[0];
+      if (inboundId && newest && newest.id !== inboundId) {
+        await skipRest(i, "the buyer wrote again before this part was sent; the next reply answers them");
+        return { sent, total: messages.length, superseded: true };
+      }
+    }
+    const r = await sendOutbound(deps, { conversation, to, text: messages[i], senderType, purpose: "reply", runId, sourceJobId: keys[i] });
+    if (r.blocked) { await skipRest(i, r.error || "not sent"); return { sent, total: messages.length, blocked: true, error: r.error }; }
+    if (!r.sent) return { sent, total: messages.length, error: r.error, kind: r.kind }; // the rest stay queued for the retry
+    sent++;
+  }
+  return { sent, total: messages.length };
+}
 const nameOf = (c) => c?.full_name || null;
 
 /* ---------------------------------------------------------------- replies */
@@ -33,13 +82,16 @@ export async function processReplyJob(deps, job, settings) {
   const conv = (await db.get(`ai_conversations?id=eq.${enc(convId)}&select=*,contact:ai_contacts(id,full_name,phone_e164,wa_id,preferred_language),lead:ai_leads(id,ai_paused,closed_at,first_response_at,lead_code)`))?.[0];
   if (!conv) return { status: "done", note: "conversation not found" };
 
-  // a retried job only re-sends the reply it already wrote: no second AI call, no duplicate CRM actions
-  const prior = (await db.get(`ai_messages?source_job_id=eq.${enc(job.id)}&select=id,status,body,sender_type`))?.[0];
-  if (prior) {
-    if (!["queued", "failed"].includes(prior.status)) return { status: "done", note: "already sent" };
-    const s = await sendOutbound(deps, { conversation: conv, to: conv.contact?.wa_id || conv.contact?.phone_e164, text: prior.body, senderType: prior.sender_type || "ai", purpose: "reply", sourceJobId: job.id });
-    if (s.blocked) return { status: "done", note: "not sent: " + s.error };
-    if (!s.sent && s.kind !== "config") throw new Error("WhatsApp send failed: " + s.error);
+  // a retried job only re-sends the messages it already wrote: no second AI call, no duplicate CRM actions
+  const keys = [0, 1, 2].map((i) => segmentKey(job.id, i));
+  const prior = ((await db.get(`ai_messages?source_job_id=in.(${keys.join(",")})&select=id,status,body,sender_type,source_job_id,agent_run_id`)) || [])
+    .sort((a, b) => keys.indexOf(a.source_job_id) - keys.indexOf(b.source_job_id));
+  if (prior.length) {
+    if (!prior.some((m) => ["queued", "failed"].includes(m.status))) return { status: "done", note: "already sent" };
+    const s = await sendTurn(deps, { conversation: conv, to: conv.contact?.wa_id || conv.contact?.phone_e164, messages: prior.map((m) => m.body), senderType: prior[0].sender_type || "ai",
+      runId: prior[0].agent_run_id || null, jobId: job.id, inboundId: msgId });
+    if (s.blocked || s.superseded) return { status: "done", note: "not all sent: " + (s.error || "the buyer wrote again") };
+    if (s.sent < s.total && s.kind !== "config") throw new Error("WhatsApp send failed: " + s.error);
     return { status: "done", resent: s.sent };
   }
 
@@ -48,10 +100,11 @@ export async function processReplyJob(deps, job, settings) {
   const newestIn = msgs.find((m) => m.direction === "inbound");
   if (!newestIn || newestIn.id !== msgId) return { status: "done", note: "superseded by a newer message" }; // the newer job answers both
 
-  // everything the buyer sent since our last message is answered together
-  const pending = [];
-  for (const m of msgs) { if (m.direction === "outbound") break; pending.unshift(m); }
-  const earlier = msgs.slice(pending.length).reverse();
+  // everything the buyer sent since our last delivered message is answered together
+  let cut = msgs.findIndex((m) => m.direction === "outbound" && delivered(m));
+  if (cut < 0) cut = msgs.length;
+  const pending = msgs.slice(0, cut).filter((m) => m.direction === "inbound").reverse();
+  const earlier = msgs.slice(cut).reverse();
   const message = pending.map((m) => m.body).filter(Boolean).join("\n").trim();
   const readable = pending.some((m) => !m.media && m.body);
   const lead = conv.lead, contact = conv.contact, to = contact?.wa_id || contact?.phone_e164;
@@ -88,11 +141,13 @@ export async function processReplyJob(deps, job, settings) {
   const done = await applyActions(db, { leadId: lead.id, contactId: contact.id, result, conversationId: conv.id, runId, messageId: msgId });
 
   let sent = null;
-  if (result.reply && result.decision !== "paused") {
+  const out = result.messages?.length ? result.messages : result.reply ? [result.reply] : [];
+  if (out.length && result.decision !== "paused") {
     if (canSend) {
       // fixed replies to STOP / "talk to a person" are system messages: sent even while a person handles the chat
-      sent = await sendOutbound(deps, { conversation: conv, to, text: result.reply, senderType: guard ? "system" : "ai", purpose: "reply", runId, sourceJobId: job.id });
-      if (sent.blocked) {
+      const t = await sendTurn(deps, { conversation: conv, to, messages: out, senderType: guard ? "system" : "ai", runId, jobId: job.id, inboundId: msgId });
+      sent = { ...t, sent: t.sent > 0, complete: t.sent === t.total };
+      if (t.blocked && !t.sent) {
         // a person took over while the AI was writing: their conversation, nothing more to do
       } else if (sent.sent) {
         await db.patch(`ai_conversations?id=eq.${enc(conv.id)}`, { unread_count: 0 });
@@ -114,7 +169,8 @@ export async function processReplyJob(deps, job, settings) {
     const pendingAppt = (await db.get(`ai_appointments?lead_id=eq.${enc(lead.id)}&status=eq.pending_confirmation&select=id&limit=1`))?.length;
     try { await db.rpc("ai_follow_up_start", { p_lead: lead.id, p_lead_type: pendingAppt ? "appointment_pending" : "new_enquiry" }); } catch { /* no sequence configured */ }
   }
-  if (sent && !sent.sent && !sent.blocked && sent.kind !== "config") throw new Error("WhatsApp send failed: " + sent.error); // retried; the reply row prevents a double send
+  // retried: the recorded rows (one per message) prevent a double send; only what is still queued or failed goes out
+  if (sent && !sent.complete && !sent.blocked && !sent.superseded && sent.kind !== "config") throw new Error("WhatsApp send failed: " + sent.error);
   return { status: "done", decision: result.decision, sent: !!sent?.sent };
 }
 

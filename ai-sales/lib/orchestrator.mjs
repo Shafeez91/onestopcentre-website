@@ -48,6 +48,17 @@ async function callReply(llm, params, base) {
   }
 }
 
+/**
+ * The business-rule check for a whole turn: every rule runs on all its messages together (one turn, one set of
+ * facts), and the length limit applies to each WhatsApp message on its own.
+ */
+export function checkTurn(data, rules = {}) {
+  const check = validateReply(data.reply, { ...rules, maxChars: 0 });
+  const max = rules.maxChars, long = max ? (data.messages || [data.reply]).map((m, i) => [i + 1, m.length]).filter(([, n]) => n > max) : [];
+  if (long.length) check.violations.push({ code: "too_long", detail: long.map(([i, n]) => `Message ${i} is ${n} characters; the limit is ${max} per message.`).join(" ") });
+  return { ok: check.violations.length === 0, violations: check.violations };
+}
+
 const summariseViolations = (vs) => vs.map((v) => `- ${v.code}: ${v.detail}`).join("\n");
 
 /**
@@ -60,7 +71,8 @@ export async function respond(p) {
   const message = String(p.message || "").trim();
   const history = p.history || [];
   const base = { message, actions: [], attempts: [], violations: [], model: null, usage: null };
-  const finish = (r) => ({ ...base, ...r, latency_ms: Date.now() - t0 });
+  // every result carries `messages` (what would be sent, in order); fixed replies are one message
+  const finish = (r) => ({ ...base, ...r, messages: r.messages || (r.reply ? [r.reply] : []), latency_ms: Date.now() - t0 });
 
   if (!message) return finish({ decision: "ignored", reply: null, reason: "empty message" });
 
@@ -135,12 +147,12 @@ export async function respond(p) {
           attachFinancing(ctx, { inputs: m.inputs, saved: finSaved, recalculated: true });
           ctx.financingView = renderFinancing(ctx.financing);
           contextText = renderContext(ctx);
-          base.attempts.push({ attempt, reply: data.reply, violations: [], recalculated: m.changed });
+          base.attempts.push({ attempt, reply: data.reply, messages: data.messages, violations: [], recalculated: m.changed });
           continue;
         }
       }
-      check = validateReply(data.reply, ctx.rules);
-      base.attempts.push({ attempt, reply: data.reply, violations: check.violations });
+      check = checkTurn(data, ctx.rules);
+      base.attempts.push({ attempt, reply: data.reply, messages: data.messages, violations: check.violations });
       if (check.ok || retried) break;
       retried = true;
       feedback = summariseViolations(check.violations);
@@ -227,8 +239,10 @@ export async function respond(p) {
   // what the AI learnt about the client (profile, summary, next action, confirmed milestone): written last, by the rules
   if (p.leadId && insights) actions.push({ type: "insights", insights, buyer_text: message });
 
+  // separate WhatsApp messages only for a normal AI reply; a safe reply or a hand-over is one message
+  const messages = decision === "reply" ? data.messages : [reply];
   return finish({
-    decision, reply, draft: data.reply, language: data.language, intent: data.intent, agent: data.agent, confidence: Number(data.confidence),
+    decision, reply: messages.join("\n\n"), messages, draft: data.reply, draft_messages: data.messages, language: data.language, intent: data.intent, agent: data.agent, confidence: Number(data.confidence),
     facts_used: data.facts_used || [], objection_key: data.objection_key || null, violations: check.violations, actions,
     qualification, score: scored.score, temperature: scored.temperature,
     ...(fin ? { financing: { inputs: fin.inputs, result: fin.result, recalculated } } : {}),
@@ -300,7 +314,7 @@ export async function logRun(db, { result, leadId = null, conversationId = null,
       lead_id: leadId, conversation_id: conversationId, agent: result.agent || "orchestrator", intent: result.intent || null, model: result.model,
       input: { channel, message: result.message, ...input },
       // financing figures stay in the access-controlled financing tables, not in the run log
-      output: { reply: result.reply, draft: result.draft, attempts: result.attempts, retrieval: result.retrieval || null, degraded: result.degraded || null, error_kind: result.errorKind || null,
+      output: { reply: result.reply, messages: result.messages || null, draft: result.draft, attempts: result.attempts, retrieval: result.retrieval || null, degraded: result.degraded || null, error_kind: result.errorKind || null,
         actions: (result.actions || []).map((a) => (a.type === "save_financing" ? { type: a.type, changed: a.changed, outcome: a.result?.outcome || null, new_assessment: a.new_assessment } : a)) },
       // confidence null = the model gave none (a fixed reply or a failed call)
       confidence: Number.isFinite(result.confidence) ? Math.max(0, Math.min(1, result.confidence)) : null, decision: result.decision,
@@ -335,7 +349,7 @@ export async function composeFollowUp(p) {
     const data = normalizeReply(r.data); served = r.model || model;
     usage.input_tokens += r.usage?.input_tokens || 0; usage.output_tokens += r.usage?.output_tokens || 0;
     if (data.handover?.needed) return { skipped: "the AI judged that a person should follow up", usage, model: served };
-    check = validateReply(data.reply, ctx.rules);
+    check = checkTurn(data, ctx.rules);
     if (check.ok) return { reply: data.reply, language: data.language, usage, model: served };
     feedback = summariseViolations(check.violations);
   }
