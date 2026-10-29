@@ -56,6 +56,10 @@ export function checkTurn(data, rules = {}) {
   const check = validateReply(data.reply, { ...rules, maxChars: 0 });
   const max = rules.maxChars, long = max ? (data.messages || [data.reply]).map((m, i) => [i + 1, m.length]).filter(([, n]) => n > max) : [];
   if (long.length) check.violations.push({ code: "too_long", detail: long.map(([i, n]) => `Message ${i} is ${n} characters; the limit is ${max} per message.`).join(" ") });
+  // a stray fragment ("x", "ok", a lone emoji) is never a WhatsApp message of its own; a reply needs some words
+  const list = data.messages || [data.reply], words = (m) => (String(m).match(/\p{L}{2,}/gu) || []).length;
+  const frags = list.map((m, i) => [i + 1, m]).filter(([, m]) => (list.length > 1 ? words(m) < 3 : words(m) < 1));
+  if (frags.length) check.violations.push({ code: "fragment", detail: frags.map(([i, m]) => `Message ${i} ("${String(m).slice(0, 20)}") is not a complete message; fold it into another message or remove it.`).join(" ") });
   return { ok: check.violations.length === 0, violations: check.violations };
 }
 
