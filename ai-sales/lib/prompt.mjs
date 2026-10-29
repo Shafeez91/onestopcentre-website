@@ -20,9 +20,9 @@ const FINANCING_KEYS = ["route", "age", "basic_salary", "fixed_allowances", "var
 export const REPLY_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["reply", "language", "intent", "agent", "confidence", "facts_used", "qualification_updates", "financing_updates", "appointment_request", "handover", "objection_key", "workflow", "insights"],
+  required: ["messages", "language", "intent", "agent", "confidence", "facts_used", "qualification_updates", "financing_updates", "appointment_request", "handover", "objection_key", "workflow", "insights"],
   properties: {
-    reply: { ...str, description: "The WhatsApp message to send to the buyer." },
+    messages: { type: "array", items: str, description: "1 to 3 separate WhatsApp messages, sent in this order. Usually 1. A second or third only when it is a distinct message (see WhatsApp messages in the instructions). Paragraphs inside one message are separated by a blank line." },
     language: enumOf("ms", "en", "mixed"),
     intent: enumOf(...INTENTS),
     agent: enumOf(...AGENTS),
@@ -99,10 +99,24 @@ const blank = (v) => (v === "" || v === 0 || v === null || v === undefined ? nul
 const blanks = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k, typeof v === "boolean" ? v : blank(v)]));
 
 /** Turns the schema's "unknown" placeholders ("" / 0) back into null. */
+/**
+ * The separate WhatsApp messages of one turn: trimmed, empty ones dropped, at most MAX_MESSAGES (anything beyond is
+ * kept by joining it onto the last message, so nothing the model wrote is lost). Older replies have one `reply`.
+ */
+export const MAX_MESSAGES = 3;
+export function replyMessages(d) {
+  const list = (Array.isArray(d?.messages) ? d.messages : [d?.reply]).map((m) => String(m ?? "").trim()).filter(Boolean);
+  if (list.length <= MAX_MESSAGES) return list;
+  return [...list.slice(0, MAX_MESSAGES - 1), list.slice(MAX_MESSAGES - 1).join("\n\n")];
+}
+
 export function normalizeReply(d) {
   if (!d || typeof d !== "object") return d;
+  const messages = replyMessages(d);
   return {
     ...d,
+    messages,
+    reply: messages.join("\n\n"), // the whole turn as one text: what the business-rule checker and the run log read
     qualification_updates: blanks(d.qualification_updates),
     appointment_request: blanks(d.appointment_request),
     handover: blanks(d.handover),
@@ -120,7 +134,7 @@ export function buildSystemPrompt(settings = {}, objections = [], { calendar = f
 
 How you work
 - You are an AI assistant. In your first reply of a conversation, say so plainly, in the buyer's language, before anything else, introducing yourself by your name (e.g. "Saya ${name}, pembantu AI" / "I'm ${name}, an AI assistant"). If anyone asks, never claim to be human, and never claim to have visited a property or showroom.
-- Write like an experienced, friendly Malaysian property advisor on WhatsApp: short, clear, warm, never pushy. Usually 1–4 short sentences and at most ${ai.max_reply_chars || 700} characters. Ask at most one question per message. Use "tuan/puan" in Bahasa Malaysia unless you know how the buyer prefers to be addressed.
+- Write like an experienced, friendly Malaysian property advisor on WhatsApp: short, clear, warm, never pushy. Each WhatsApp message usually 1–4 short sentences and at most ${ai.max_reply_chars || 700} characters. Ask at most one question per turn, in the last message. Use "tuan/puan" in Bahasa Malaysia unless you know how the buyer prefers to be addressed.
 - Reply in the buyer's language: Bahasa Malaysia, English${manglish ? ", or Manglish if they write in Manglish" : " (do not use Manglish; answer mixed messages in Bahasa Malaysia)"}. Keep property terms buyers use (booking fee, SPA, LPPSA, freehold, built-up, sqft).
 - If the buyer asks for a language (buyer.language_requested in the context, e.g. "Saya nk speak in English"), reply in that language from then on, even when they keep mixing in Malay words, until they ask for another one. Acknowledge the switch briefly and carry on helping. Never translate project names or terms such as LPPSA, SPA, LO or Bumiputera.
 - Do not repeat questions the buyer already answered (see the lead's qualification in the context).
@@ -190,7 +204,14 @@ Safety
 - Do not give legal, tax or regulated financial advice. ${c.pdpa_notice_en ? `If a buyer asks how their data is used: ${c.pdpa_notice_en}` : ""}
 
 Output
-Return only the JSON object required by the schema: reply, language, intent, agent (which specialist role you acted as), confidence (0–1), facts_used, qualification_updates, financing_updates (all 0 / "" unless the buyer gave financing figures), appointment_request, handover, objection_key, workflow (all "" unless the follow-up workflow rules above apply), insights (see Client profile).`;
+WhatsApp messages (the "messages" list)
+- One turn can be 1, 2 or 3 separate WhatsApp messages. A paragraph break inside one message is not a new message: put a blank line between paragraphs of the same message.
+- Default to ONE message. Use a second message only when it carries something distinct that is worth its own bubble, e.g. message 1 answers the question (and briefly explains), message 2 adds value (a comparison, a practical point) and asks the one follow-up question. Use a third only when the answer, the extra value and the follow-up question each clearly justify their own message.
+- Never split one answer, sentence or list across messages, never repeat yourself across messages, and never add a message just to fit a pattern. If a second message would be short filler, leave it out or fold it into the first.
+- Hand-overs, opt-outs, complaints, sensitive or legal questions and anything that needs a person: one message.
+- The AI introduction (first reply of a conversation) belongs in message 1. Any question goes in the last message.
+
+Return only the JSON object required by the schema: messages, language, intent, agent (which specialist role you acted as), confidence (0–1), facts_used, qualification_updates, financing_updates (all 0 / "" unless the buyer gave financing figures), appointment_request, handover, objection_key, workflow (all "" unless the follow-up workflow rules above apply), insights (see Client profile).`;
 }
 
 const label = (verified, fresh) => (verified ? (fresh ? "VERIFIED" : "STALE") : "INDICATIVE");
@@ -245,7 +266,7 @@ export function buildMessages(history, contextText, message, validationFeedback,
   }
   if (turns.length && turns[0].role === "assistant") turns.unshift({ role: "user", content: "(conversation started by the agency)" });
   const last = [contextText, task
-    ? `<follow_up_task>\nThe buyer has not written since your last message. Write one short, friendly WhatsApp follow-up for this step: ${task}\nDo not repeat earlier messages, do not pressure, and keep to verified facts. Leave appointment_request.wanted false and handover.needed false unless the conversation clearly needs a person.\n</follow_up_task>`
+    ? `<follow_up_task>\nThe buyer has not written since your last message. Write one short, friendly WhatsApp follow-up for this step (a single message in "messages"): ${task}\nDo not repeat earlier messages, do not pressure, and keep to verified facts. Leave appointment_request.wanted false and handover.needed false unless the conversation clearly needs a person.\n</follow_up_task>`
     : `<buyer_message>\n${message}\n</buyer_message>`];
   if (validationFeedback) last.push(`<rejected_draft_feedback>\nYour previous draft was rejected by the business-rule checker:\n${validationFeedback}\nWrite a new reply that fixes every point. If the information is not verified, say an advisor will confirm it instead of stating it.\n</rejected_draft_feedback>`);
   const content = last.join("\n\n");

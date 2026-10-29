@@ -240,6 +240,39 @@ test("AI test console: an outage is labelled as one (no fake confidence); a norm
   } finally { await ctx.close(); }
 });
 
+test("AI test console: a turn of three WhatsApp messages shows three bubbles in order; a one-message turn shows one", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.phone);
+  try {
+    const M = ["Stesen paling dekat ialah LRT Sri Rampai.", "MRT3 Circle Line masih dalam perancangan.", "Tuan/puan kerja di kawasan mana?"];
+    const results = [
+      { decision: "reply", reply: M.join("\n\n"), messages: M, intent: "project_info", agent: "knowledge", language: "ms", confidence: 0.9, model: "claude-opus-5-5", latency_ms: 9000, attempts: [{ attempt: 1, reply: "x", violations: [] }], actions: [] },
+      { decision: "reply", reply: "Harga dari RM476,000.\n\nItu harga Type A.", messages: ["Harga dari RM476,000.\n\nItu harga Type A."], intent: "price", agent: "knowledge", language: "ms", confidence: 0.9, model: "claude-opus-5-5", latency_ms: 8000, attempts: [], actions: [] },
+    ];
+    const sent = [];
+    await page.route("**/api/sales/ai/simulate", (r) => { sent.push(JSON.parse(r.request().postData())); r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...results.shift(), simulated: true }) }); });
+    await page.goto(base + "/sales/#/ai-test");
+    await page.waitForSelector("#msg");
+    await page.evaluate(() => sessionStorage.clear());
+    await page.fill("#msg", "MRT paling dekat kat mana?");
+    await page.click("#say button");
+    await page.waitForSelector(".msg.ai .turn");
+    const bubbles = await page.$$eval(".msg.ai .turn .bubble", (b) => b.map((x) => x.textContent));
+    assert.deepEqual(bubbles, M.map((m, i) => `${i + 1}/3${m}`), "three separate bubbles, numbered, in order");
+    assert.match(await page.textContent(".msg.ai .why"), /3 WhatsApp messages/);
+    if (process.env.E2E_SHOTS) await page.screenshot({ path: path.join(process.env.E2E_SHOTS, "phone-ai-test-multi.png"), fullPage: true });
+    await page.fill("#msg", "Harga?");
+    await page.click("#say button");
+    await page.waitForFunction(() => document.querySelectorAll(".msg.ai").length === 2);
+    const second = page.locator(".msg.ai").nth(1);
+    assert.equal(await second.locator(".bubble").count(), 1, "a one-message turn stays one bubble, paragraphs and all");
+    assert.equal(await second.locator(".bubble").textContent(), "Harga dari RM476,000.\n\nItu harga Type A.");
+    assert.match(await second.locator(".why").textContent(), /1 WhatsApp message\b/);
+    assert.equal(sent[1].history.length, 2, "the previous turn is sent back as history");
+    assert.equal(sent[1].history[1].text, M.join("\n\n"));
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("AI settings: shows today's usage and saves a valid daily limit", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {

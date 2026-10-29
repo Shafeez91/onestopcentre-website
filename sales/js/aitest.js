@@ -61,9 +61,15 @@ export async function aitest(el, params) {
   const render = () => {
     chat.innerHTML = turns.length ? turns.map((t) => t.role === "user"
       ? `<div class="msg buyer"><div class="bubble">${esc(t.text)}</div></div>`
-      : `<div class="msg ai"><div class="bubble">${esc(t.text || "(no reply)")}</div>${t.r ? detail(t.r) : ""}</div>`).join("")
+      : `<div class="msg ai">${bubbles(t)}${t.r ? detail(t.r) : ""}</div>`).join("")
       : empty("Send a buyer message to start. Pick an existing lead to test with their history, budget and projects of interest.");
     chat.scrollTop = chat.scrollHeight;
+  };
+  // one bubble per WhatsApp message the AI would send in this turn (older saved turns have one text)
+  const bubbles = (t) => {
+    const list = t.r?.messages?.length ? t.r.messages : [t.text || "(no reply)"];
+    if (list.length === 1) return `<div class="bubble">${esc(list[0])}</div>`;
+    return `<div class="turn" role="group" aria-label="${list.length} WhatsApp messages from one AI turn">${list.map((m, i) => `<div class="bubble"><span class="part">${i + 1}/${list.length}</span>${esc(m)}</div>`).join("")}</div>`;
   };
   const detail = (r) => {
     const [label, kind] = outcome(r);
@@ -71,7 +77,8 @@ export async function aitest(el, params) {
     const rating = r.model && Number.isFinite(r.confidence) ? `AI self-rating ${Math.round(r.confidence * 100)}%` : "Self-rating: not available";
     const h = (r.actions || []).find((a) => a.type === "handover"), rt = r.retrieval;
     const row = (k, v) => (v ? `<div class="kvr"><dt>${esc(k)}</dt><dd>${v}</dd></div>` : "");
-    return `<div class="why">${badge(label, kind)} <small>${[r.intent && pretty(r.intent), LANG[r.language] || r.language, rating, r.model, r.latency_ms ? (r.latency_ms / 1000).toFixed(1) + " s" : ""].filter(Boolean).map(esc).join(" · ")}</small>
+    const n = r.messages?.length || (r.reply ? 1 : 0);
+    return `<div class="why">${badge(label, kind)} <small>${[n ? `${n} WhatsApp message${n === 1 ? "" : "s"}` : "", r.intent && pretty(r.intent), LANG[r.language] || r.language, rating, r.model, r.latency_ms ? (r.latency_ms / 1000).toFixed(1) + " s" : ""].filter(Boolean).map(esc).join(" · ")}</small>
       <details><summary>Why the AI did this</summary>
         <dl class="kvl">
           ${row("AI service", r.decision === "error" ? `<span class="late">No answer — ${esc(FAILURE[r.errorKind] || "error")}</span>` : r.model ? `Answered (${esc(r.model)})` : "Not called — fixed rule")}
