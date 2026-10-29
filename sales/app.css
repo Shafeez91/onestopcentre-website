@@ -307,19 +307,12 @@ dialog::backdrop{background:rgba(6,15,38,.5)}
 .say textarea{flex:1}
 @media (max-width:480px){.say{flex-direction:column;align-items:stretch}}
 /* WhatsApp inbox */
-.inbox{display:grid;grid-template-columns:minmax(220px,320px) minmax(0,1fr);gap:14px;align-items:start}
-.conv-list{list-style:none;margin:0;padding:6px;max-height:75vh;overflow-y:auto}
-.conv-list li a{display:block;padding:10px 12px;border-radius:10px;color:var(--ink);text-decoration:none}
-.conv-list li a:hover{background:var(--bg)}
-.conv-list li.on a{background:var(--bg);outline:2px solid var(--line)}
-.conv-list small{display:block;color:var(--mute);margin-top:2px}
 .thread .chat{max-height:58vh}
 .thread .say{flex-wrap:wrap}
 .thread .say .check{flex-basis:100%;order:3}
 .msg .meta{color:var(--mute);font-size:.75rem;margin-top:3px}
 .tick.read{color:#2b7de9}.tick.failed{color:var(--bad)}
 .thread .back{display:none}
-@media (max-width:900px){.inbox{grid-template-columns:minmax(0,1fr)}.inbox.has-thread .conv-list{display:none}.inbox:not(.has-thread) .thread{display:none}.thread .back{display:inline}}
 /* inbox: conversation ownership and per-buyer automation switches */
 .note.own{margin:.25rem 0}
 .auto-row{display:flex;flex-wrap:wrap;gap:.25rem 1.25rem;margin:.25rem 0 .5rem}
@@ -470,3 +463,97 @@ fieldset.multi legend small{flex-basis:100%}
 .stage-row{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:8px 0}
 .stage-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 ol.stages{padding-left:1.4em}
+
+/* ---------------------------------------------------------------- WhatsApp inbox: list · conversation · client */
+.ibx{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;align-items:start}
+.ibx>.card,.ibx-ctx>.card{margin:0}
+.ibx-ctx{display:grid;gap:14px}
+.ibx-ctx:empty{display:none}
+.ibx-list{padding:10px;position:sticky;top:calc(var(--top-h) + 12px)}
+.ibx-search{position:relative;margin-bottom:8px}
+.ibx-search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--mute)}
+.ibx-search input{padding-left:34px;border-radius:999px;background:var(--bg);border-color:transparent}
+.ibx-f{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.ibx-f::-webkit-scrollbar{display:none}
+.ibx-f a{flex:none;font-size:.78rem;font-weight:600;padding:5px 10px;border-radius:999px;color:var(--ink2);text-decoration:none;background:var(--bg)}
+.ibx-f a b{font-weight:700;margin-left:2px;opacity:.75}
+.ibx-f a.on{background:var(--navy);color:#fff}
+.conv-list{list-style:none;margin:6px 0 0;padding:0;max-height:calc(100dvh - 300px);min-height:200px;overflow-y:auto}
+.conv-list li a{display:flex;align-items:flex-start;gap:10px;padding:10px 8px;border-radius:10px;color:var(--ink);text-decoration:none}
+.conv-list li a:hover{background:var(--bg)}
+.conv-list li.on a{background:var(--gold-soft)}
+.conv-list li+li{border-top:1px solid var(--line)}
+.conv-list .av,.ctx-h .av{display:grid;place-items:center;width:38px;height:38px;border-radius:50%;background:var(--navy);color:var(--gold2);font-weight:700;flex:none}
+.ctx-h .av.lg{width:44px;height:44px}
+.cv{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.cv-top{display:flex;justify-content:space-between;gap:8px}
+.cv-top b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv-top time{flex:none;font-size:.72rem;color:var(--mute)}
+.cv-msg{font-size:.82rem;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.unread .cv-msg{color:var(--ink);font-weight:600}
+.cv-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+.cv-tags .badge,.cv-tags .stage-chip{font-size:.66rem;padding:1px 7px}
+.conv-list .cnt{margin-top:2px}
+.ibx-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:320px;color:var(--mute)}
+.ctx-h{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.ctx-h small{display:block}
+.ctx-sum{font-size:.9rem;line-height:1.5;margin:.6rem 0}
+.ctx-kv .kvr{grid-template-columns:minmax(80px,38%) minmax(0,1fr);font-size:.84rem}
+.ibx-ctx h2{display:flex;align-items:center;gap:6px}
+.ibx-ctx h2 svg{color:var(--gold)}
+/* phones and iPad portrait: the list or a conversation, the client below it */
+.ibx.has-thread .ibx-list{display:none}
+.ibx:not(.has-thread) .thread{display:none}
+.thread .back{display:inline}
+.ibx-list{position:static}
+/* iPad landscape and up: list beside the conversation; the client below the conversation */
+@container (min-width:760px){
+  .ibx{grid-template-columns:minmax(250px,300px) minmax(0,1fr);grid-template-areas:"list thread" "list ctx"}
+  .ibx-list{grid-area:list;position:sticky}.ibx .thread{grid-area:thread}.ibx-ctx{grid-area:ctx}
+  .ibx.has-thread .ibx-list,.ibx:not(.has-thread) .thread{display:block}
+  .thread .back{display:none}
+}
+/* wide screens: all three side by side */
+@container (min-width:1180px){
+  .ibx{grid-template-columns:minmax(260px,300px) minmax(0,1fr) minmax(260px,320px);grid-template-areas:"list thread ctx"}
+  .ibx-ctx{position:sticky;top:calc(var(--top-h) + 12px)}
+}
+
+/* ---------------------------------------------------------------- tasks & appointments: calendar, tasks */
+.sched-tabs{margin:0}
+.sched-tabs a{display:inline-flex;align-items:center;gap:6px}
+.cal-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.cal-bar h2{margin:0;font-size:1.2rem}
+.cal-legend{display:flex;flex-wrap:wrap;gap:6px}
+.cal-legend .ev{display:inline-block;font-size:.74rem;padding:2px 9px;text-decoration:none}
+.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--line);gap:1px}
+.cal-h{background:var(--bg);font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);padding:6px 8px}
+.cal-day{background:var(--card);min-height:112px;padding:6px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.cal-day.out{background:var(--bg)}.cal-day.out .cal-d b{color:var(--mute)}
+.cal-day.today .cal-d b{background:var(--navy);color:#fff}
+.cal-d b{display:inline-grid;place-items:center;min-width:24px;height:24px;border-radius:999px;font-size:.8rem}
+.cal-d span{display:none}
+.ev{display:block;border-radius:6px;padding:3px 6px;font-size:.74rem;line-height:1.3;color:var(--ink);text-decoration:none;background:var(--bg);border-left:3px solid var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ev time{font-weight:700}
+.ev small{display:none}
+.ev.conf{border-left-color:var(--ok);background:var(--ok-bg)}
+.ev.pend{border-left-color:var(--warn);background:var(--warn-bg)}
+.ev.done{border-left-color:var(--navy);background:var(--acc-soft)}
+.ev.cxl,.ev.miss{border-left-color:var(--bad);background:var(--bad-bg);text-decoration:line-through}
+.cal-legend .ev.cxl{text-decoration:none}
+.ev.task{border-left-color:var(--gold);background:var(--gold-soft)}
+.ev.task.late{border-left-color:var(--bad)}
+.cal-none{text-align:center}
+/* phones and narrow iPad: an agenda of the days that have something */
+@container (max-width:700px){
+  .cal-grid{display:block;background:none;border:0}
+  .cal-h,.cal-day.none{display:none}
+  .cal-day{min-height:0;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;padding:10px;gap:6px}
+  .cal-day.out{background:var(--card)}
+  .cal-d{display:flex;align-items:center;gap:8px;margin-bottom:2px}.cal-d span{display:inline;font-weight:600;font-size:.88rem}
+  .ev{white-space:normal;font-size:.86rem;padding:6px 8px}.ev small{display:block}
+}
+.tasks-l li{display:flex;gap:10px;align-items:flex-start}
+.tasks-l small a{color:inherit}
+.task-det{color:var(--mute)}
+.cnt.soft{background:var(--bg);color:var(--ink2)}
