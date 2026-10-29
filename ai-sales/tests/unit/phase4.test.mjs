@@ -165,7 +165,8 @@ test("service-account sign-in: RS256 assertion verifiable with the public key; b
 /* ================================================================ live worker */
 const SETTINGS = {
   id: 1, flags: { module_enabled: true, ai_auto_reply: true, whatsapp_outbound: true, follow_ups: true, calendar_booking: false },
-  persona: { name: "OSC Property Assistant" }, ai: { confidence_threshold: 0.7, max_reply_chars: 700 },
+  // client insights run as their own job after a reply; switched off here so other tests count only reply calls
+  persona: { name: "OSC Property Assistant" }, ai: { confidence_threshold: 0.7, max_reply_chars: 700, auto_insights: false },
   business: { hours: HOURS, max_marketing_messages_per_week: 2, price_max_age_days: 30, inventory_max_age_hours: 72, appointments: { duration_minutes: 60, location: "M Mira Gallery" } },
   scoring: {}, compliance: {}, notifications: { whatsapp_alerts: true },
 };
@@ -443,7 +444,7 @@ test("second message while the AI owns the chat: the AI answers again (no one-re
 
 test("human takeover: buyer messages get no AI reply and no routine Telegram alert", async () => {
   const w = world(); w.ai_conversations[0].mode = "human"; w.ai_leads[0].ai_paused = true;
-  w.ai_settings[0].notifications = { whatsapp_alerts: false };
+  w.ai_settings[0].notifications = { whatsapp_alerts: false }; delete w.ai_settings[0].ai.auto_insights;
   const writes = [];
   const rpcs = { ai_lead_profile_set: (a) => { writes.push(["profile", a]); return { applied: ["work_area"] }; }, ai_lead_summary_set: (a) => { writes.push(["summary", a]); return {}; } };
   const insights = { profile_updates: [{ field: "work_area", value: "KLCC", status: "confirmed" }], summary: { changed: true, text: "Works in KLCC.", last_client_question: "", outstanding: "", next_question: "" },
@@ -883,25 +884,40 @@ test("workflow helpers: next stage, messages with variables, builder validation"
 });
 
 /* ================================================================ client insights on a live reply */
-test("live reply: insights are written after the reply's other changes; a person's qualification entry is not overwritten but sent for review", async () => {
+test("live reply: client insights come from a separate call after the reply (own job, once per buyer message); a person's entry is not overwritten", async () => {
   const w = world();
   w.ai_leads[0].qualification = { purpose: "investment", signals: {} };
   w.ai_leads[0].profile_meta = { purpose: { status: "confirmed", source: "staff" } };
   w.ai_messages[0].body = "Saya nak duduk sendiri, kerja di KLCC";
+  delete w.ai_settings[0].ai.auto_insights; // the default: on
   const calls = [];
   const rpcs = { ai_lead_profile_set: (a) => { calls.push(["profile", a]); return { applied: [] }; }, ai_lead_summary_set: (a) => { calls.push(["summary", a]); return {}; } };
-  const insights = { profile_updates: [{ field: "work_area", value: "KLCC", status: "confirmed" }], summary: { changed: true, text: "Own stay; works in KLCC.", last_client_question: "", outstanding: "", next_question: "" },
+  const insights = { profile_updates: [{ field: "work_area", value: "KLCC", status: "confirmed" }, { field: "purpose", value: "own_stay", status: "confirmed" }],
+    summary: { changed: true, text: "Own stay; works in KLCC.", last_client_question: "", outstanding: "", next_question: "" },
     next_action: { action: "", reason: "", priority: "", due_in_days: 0 }, stage_update: { stage: "", evidence: "" } };
-  const d0 = draft({ insights });
-  const db = memdb(w, rpcs), d = deps(db, { llm: llmOf({ ...d0, qualification_updates: { ...d0.qualification_updates, purpose: "own_stay" } }) });
+  const d0 = draft();
+  const db = memdb(w, rpcs), d = deps(db, { llm: llmOf({ ...d0, qualification_updates: { ...d0.qualification_updates, purpose: "own_stay" } }, insights) });
   await runWorker(d);
-  assert.equal(d.wa.sent.length, 1, "the reply itself is unaffected");
+  assert.equal(d.wa.sent.length, 1, "the reply goes out first, unaffected");
+  assert.ok(!("insights" in d.llm.calls[0].schema.properties), "the reply call carries no insights (that made the API refuse the schema)");
   assert.equal(db.t.ai_leads[0].qualification.purpose, "investment", "the person's entry stays");
-  assert.deepEqual(calls[0][1].p_changes, [{ field: "work_area", value: "KLCC", status: "confirmed" }, { field: "purpose", value: "own_stay", status: "confirmed" }]);
+  const job = db.t.ai_jobs.find((j) => j.kind === "lead_insights");
+  assert.deepEqual([job.payload, job.dedupe_key], [{ lead_id: "L1", message_id: w.ai_messages[0].id }, `insights:${w.ai_messages[0].id}`]);
+  assert.equal(calls.length, 0, "nothing written before the insights job runs");
+  await runWorker(d);
+  assert.equal(d.llm.calls.length, 2);
+  assert.ok("profile_updates" in d.llm.calls[1].schema.properties, "the insights call has its own small schema");
+  assert.deepEqual(calls[0][1].p_changes, insights.profile_updates, "the database rules decide: a different value from a person's entry becomes a conflict, not an overwrite");
   assert.equal(calls[0][1].p_message, w.ai_messages[0].id, "tied to the buyer's message");
-  assert.equal(calls[1][1].p_summary.text, "Own stay; works in KLCC.");
-  // the AI's own context carries what is known and the milestones it may set
+  assert.equal(calls.find((c) => c[0] === "summary")[1].p_summary.text, "Own stay; works in KLCC.");
+  assert.equal(db.t.ai_jobs.find((j) => j.kind === "lead_insights").status, "done");
+  // the reply call's context still carries what is known about the client
   assert.match(d.llm.calls[0].messages.at(-1).content, /"client_profile":\{"known":\{"purpose":\{"value":"investment","status":"confirmed"\}\}/);
+  // switched off in settings (auto_insights: false): no insights job
+  const w2 = world();
+  const db2 = memdb(w2), d2 = deps(db2);
+  await runWorker(d2);
+  assert.equal(db2.t.ai_jobs.filter((j) => j.kind === "lead_insights").length, 0);
 });
 
 /* ================================================================ several WhatsApp messages in one AI turn */

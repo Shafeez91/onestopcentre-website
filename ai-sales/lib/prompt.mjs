@@ -7,7 +7,6 @@ const str = { type: "string" };
 const num = { type: "number" };
 const bool = { type: "boolean" };
 const enumOf = (...v) => ({ type: "string", enum: v });
-import { INSIGHTS_SCHEMA, INSIGHT_RULES } from "./insights.mjs";
 
 export const INTENTS = ["greeting", "project_info", "price", "instalment", "availability", "promotion", "appointment", "objection", "qualification", "comparison", "recommendation", "human_request", "complaint", "legal_or_contract", "negotiation", "opt_out", "other"];
 export const AGENTS = ["reception", "knowledge", "qualification", "recommendation", "objection", "appointment", "handover"];
@@ -20,7 +19,7 @@ const FINANCING_KEYS = ["route", "age", "basic_salary", "fixed_allowances", "var
 export const REPLY_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["messages", "language", "intent", "agent", "confidence", "facts_used", "qualification_updates", "financing_updates", "appointment_request", "handover", "objection_key", "workflow", "insights"],
+  required: ["messages", "language", "intent", "agent", "confidence", "facts_used", "qualification_updates", "financing_updates", "appointment_request", "handover", "objection_key", "workflow"],
   properties: {
     messages: { type: "array", items: str, description: "1 to 3 separate WhatsApp messages, sent in this order. Usually 1. A second or third only when it is a distinct message (see WhatsApp messages in the instructions). Paragraphs inside one message are separated by a blank line." },
     language: enumOf("ms", "en", "mixed"),
@@ -84,15 +83,22 @@ export const REPLY_SCHEMA = {
         stage_done: { ...str, description: "Set to that workflow's current stage only when the buyer clearly says they completed its current_step." },
       },
     },
-    insights: INSIGHTS_SCHEMA,
   },
 };
 
-/** The reply schema without insights: used once if the API refuses the full schema, so buyers still get a real reply. */
-export const REPLY_SCHEMA_CORE = {
+// Client insights (profile, summary, next action) are NOT part of the reply: nested here, the API refused the schema
+// ("compiled grammar is too large") on every call. They come from a separate call after the reply (summarizeLead,
+// run as a lead_insights job by the worker). REPLY_SCHEMA_CORE is kept as a name for older callers.
+export const REPLY_SCHEMA_CORE = REPLY_SCHEMA;
+
+/**
+ * The same schema with one `reply` text instead of the `messages` list: exactly the shape that ran in production
+ * until 29 Oct 2026. Used once if the API ever refuses REPLY_SCHEMA, so the buyer still gets an AI reply (as one message).
+ */
+export const REPLY_SCHEMA_SINGLE = {
   ...REPLY_SCHEMA,
-  required: REPLY_SCHEMA.required.filter((k) => k !== "insights"),
-  properties: Object.fromEntries(Object.entries(REPLY_SCHEMA.properties).filter(([k]) => k !== "insights")),
+  required: REPLY_SCHEMA.required.map((k) => (k === "messages" ? "reply" : k)),
+  properties: Object.fromEntries(Object.entries(REPLY_SCHEMA.properties).map(([k, v]) => (k === "messages" ? ["reply", { type: "string", description: "The WhatsApp message to send to the buyer." }] : [k, v]))),
 };
 
 const blank = (v) => (v === "" || v === 0 || v === null || v === undefined ? null : v);
@@ -122,7 +128,6 @@ export function normalizeReply(d) {
     handover: blanks(d.handover),
     objection_key: blank(d.objection_key),
     workflow: blanks(d.workflow),
-    insights: d.insights || null,
   };
 }
 
@@ -193,8 +198,6 @@ Follow-up workflows (step-by-step processes some projects have, set up by the ag
 - workflow_offers are workflows the buyer could join. Set workflow.key and workflow.interest "confirmed" only once the buyer has clearly confirmed they want that project. Follow each workflow's guidance.
 - Never use one workflow's steps, keywords or messages for another workflow or another project.
 
-${INSIGHT_RULES}
-
 Hand over to a human (handover.needed = true) when:
 - the buyer asks for a person; is ready to book, pay or sign; asks for a special price, extra discount or negotiation; asks legal, tax or contract (SPA) questions; complains or is upset; needs a professional financing assessment; what they asked is genuinely not in the context after checking every field, or the context conflicts on it; you are not confident; or anything sensitive or unusual comes up.\n- Do not hand over just because a figure is INDICATIVE or because you answered a published specification.
 - When handing over, still send a short, polite reply that a human advisor will follow up, and write a useful summary for the advisor (what they want, what was answered, what is outstanding) and a next_action.
@@ -211,7 +214,7 @@ WhatsApp messages (the "messages" list)
 - Hand-overs, opt-outs, complaints, sensitive or legal questions and anything that needs a person: one message.
 - The AI introduction (first reply of a conversation) belongs in message 1. Any question goes in the last message.
 
-Return only the JSON object required by the schema: messages, language, intent, agent (which specialist role you acted as), confidence (0–1), facts_used, qualification_updates, financing_updates (all 0 / "" unless the buyer gave financing figures), appointment_request, handover, objection_key, workflow (all "" unless the follow-up workflow rules above apply), insights (see Client profile).`;
+Return only the JSON object required by the schema: messages, language, intent, agent (which specialist role you acted as), confidence (0–1), facts_used, qualification_updates, financing_updates (all 0 / "" unless the buyer gave financing figures), appointment_request, handover, objection_key, workflow (all "" unless the follow-up workflow rules above apply).`;
 }
 
 const label = (verified, fresh) => (verified ? (fresh ? "VERIFIED" : "STALE") : "INDICATIVE");

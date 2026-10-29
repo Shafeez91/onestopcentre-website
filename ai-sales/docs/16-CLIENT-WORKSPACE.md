@@ -129,3 +129,17 @@ and the console showed "AI unavailable · 0% sure".
 **Checking it in production.** Run
 `select created_at, decision, error, output->>'degraded' from ai_agent_runs order by created_at desc limit 20;`.
 `decision = 'error'` with a grammar or schema message means the schema needs trimming again.
+
+### Update, 29 Oct 2026 (later the same day)
+
+Making `field` plain text was not enough. After that fix the AI log showed every reply call still refused with the same
+error. The fallback added then (retry without insights) kept buyers getting real replies, but insights from those
+replies were never written.
+
+**Final fix:** insights are no longer part of the reply call at all.
+- After each buyer message the AI answers, the worker queues a `lead_insights` job in `ai_jobs` (dedupe key
+  `insights:<message id>`, no database change).
+- The job runs `summarizeLead`: the separate, smaller insights call already used for chats a person handles, which is
+  proven to work in production.
+- The reply schema is back to the size known to compile (76 enum values, 59 properties).
+- The switch "Keep client profiles up to date from buyer messages" (`ai.auto_insights`) turns both paths off.
