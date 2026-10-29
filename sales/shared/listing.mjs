@@ -194,6 +194,14 @@ export function textDistances(text) {
  * the same station with clearly different distances (more than 300 m and more than 1.5×) is a contradiction.
  */
 export function transitDistanceConflicts(specs) {
+  return transitDistanceDisputes(specs).map((d) => d.text);
+}
+
+/**
+ * The same disagreements with the station and both figures, so a reply can be checked: a distance for that station is
+ * not stated while the listing gives two (a map lookup settles it). [{ station, key, meters: [listed, written], text }]
+ */
+export function transitDistanceDisputes(specs) {
   const written = textDistances([specs.surroundings, specs.description].filter(Boolean).join("\n"));
   if (!written.length) return [];
   const out = [];
@@ -205,7 +213,7 @@ export function transitDistanceConflicts(specs) {
     const t = written.find((w) => w.key.includes(` ${key} `));
     if (!t || !t.meters) continue;
     const hi = Math.max(t.meters, listed), lo = Math.min(t.meters, listed);
-    if (hi - lo > 300 && hi / lo > 1.5) out.push(`transit list: ${m[1].trim()} ${m[2].trim()} · location text: ${t.label}`);
+    if (hi - lo > 300 && hi / lo > 1.5) out.push({ station: m[1].trim(), key, meters: [listed, t.meters], text: `transit list: ${m[1].trim()} ${m[2].trim()} · location text: ${t.label}` });
   }
   return out;
 }

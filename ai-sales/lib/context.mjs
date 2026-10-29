@@ -1,7 +1,7 @@
 // Builds the verified context for one buyer turn, plus the allow-lists the validator checks the reply against.
 // `db` is a small adapter: { get(path) -> rows[], rpc(name, args) -> result } over PostgREST.
 import { extractAmounts, PROMOTION, layoutKey } from "../../sales/shared/validator.mjs";
-import { projectSpecs, resolveFocus, coverage, conflicts as findConflicts, numOf } from "../../sales/shared/listing.mjs";
+import { projectSpecs, resolveFocus, coverage, conflicts as findConflicts, transitDistanceDisputes, numOf } from "../../sales/shared/listing.mjs";
 import { workflowContext } from "./workflows.mjs";
 import { profileContext } from "./insights.mjs";
 
@@ -106,6 +106,7 @@ export async function loadContext(db, { leadId = null, message = "", history = [
       notOnRecord: full ? Object.entries(cov).filter(([, c]) => c.status === "missing").map(([k]) => k) : [],
       partial: full ? Object.entries(cov).filter(([, c]) => c.status === "partial").map(([k]) => k) : [],
       conflicts: findConflicts(spec, f, { factsFresh }),
+      distanceDisputes: inFocus ? transitDistanceDisputes(spec).map(({ station, key, meters }) => ({ station, key, meters })) : [],
       facts: factFields, factsFresh,
       prices: pr,
       availability: us.length

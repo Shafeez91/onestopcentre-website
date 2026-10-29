@@ -15,8 +15,15 @@ const DECISION = {
 const FAILURE = {
   unavailable: "AI service busy or down", network: "AI service unreachable", auth: "AI key rejected — check ANTHROPIC_API_KEY",
   schema: "AI request refused (system setup)", rejected: "AI request refused (system setup)", truncated: "AI reply cut off", bad_response: "AI reply unreadable",
-  refusal: "AI declined this message",
+  refusal: "AI declined this message", timeout: "AI took too long — stopped before the 30-second limit",
 };
+// a failed request: say what happened in plain words (the dashboard's own wording for a gateway timeout is just "Server error 504")
+function requestError(x) {
+  const m = errText(x);
+  if (/\b(504|502)\b/.test(m) && /Server error/.test(m)) return "The AI took longer than the 30-second limit and the request was stopped. Your message is kept below — press Send to try again.";
+  return m;
+}
+const STEP = { research: "Checking outside sources…", redraft: "Rewriting with what was found…" };
 const LANG = { en: "English", ms: "Bahasa Malaysia", mixed: "Mixed / Manglish" };
 const pretty = (s) => String(s || "").replace(/_/g, " ");
 function outcome(r) {
@@ -78,7 +85,8 @@ export async function aitest(el, params) {
     const h = (r.actions || []).find((a) => a.type === "handover"), rt = r.retrieval;
     const row = (k, v) => (v ? `<div class="kvr"><dt>${esc(k)}</dt><dd>${v}</dd></div>` : "");
     const n = r.messages?.length || (r.reply ? 1 : 0);
-    return `<div class="why">${badge(label, kind)} <small>${[n ? `${n} WhatsApp message${n === 1 ? "" : "s"}` : "", r.intent && pretty(r.intent), LANG[r.language] || r.language, rating, r.model, r.latency_ms ? (r.latency_ms / 1000).toFixed(1) + " s" : ""].filter(Boolean).map(esc).join(" · ")}</small>
+    const t = r.timings || {}, sec = (ms) => (ms / 1000).toFixed(1) + " s";
+    return `<div class="why">${badge(label, kind)} <small>${[n ? `${n} WhatsApp message${n === 1 ? "" : "s"}` : "", r.intent && pretty(r.intent), LANG[r.language] || r.language, rating, r.model, r.latency_ms ? (r.latency_ms / 1000).toFixed(1) + " s" : "", r.continuation ? "⏳ " + (STEP[r.continuation.step] || "") : ""].filter(Boolean).map(esc).join(" · ")}</small>
       <details><summary>Why the AI did this</summary>
         <dl class="kvl">
           ${row("AI service", r.decision === "error" ? `<span class="late">No answer — ${esc(FAILURE[r.errorKind] || "error")}</span>` : r.model ? `Answered (${esc(r.model)})` : "Not called — fixed rule")}
@@ -95,6 +103,8 @@ export async function aitest(el, params) {
             r.research.maps.ask_for ? `<small>Asks the buyer for: ${esc(r.research.maps.ask_for)}</small>` : "",
             r.research.maps.error ? `<small class="late">${esc(r.research.maps.error)}</small>` : ""].filter(Boolean).join("<br><br>") : "")}
           ${row("Web research", r.research?.web ? `${r.research.web.found ? "Found" : "Nothing verifiable found"}${r.research.web.searches ? ` · ${esc(r.research.web.searches)} search${r.research.web.searches === 1 ? "" : "es"}` : ""}${(r.research.web.sources || []).length ? "<br>" + r.research.web.sources.map((x) => { const u = String(x.url || x); return /^https?:\/\//i.test(u) ? `<a href="${attr(u)}" target="_blank" rel="noopener noreferrer">${esc(x.title || u)}</a>` : esc(u); }).join("<br>") : ""}${r.research.web.error ? `<br><small class="late">${esc(r.research.web.error)}</small>` : ""}` : "")}
+          ${row("Status", r.continuation ? `<span class="spin" aria-hidden="true"></span> ${esc(STEP[r.continuation.step] || "Working…")} <small>The reply above is the draft so far.</small>` : r.step_error ? `<span class="late">${esc(r.step_error)}</span> <small>The reply above stands.</small>` : "")}
+          ${row("Timing", can("manager") && t.total_ms ? [t.context_ms != null && `data ${sec(t.context_ms)}`, t.maps_ms != null && `maps ${sec(t.maps_ms)}`, (t.ai_ms || []).length && `AI ${t.ai_ms.map(sec).join(" + ")}`, t.web_ms != null && `web ${sec(t.web_ms)}`, `total ${sec(t.total_ms)}`].filter(Boolean).map(esc).join(" · ") + (r.rewrite_skipped ? `<br><small>${esc(r.rewrite_skipped)}</small>` : "") + (r.request_id ? `<br><small>Request ${esc(r.request_id)}</small>` : "") : "")}
           ${row("Readability", r.style_notes?.length ? r.style_notes.map((v) => esc(v.detail)).join("<br>") + "<br><small>Rewritten once; sent as it is (style notes never block a reply).</small>" : "")}
           ${row("Note", r.degraded ? esc(r.degraded) : "")}
           ${row("Error", r.error ? (can("manager") ? esc(r.error) : "Details are visible to managers and owners.") : "")}
@@ -116,18 +126,38 @@ export async function aitest(el, params) {
     const history = turns.map((t) => ({ role: t.role, text: t.text })).filter((t) => t.text);
     turns.push({ role: "user", text: message }); box.value = ""; render();
     btn.disabled = true; const label = btn.innerHTML; btn.innerHTML = '<span class="spin" aria-hidden="true"></span> AI is thinking…';
+    // the loan figures the buyer gave earlier in this simulated chat (nothing is stored for a simulation)
+    const financing_inputs = [...turns].reverse().find((t) => t.r?.financing)?.r.financing.inputs || null;
+    let failed = false;
+    const call = (extra = {}) => api("/api/sales/ai/simulate", { method: "POST", body: JSON.stringify({ lead_id: lead || null, history, message, financing_inputs, ...extra }) });
     try {
-      // the loan figures the buyer gave earlier in this simulated chat (nothing is stored for a simulation)
-      const financing_inputs = [...turns].reverse().find((t) => t.r?.financing)?.r.financing.inputs || null;
-      const r = await api("/api/sales/ai/simulate", { method: "POST", body: JSON.stringify({ lead_id: lead || null, history, message, financing_inputs }) });
-      turns.push({ role: "assistant", text: r.reply, r });
+      let r = await call();
+      const turn = { role: "assistant", text: r.reply, r };
+      turns.push(turn); render();
+      // a reply that needs outside research continues in separate requests (each under the 30-second limit); the
+      // draft stays on screen meanwhile, and a failed step keeps it
+      while (r.continuation) {
+        btn.innerHTML = `<span class="spin" aria-hidden="true"></span> ${esc(STEP[r.continuation.step] || "Working…")}`;
+        let n;
+        try { n = await call({ continue: r.continuation.token }); }
+        catch (x) { r = { ...r, continuation: null, step_error: "Outside research could not finish: " + requestError(x) }; break; }
+        if (n.step === "research") {
+          r = { ...r, research: { ...(r.research || {}), ...n.research }, timings: { ...(r.timings || {}), web_ms: n.timings?.web_ms }, continuation: n.continuation || null };
+        } else {
+          r = { ...n, research: { ...(r.research || {}), ...(n.research || {}) }, timings: { ...(n.timings || {}), web_ms: r.timings?.web_ms } };
+        }
+        Object.assign(turn, { text: r.reply, r }); render();
+      }
+      Object.assign(turn, { text: r.reply, r });
     } catch (x) {
-      turns.pop(); box.value = message;
-      const m = errText(x);
+      // the message goes back in the box (not left as a sent bubble); the chat is redrawn first so the error card stays
+      turns.pop(); box.value = message; render();
+      const m = requestError(x);
       chat.insertAdjacentHTML("beforeend", `<div class="card error">${/ANTHROPIC_API_KEY|switched off|AI_SALES_ENABLED/.test(m)
         ? `<b>The AI isn't connected yet.</b> In Netlify, set <code>ANTHROPIC_API_KEY</code> and <code>AI_SALES_ENABLED=true</code> (Functions scope), then redeploy. ${esc(m)}`
         : esc(m)}</div>`);
       toast(m, "err");
-    } finally { btn.disabled = false; btn.innerHTML = label; save(lead, turns); if (turns.at(-1)?.role === "assistant") render(); }
+      failed = true;
+    } finally { btn.disabled = false; btn.innerHTML = label; save(lead, turns); if (!failed) render(); }
   };
 }

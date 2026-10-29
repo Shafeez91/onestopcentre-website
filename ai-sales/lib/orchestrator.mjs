@@ -113,17 +113,26 @@ function researchTrace(ctx, routes) {
 const summariseViolations = (vs) => vs.map((v) => `- ${v.code}: ${v.detail}`).join("\n");
 
 /**
- * @param {object} p { db, llm, reserve?, leadId, message, history, now, mode: "simulate" | "live" }
+ * @param {object} p { db, llm, reserve?, leadId, message, history, now, mode: "simulate" | "live", budgetMs?, deferWeb? }
  *   reserve(): Promise<{allowed, used, cap}> — books one AI reply against the daily cap
+ *   budgetMs: time this call may take in all (Netlify ends a request at 30 s). Each AI call is cut off at the end of
+ *     the budget, and an optional second AI call (a style rewrite, a recalculation, web research) is only made when
+ *     there is time for it.
+ *   deferWeb: don't run web research here; return `pending_research` so the caller runs it as a separate step
  */
 export async function respond(p) {
   const t0 = p._t0 || Date.now(); // a second pass after web research keeps the original start
+  const deadline = p.budgetMs ? t0 + p.budgetMs : null;
+  const left = () => (deadline ? deadline - Date.now() : Infinity);
+  // where the time went (shown to managers in the test console and kept in the run log)
+  const timings = { ...(p._timings || {}) };
+  const clock = async (key, fn) => { const s0 = Date.now(); try { return await fn(); } finally { timings[key] = (timings[key] || 0) + (Date.now() - s0); } };
   const now = p.now || new Date();
   const message = String(p.message || "").trim();
   const history = p.history || [];
   const base = { message, actions: [], attempts: [], violations: [], model: null, usage: null };
   // every result carries `messages` (what would be sent, in order); fixed replies are one message
-  const finish = (r) => ({ ...base, ...r, messages: r.messages || (r.reply ? [r.reply] : []), latency_ms: Date.now() - t0 });
+  const finish = (r) => ({ ...base, ...r, messages: r.messages || (r.reply ? [r.reply] : []), latency_ms: Date.now() - t0, timings: { ...timings, total_ms: Date.now() - t0 } });
 
   if (!message) return finish({ decision: "ignored", reply: null, reason: "empty message" });
 
@@ -148,7 +157,7 @@ export async function respond(p) {
   }
 
   // 2) verified context
-  const ctx = await loadContext(p.db, { leadId: p.leadId, message, history, now });
+  const ctx = await clock("context_ms", () => loadContext(p.db, { leadId: p.leadId, message, history, now }));
   if (askedLang) ctx.buyer = { ...(ctx.buyer || {}), language_requested: askedLang };
   if (ctx.aiPaused && p.mode === "live") return finish({ decision: "paused", reply: null, reason: "AI is paused for this lead; a human handles replies." });
   const settings = ctx.settings || {};
@@ -170,7 +179,8 @@ export async function respond(p) {
   const mapsOn = !!R?.maps?.configured && settings.ai?.maps_distances !== false;
   const found = p._prior || {};
   const routes = found.routes !== undefined ? found.routes
-    : mapsOn ? await routeLookups({ llm: p.llm, maps: R.maps, model }, { message, history, projects: ctx.projects }) : null;
+    // a map lookup needs a planning call and the map requests: only when the reply itself still has time after it
+    : mapsOn && left() > 20000 ? await clock("maps_ms", () => routeLookups({ llm: p.llm, maps: R.maps, model, deadline: deadline ? Date.now() + Math.min(7000, left() - 14000) : null }, { message, history, projects: ctx.projects })) : null;
   ctx.routeLookups = routes?.lookups || [];
   ctx.routeMissingPlace = routes?.missing_place || "";
   ctx.externalResearch = found.web?.found ? found.web : found.web ? { ...found.web, findings: "", sources: [] } : null;
@@ -183,6 +193,8 @@ export async function respond(p) {
   ctx.rules.allowedMinutes = [...extractMinutes(contextText), ...extractMinutes(said)].map((d) => d.value);
   ctx.rules.usedMaps = ctx.routeLookups.some((l) => l.routes?.length || l.straight_line_m != null);
   ctx.rules.usedWeb = !!found.web?.found;
+  // stations whose distance the listing gives twice: no figure for them unless a map lookup measured it
+  ctx.rules.disputedDistances = ctx.rules.usedMaps ? [] : ctx.projects.filter((x) => x.inFocus).flatMap((x) => x.distanceDisputes || []);
   // monthly figures only once the buyer has asked about monthly payments, loans or financing (now or recently)
   ctx.rules.buyerAskedMonthly = MONTHLY_Q.test([message, ...history.filter((h) => h.role !== "assistant").slice(-4).map((h) => h.text)].join("\n"));
   for (const l of ctx.routeLookups) if (l.maps_link) ctx.rules.allowedUrls.push(l.maps_link);
@@ -205,13 +217,18 @@ export async function respond(p) {
   // 4) AI draft + validation, with one corrected retry. When the buyer has just given new financing figures, the
   //    engine recalculates and the AI writes the reply again from the new result (at most one extra call).
   let data = null, check = null, feedback = null, usage = { input_tokens: 0, output_tokens: 0 }, servedBy = null;
-  let finChanged = [], recalculated = false, retried = false;
+  let finChanged = [], recalculated = false, retried = false, lastMs = 0;
+  // another AI call only when it can finish inside the budget (the last call's time plus a margin)
+  const timeForAnother = () => left() > lastMs * 1.15 + 2500;
+  timings.ai_ms = timings.ai_ms || [];
   try {
     for (let attempt = 1; attempt <= 3; attempt++) {
-      const r = await callReply(p.llm, { system, messages: buildMessages(history, contextText, message, feedback), model, effort }, base);
+      const s0 = Date.now();
+      const r = await callReply(p.llm, { system, messages: buildMessages(history, contextText, message, feedback), model, effort, deadline }, base);
+      lastMs = Date.now() - s0; timings.ai_ms.push(lastMs);
       data = normalizeReply(r.data); servedBy = r.model || model;
       usage.input_tokens += r.usage?.input_tokens || 0; usage.output_tokens += r.usage?.output_tokens || 0;
-      if (finOn && !recalculated) {
+      if (finOn && !recalculated && timeForAnother()) {
         const m = mergeFinancing(ctx.financing.inputs, data.financing_updates);
         if (m.changed.length) {
           finChanged = m.changed; recalculated = true;
@@ -225,6 +242,8 @@ export async function respond(p) {
       check = checkTurn(data, ctx.rules);
       base.attempts.push({ attempt, reply: data.reply, messages: data.messages, violations: check.violations });
       if (check.ok || retried) break;
+      // no time to rewrite: a draft with only style notes is sent as it is; one that breaks a business rule is blocked
+      if (!timeForAnother()) { base.rewrite_skipped = "not enough time left in this request for a rewrite"; break; }
       retried = true;
       feedback = summariseViolations(check.violations);
     }
@@ -312,11 +331,20 @@ export async function respond(p) {
   // if something was found, write the reply again with the findings (no second daily-limit charge)
   const handoverReason = actions.find((a) => a.type === "handover")?.reason;
   const webOn = !!R?.research && R.web !== false && settings.ai?.web_research !== false;
-  if (webOn && !found.web && shouldResearch({ decision, handoverReason, intent: data.intent }) && Date.now() - t0 < (R.webStartWithinMs ?? 20000)) {
+  let pendingResearch = null;
+  if (webOn && !found.web && shouldResearch({ decision, handoverReason, intent: data.intent })) {
     const focusNames = ctx.projects.filter((x) => x.inFocus).map((x) => x.name);
-    const web = await webResearch({ research: R.research, model, webTimeoutMs: R.webTimeoutMs }, { question: [history.filter((h) => h.role !== "assistant").slice(-1)[0]?.text, message].filter(Boolean).join("\n"), projectNames: focusNames });
-    if (web?.found) return respond({ ...p, reserve: null, _t0: t0, _prior: { routes: routes ?? null, web } });
-    ctx.externalResearch = web; // nothing usable found: keep the hand-over, and show what was tried
+    const question = [history.filter((h) => h.role !== "assistant").slice(-1)[0]?.text, message].filter(Boolean).join("\n");
+    const webMs = R.webTimeoutMs ?? 20000;
+    // research and a second draft must both fit; otherwise the caller runs them as separate steps (test console), or
+    // the hand-over stands (WhatsApp worker)
+    if (p.deferWeb || left() < webMs + lastMs * 1.15 + 2500 || (!deadline && Date.now() - t0 >= (R.webStartWithinMs ?? 20000))) {
+      pendingResearch = { question: question.slice(0, 600), projectNames: focusNames };
+    } else {
+      const web = await clock("web_ms", () => webResearch({ research: R.research, model, webTimeoutMs: webMs }, { question, projectNames: focusNames }));
+      if (web?.found) return respond({ ...p, reserve: null, _t0: t0, _timings: timings, _prior: { routes: routes ?? null, web } });
+      ctx.externalResearch = web; // nothing usable found: keep the hand-over, and show what was tried
+    }
   }
 
   return finish({
@@ -327,6 +355,7 @@ export async function respond(p) {
     // which project the reply was about and what its information lacked, so a hand-over can be traced to a data gap
     retrieval: retrievalTrace(ctx),
     research: researchTrace(ctx, routes),
+    ...(pendingResearch ? { pending_research: pendingResearch } : {}),
   });
 }
 
@@ -394,6 +423,7 @@ export async function logRun(db, { result, leadId = null, conversationId = null,
       input: { channel, message: result.message, ...input },
       // financing figures stay in the access-controlled financing tables, not in the run log
       output: { reply: result.reply, messages: result.messages || null, draft: result.draft, attempts: result.attempts, retrieval: result.retrieval || null, degraded: result.degraded || null, error_kind: result.errorKind || null,
+        research: result.research || null, timings: result.timings || null,
         actions: (result.actions || []).map((a) => (a.type === "save_financing" ? { type: a.type, changed: a.changed, outcome: a.result?.outcome || null, new_assessment: a.new_assessment } : a)) },
       // confidence null = the model gave none (a fixed reply or a failed call)
       confidence: Number.isFinite(result.confidence) ? Math.max(0, Math.min(1, result.confidence)) : null, decision: result.decision,

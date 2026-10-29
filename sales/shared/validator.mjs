@@ -132,6 +132,15 @@ export function validateReply(reply, ctx = {}) {
     for (const d of extractDistances(text)) if (!nearDist(d.value, ctx.allowedDistances)) add("unverified_distance", `${d.raw.trim()} is not a distance from the project information or a map lookup.`);
     for (const d of extractMinutes(text)) if (!nearMin(d.value, ctx.allowedMinutes || [])) add("unverified_distance", `${d.raw.trim()} is not a travel time from a map lookup or the project information.`);
   }
+  // 1c-bis) a station whose distance the listing itself gives twice (e.g. 650 m in the text, 2.4 km in the station
+  //     list): neither figure is stated for that station until a map lookup settles it
+  for (const d of ctx.disputedDistances || []) {
+    for (const sentence of text.split(/(?<=[.!?])\s+|\n+/)) {
+      if (!` ${sentence.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `.includes(` ${d.key} `)) continue;
+      const hit = extractDistances(sentence).find((x) => nearDist(x.value, d.meters));
+      if (hit) { add("disputed_distance", `${hit.raw.trim()} for ${d.station}: the project information gives two different distances (${d.meters.map((m) => (m >= 1000 ? m / 1000 + " km" : m + " m")).join(" and ")}). Say the exact distance is being confirmed, without a figure.`); break; }
+    }
+  }
   // 1d) never claim a check that did not happen
   const claim = text.match(CHECK_CLAIM);
   if (claim) {

@@ -296,3 +296,29 @@ test("simulation: lookups write only the map cache — never leads, messages or 
   assert.ok(cache.t.ai_geo_cache.length >= 3);
   assert.ok(Object.keys(cache.t).filter((k) => !["ai_geo_cache"].includes(k) && (cache.t[k] || []).length).length === 0);
 });
+
+test("29 Oct (console screenshot): a station the listing gives two distances for (650 m text, 2.4 km list) gets no figure until a map lookup settles it; other stations keep theirs", async () => {
+  const picked = { ...base, intent: "project_info", messages: [AI + " The nearest operating station to M MIRA is LRT Sri Rampai (Kelana Jaya Line), around 2.4km away.\n\nThe proposed MRT3 stations at Setapak and Rejang are around 2km away."] };
+  const honest = { ...base, intent: "project_info", messages: [AI + " The nearest operating station to M MIRA is LRT Sri Rampai (Kelana Jaya Line); the exact distance is being confirmed by our advisor.\n\nThe proposed MRT3 stations at Setapak and Rejang are around 2km away."] };
+  const llm = model({ routes: [] }, picked, honest);
+  const r = await respond({ db: ctxDb(), llm, message: "How far m mira from nearest public transport?", now: NOW });
+  const v = r.attempts[0].violations.filter((x) => x.code === "disputed_distance");
+  assert.equal(v.length, 1);
+  assert.match(v[0].detail, /2\.4km for LRT Sri Rampai: the project information gives two different distances \(2\.4 km and 650 m\)/);
+  assert.equal(r.decision, "reply");
+  assert.match(r.reply, /being confirmed/);
+  assert.match(r.reply, /around 2km/, "the MRT3 figures are not disputed and stay");
+  // the other figure from the dispute is caught too, in either language
+  const { validateReply } = await import("../../../sales/shared/validator.mjs");
+  const disputedDistances = [{ station: "LRT Sri Rampai", key: "sri rampai", meters: [2400, 650] }];
+  assert.equal(validateReply("Stesen LRT Sri Rampai cuma 650m dari projek.", { disputedDistances }).violations[0].code, "disputed_distance");
+  assert.deepEqual(validateReply("AEON Mall is 500m away. Sri Rampai LRT is nearby.", { disputedDistances }).violations, []);
+});
+
+test("a Google Maps measurement settles the dispute: the measured distance may be stated", async () => {
+  const llm = model({ routes: [{ project: "M MIRA", destination: "LRT Sri Rampai station", modes: ["walk"] }] }, { ...base, messages: [AI + " LRT Sri Rampai is about 2.4 km on foot from M MIRA (Google Maps)."] });
+  const maps = mapsService({ key: "k", db: memdb({}), fetchImpl: google() });
+  const r = await respond({ db: ctxDb(), llm, message: "How far is M Mira from LRT Sri Rampai walking?", now: NOW, research: { maps } });
+  assert.ok(!r.attempts[0].violations.some((x) => x.code === "disputed_distance"));
+  assert.equal(r.decision, "reply");
+});

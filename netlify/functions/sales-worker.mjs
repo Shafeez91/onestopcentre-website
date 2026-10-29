@@ -10,7 +10,7 @@ export default async () => {
   // the scheduled run has a 30-second limit: Google Maps lookups yes, a web research round no (the AI hands over instead)
   if (deps.research) deps.research.web = false;
   if (!deps.db) return new Response("no service key");
-  const r = await runWorker(deps);
+  const r = await runWorker(deps, { budgetMs: 26000 });
   if (r.errors.length) console.error("worker errors:", r.errors.slice(0, 5).join(" | "));
   return new Response(JSON.stringify(r));
 };

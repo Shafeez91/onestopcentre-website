@@ -149,7 +149,9 @@ export async function processReplyJob(deps, job, settings) {
     // calendar unavailable → the AI collects a preferred time instead of offering slots
     if (f.calendar_booking && deps.cal) { try { slots = await deps.cal.slots(settings, deps.now()); } catch { slots = null; } }
     result = await respond({ db, llm: deps.llm, reserve: () => db.rpc("ai_reserve_ai_call", {}), leadId: lead.id, message, history: historyOf(earlier), now: deps.now(),
-      mode: "live", calendar: !!slots, slots: slots || [], research: deps.research || null });
+      mode: "live", calendar: !!slots, slots: slots || [], research: deps.research || null, budgetMs: deps.replyBudgetMs || null });
+    // the AI ran out of this run's time: try once more on the next run (fresh time) before the buyer gets the safe reply
+    if (result.decision === "error" && result.errorKind === "timeout" && (job.attempts || 1) < 2) throw new Error("AI reply timed out; retrying on the next run");
   }
 
   const runId = await logRun(db, { result, leadId: lead.id, conversationId: conv.id, channel: "whatsapp", input: { job: job.id } });
@@ -277,17 +279,35 @@ export async function processFollowUp(deps, fj, settings) {
 }
 
 /* ---------------------------------------------------------------- runner */
-export async function runWorker(deps, { maxJobs = 10, followUps = true, reminders = true } = {}) {
+// an AI reply takes 15–20 s: a job is only claimed when it can finish before the function is stopped
+export const MIN_JOB_MS = 18000;
+
+/**
+ * budgetMs: how long this run may take (Netlify stops functions at 30 s). With a budget, jobs are claimed one at a
+ * time and only while one can still finish, so a job is never left locked (and the buyer kept waiting 5 minutes)
+ * because the function ran out of time; the AI reply itself gets the time that is left.
+ */
+export async function runWorker(deps, { maxJobs = 10, followUps = true, reminders = true, budgetMs = null } = {}) {
   const { db } = deps;
   const out = { replies: 0, follow_ups: 0, automation: 0, errors: [] };
+  const start = Date.now();
+  const remaining = () => (budgetMs ? budgetMs - (Date.now() - start) : Infinity);
   const settings = await loadSettings(db);
   const f = flagsOf(settings);
   if (!f.module) return { ...out, note: "module switched off in settings" };
 
-  const jobs = (await db.rpc("ai_claim_jobs", { max_jobs: maxJobs })) || [];
-  for (const job of jobs) {
+  // without a budget: one batch, as before; with one: one job at a time, while a job can still finish
+  const batch = budgetMs ? null : (await db.rpc("ai_claim_jobs", { max_jobs: maxJobs })) || [];
+  let claimed = 0;
+  const next = async () => {
+    if (batch) return batch.shift() || null;
+    if (claimed >= maxJobs || remaining() < MIN_JOB_MS) return null;
+    claimed++;
+    return ((await db.rpc("ai_claim_jobs", { max_jobs: 1 })) || [])[0] || null;
+  };
+  for (let job = await next(); job; job = await next()) {
     try {
-      if (job.kind === "wa_reply") { await processReplyJob(deps, job, settings); out.replies++; }
+      if (job.kind === "wa_reply") { await processReplyJob(budgetMs ? { ...deps, replyBudgetMs: remaining() - 2000 } : deps, job, settings); out.replies++; }
       else if (job.kind === "lead_insights" && deps.llm && job.payload?.lead_id) {
         // never fails the job: insights are a convenience, and summarizeLead skips a message it already covered
         const r = await summarizeLead(deps, job.payload.lead_id).catch((e) => ({ skipped: e?.message || String(e) }));
@@ -302,7 +322,8 @@ export async function runWorker(deps, { maxJobs = 10, followUps = true, reminder
     }
   }
   // follow-ups are only claimed while automation is on; otherwise the database announces due steps to staff instead
-  if (followUps && f.follow_ups && f.whatsapp_outbound && deps.wa) {
+  // a follow-up is an AI call too: only with time for it
+  if (followUps && f.follow_ups && f.whatsapp_outbound && deps.wa && remaining() >= MIN_JOB_MS) {
     const due = (await db.rpc("ai_claim_follow_ups", { max_jobs: 20 })) || [];
     for (const fj of due) {
       try { await processFollowUp(deps, fj, settings); out.follow_ups++; }

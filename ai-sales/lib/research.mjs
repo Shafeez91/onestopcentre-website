@@ -51,7 +51,7 @@ export async function routeLookups(deps, { message, history = [], projects = [] 
   const list = projects.map((p) => `${p.name}${p.area ? ` (${p.area})` : ""}${p.inFocus ? " [in focus]" : ""}${p.nearbyTransit ? ` — listed transit: ${p.nearbyTransit}` : ""}`).join("\n");
   let plan;
   try {
-    const r = await deps.llm({ system: PLAN_SYSTEM, schema: PLAN_SCHEMA, model: deps.model, effort: "low", maxTokens: 800,
+    const r = await deps.llm({ system: PLAN_SYSTEM, schema: PLAN_SCHEMA, model: deps.model, effort: "low", maxTokens: 800, deadline: deps.deadline || null,
       messages: [{ role: "user", content: `<projects>\n${list}\n</projects>\n<recent_conversation>\n${recent || "(none)"}\n</recent_conversation>\n<buyer_message>\n${message}\n</buyer_message>` }] });
     plan = r.data || {};
   } catch (e) { return { lookups: [], missing_place: "", error: "could not plan the lookup: " + (e?.message || e) }; }
