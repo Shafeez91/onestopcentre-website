@@ -119,3 +119,23 @@ test("version endpoint: only the deploy id, never cached, no sign-in needed", as
   assert.equal(res.headers.get("cache-control"), "no-store");
   assert.deepEqual([config.path, config.method], ["/api/sales/version", ["GET"]]);
 });
+
+test("health: 'Test Google Maps' runs one lookup with the server key (never returned) and reports a missing key plainly", async () => {
+  let b = await (await health(req("/api/sales/health?maps_test=1", "tok-mgr"))).json();
+  assert.deepEqual(b, { ok: false, error: "GOOGLE_MAPS_API_KEY is not set in Netlify (Functions scope)." });
+  assert.equal((await health(req("/api/sales/health?maps_test=1", "tok-adv"))).status, 403, "managers and owners only");
+  process.env.GOOGLE_MAPS_API_KEY = "maps-secret-key";
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/projects")) return Response.json([{ id: "mm", slug: "m-mira", data: { n: "M MIRA", l: "Wangsa Maju", latlng: "3.19899, 101.73702" } }]);
+    if (u.includes("places:searchText")) { assert.equal(init.headers["x-goog-api-key"], "maps-secret-key"); return Response.json({ places: [{ id: "P1", displayName: { text: "Sri Rampai LRT Station" }, formattedAddress: "KL", location: { latitude: 3.1993, longitude: 101.7373 }, types: ["subway_station"] }] }); }
+    if (u.includes("computeRoutes")) return Response.json({ routes: [{ distanceMeters: 2350, duration: "1860s" }] });
+    return inner(url, init);
+  };
+  b = await (await health(req("/api/sales/health?maps_test=1", "tok-mgr"))).json();
+  assert.equal(b.ok, true);
+  assert.equal(b.lookup.to, "Sri Rampai LRT Station (KL)");
+  assert.equal(b.lookup.routes[0].distance, "2.4 km");
+  assert.ok(!JSON.stringify(b).includes("maps-secret-key"), "the key is never returned");
+});

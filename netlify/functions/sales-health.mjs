@@ -2,6 +2,8 @@
 // Reports which integrations are configured (true/false only — never the values), and refreshes the account
 // statuses on the Integrations page from what actually happened (the latest AI call), so they are never stale.
 import { env, json, getCaller, hasRole, moduleEnabled, asUser, serviceDb } from "../../ai-sales/lib/server.mjs";
+import { mapsService } from "../../ai-sales/lib/maps.mjs";
+import { renderLookup } from "../../ai-sales/lib/research.mjs";
 
 const CONFIG_KEYS = {
   supabase_service_role: "SUPABASE_SERVICE_ROLE_KEY",
@@ -13,6 +15,7 @@ const CONFIG_KEYS = {
   google_calendar_id: "GOOGLE_CALENDAR_ID",
   google_service_account: "GOOGLE_SERVICE_ACCOUNT_EMAIL",
   google_private_key: "GOOGLE_PRIVATE_KEY",
+  google_maps: "GOOGLE_MAPS_API_KEY",
 };
 
 /**
@@ -36,6 +39,22 @@ export default async (req) => {
   const caller = await getCaller(req);
   if (!caller) return json({ error: "Sign in required" }, 401);
   if (!hasRole(caller.role, "manager")) return json({ error: "Managers and owners only" }, 403);
+
+  // "Test Google Maps" on the Integrations page: one real lookup through the production code (no customer data)
+  const u = new URL(req.url);
+  if (u.searchParams.get("maps_test") === "1") {
+    const key = env("GOOGLE_MAPS_API_KEY");
+    if (!key) return json({ ok: false, error: "GOOGLE_MAPS_API_KEY is not set in Netlify (Functions scope)." });
+    const rows = (await asUser(caller, "projects?select=id,slug,data&published=eq.true").then((r) => r.json()).catch(() => [])) || [];
+    const pick = rows.find((r) => /mira/i.test(r.data?.n || "")) || rows[0];
+    if (!pick) return json({ ok: false, error: "No published project to test with." });
+    const d = pick.data || {};
+    const dest = String(u.searchParams.get("to") || (/mira/i.test(d.n || "") ? "LRT Sri Rampai station" : "KLCC")).slice(0, 120);
+    try {
+      const l = await mapsService({ key, db: serviceDb() }).lookup({ project: { id: pick.id, name: String(d.n || "").trim(), area: d.l, latlng: d.latlng, map_url: d.mapUrl }, destination: dest, modes: ["walk", "drive"] });
+      return json({ ok: l.routes.length > 0, lookup: renderLookup(l) });
+    } catch (e) { return json({ ok: false, error: `${e.kind || "error"}: ${e.message}` }); }
+  }
 
   let database = "unreachable";
   try {

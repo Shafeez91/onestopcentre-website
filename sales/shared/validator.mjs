@@ -56,6 +56,22 @@ const CONFIRM_WORD = /(confirmed|disahkan|sudah (di)?sahkan|telah ditempah|dah b
 const sentenceAt = (text, index) => { const s = text.lastIndexOf(".", index) + 1, e = text.slice(index).search(/[.!?\n]/); return text.slice(s, e < 0 ? undefined : index + e); };
 const LINK = /\bhttps?:\/\/[^\s)>\]]+|\bwa\.me\/\d+[^\s)]*/gi;
 
+// distances ("650m", "2.4 km", "~1.2km") and travel times ("7 min", "10 minit") in a text
+const DIST = /(\d+(?:[.,]\d+)?)\s?(km|kilometers?|kilometres?|m|meters?|metres?|meter)\b/gi;
+const MINS = /(\d+(?:[.,]\d+)?)\s?(min|mins|minit|minutes?|jam|hours?|hrs?)\b/gi;
+const numIn = (s) => parseFloat(/,\d{3}$/.test(s) ? s.replace(",", "") : s.replace(",", ".")); // "1,500" = 1500, "1,2" = 1.2
+/** Distances in metres found in a text. */
+export function extractDistances(text) {
+  return [...String(text || "").matchAll(DIST)].map((m) => ({ value: numIn(m[1]) * (/^k/i.test(m[2]) ? 1000 : 1), raw: m[0], index: m.index }));
+}
+/** Travel times in minutes found in a text. */
+export function extractMinutes(text) {
+  return [...String(text || "").matchAll(MINS)].map((m) => ({ value: numIn(m[1]) * (/^(jam|h)/i.test(m[2]) ? 60 : 1), raw: m[0], index: m.index }));
+}
+const nearDist = (a, list) => list.some((b) => Math.abs(a - b) <= Math.max(100, b * 0.15));
+const nearMin = (a, list) => list.some((b) => Math.abs(a - b) <= Math.max(2, b * 0.2));
+const CHECK_CLAIM = /\b(saya|i|i've|kami|we|we've)\s+(dah\s+|sudah\s+|telah\s+|have\s+|has\s+|just\s+)?(semak|check(ed)?|cari|search(ed)?|look(ed)?\s+up|tengok|verify|verified)\b[^.!?\n]{0,25}\b(google\s*maps?|maps|waze|internet|online|web|google)\b/i;
+
 /** "Type C", "type c", "Jenis C", "C" → "c"; "Type A1" → "a1". The key used to match a layout named in a reply. */
 export const layoutKey = (s) => String(s || "").toLowerCase().replace(/\b(type|jenis|tipe|layout)\b/g, "").replace(/[^a-z0-9]/g, "");
 const LAYOUT_REF = /\b(?:type|jenis|tipe)\s*([a-z]\d{0,2}|\d{1,2}[a-z]?)\b/gi;
@@ -108,6 +124,19 @@ export function validateReply(reply, ctx = {}) {
 
   // 1b) a layout's price must be that layout's (not a neighbouring layout's)
   for (const d of layoutPriceMixups(text, ctx.layoutPrices)) add("wrong_layout_price", d + ". Use the price listed for the layout named.");
+
+  // 1c) distances and travel times must come from the context (Google Maps lookups, the listing, web research, the
+  //     buyer's own words); rounding is fine. Applies once the context lists what is known (allowedDistances set).
+  if (ctx.allowedDistances) {
+    for (const d of extractDistances(text)) if (!nearDist(d.value, ctx.allowedDistances)) add("unverified_distance", `${d.raw.trim()} is not a distance from the project information or a map lookup.`);
+    for (const d of extractMinutes(text)) if (!nearMin(d.value, ctx.allowedMinutes || [])) add("unverified_distance", `${d.raw.trim()} is not a travel time from a map lookup or the project information.`);
+  }
+  // 1d) never claim a check that did not happen
+  const claim = text.match(CHECK_CLAIM);
+  if (claim) {
+    const what = /maps|waze/i.test(claim[0]) ? "maps" : "web";
+    if ((what === "maps" && !ctx.usedMaps) || (what === "web" && !ctx.usedWeb)) add("unverified_check", `"${claim[0].trim()}" claims a ${what === "maps" ? "map" : "web"} check that was not done for this reply.`);
+  }
 
   // 2) guarantees (negated phrases such as "tidak dapat dijamin" / "cannot guarantee" are fine)
   for (const m of findAll(GUARANTEE, text)) if (!negated(text, m.index)) add("guarantee_language", `"${m[0]}" promises an outcome that cannot be guaranteed.`);

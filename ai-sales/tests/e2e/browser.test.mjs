@@ -298,6 +298,32 @@ test("dashboard left open across a release: a banner offers to reload; nothing s
   } finally { await ctx.close(); }
 });
 
+test("AI test console: shows the Google Maps lookup (route type, distance, location source, date, link) and web research sources", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    const link = "https://www.google.com/maps/dir/?api=1&origin=3.19899%2C101.73702&destination=Sri+Rampai+LRT+Station&travelmode=walking&destination_place_id=ChIJ_lrt";
+    const result = { decision: "reply", reply: "Sekitar 2.4 km jalan kaki.", messages: ["Sekitar 2.4 km jalan kaki."], intent: "project_info", agent: "knowledge", language: "ms", confidence: 0.9, model: "claude-opus-5-5", latency_ms: 12000, attempts: [], actions: [],
+      retrieval: { focus: ["M MIRA"], focus_source: "named in the buyer's current message", ambiguous: false, not_on_record: {}, conflicts: {} },
+      research: { maps: { lookups: [{ project: "M MIRA", to: "Sri Rampai LRT Station (Wangsa Maju, Kuala Lumpur)", project_location: "the project's Google Maps pin (website editor)", straight_line: "50 m",
+        routes: [{ mode: "walking", distance: "2.4 km", time: "31 min" }, { mode: "driving", distance: "3.1 km", time: "7 min", note: "typical driving time without live traffic" }], maps_link: link, source: "Google Maps (Places + Routes API)", checked_at: "2026-10-29" }] },
+        web: { question: "MRT3?", found: true, searches: 2, sources: [{ url: "https://www.mymrt.com.my/mrt3", title: "MRT3 Circle Line" }, { url: "javascript:alert(1)", title: "bad" }] } } };
+    await page.route("**/api/sales/ai/simulate", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...result, simulated: true }) }));
+    await page.goto(base + "/sales/#/ai-test");
+    await page.waitForSelector("#msg");
+    await page.evaluate(() => sessionStorage.clear());
+    await page.fill("#msg", "M Mira ke LRT Sri Rampai berapa jauh?");
+    await page.click("#say button");
+    await page.waitForSelector(".msg.ai details");
+    await page.click(".msg.ai details summary");
+    const d = await page.textContent(".msg.ai details");
+    for (const re of [/Answer based on\s*our project data \+ Google Maps \+ web research/, /M MIRA → Sri Rampai LRT Station/, /walking: 2\.4 km · 31 min/, /driving: 3\.1 km · 7 min \(typical driving time without live traffic\)/,
+      /straight line 50 m/, /Location: the project's Google Maps pin \(website editor\) · Google Maps \(Places \+ Routes API\), checked 2026-10-29/, /Found · 2 searches/, /MRT3 Circle Line/]) assert.match(d, re);
+    assert.equal(await page.getAttribute(".msg.ai details a[href^='https://www.google.com/maps/dir/']", "target"), "_blank");
+    assert.equal(await page.locator(".msg.ai details a[href^='javascript:']").count(), 0, "a web source is only a link when it is http(s)");
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("AI settings: shows today's usage and saves a valid daily limit", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {

@@ -140,7 +140,7 @@ export async function processReplyJob(deps, job, settings) {
     // calendar unavailable → the AI collects a preferred time instead of offering slots
     if (f.calendar_booking && deps.cal) { try { slots = await deps.cal.slots(settings, deps.now()); } catch { slots = null; } }
     result = await respond({ db, llm: deps.llm, reserve: () => db.rpc("ai_reserve_ai_call", {}), leadId: lead.id, message, history: historyOf(earlier), now: deps.now(),
-      mode: "live", calendar: !!slots, slots: slots || [] });
+      mode: "live", calendar: !!slots, slots: slots || [], research: deps.research || null });
   }
 
   const runId = await logRun(db, { result, leadId: lead.id, conversationId: conv.id, channel: "whatsapp", input: { job: job.id } });

@@ -1,5 +1,6 @@
 // System prompt, structured-output schema and per-turn context message for the AI sales assistant.
 // The system prompt only changes when settings or the objection library change, so it is cached.
+import { renderLookup } from "./research.mjs";
 
 // No nullable/union fields: the API caps union-typed parameters (16). "Unknown" is "" for text and enums,
 // 0 for numbers and false for flags; normalizeReply() turns those back into null.
@@ -154,10 +155,17 @@ Facts: the context is your only source of truth
 - INDICATIVE money figures (layout price_from, money.price_from, money.maintenance_fee_psf) are the website's figures: give them with "from"/"dari", "anggaran"/"sekitar"/"around" and that the final figure is confirmed at booking, but still answer the question; this alone is not a reason to hand over.
 - VERIFIED items (verified_facts, verified_prices, active_promotions, knowledge) were checked by staff: state them as fact. STALE items: give the figure and say it is being reconfirmed.
 - knowledge entries are the agency's own approved policies and notes (sales packages, legal fees, Bumiputera discounts, deposits, processes). Check them for every question and answer from them directly, keeping their qualifiers ("usually", "for KL", "for Selangor") and saying the final figure is confirmed in the SPA / booking. They count like active promotions for what they describe. Some entries contain notes meant only for you (e.g. "for your knowledge only", "share only if they insist"): follow those notes and never quote them. A knowledge entry for one project, or a general one, never overrides a different figure in that project's verified_facts.
-- not_on_record lists details the project's information does not include. If the buyer asks about one of those (or anything else that is not in the context), say plainly which detail is not in the current project information and that an advisor will confirm it; never guess. A detail listed under partial is known only for some layouts.
+- not_on_record lists details the project's information does not include. If the buyer asks about one of those (or anything else that is not in the context), say plainly which detail is not in the current project information and that an advisor will confirm it, and set handover.needed with reason conflicting_info (the system then researches it and may give you external_research to answer from); never guess. A detail listed under partial is known only for some layouts.
 - conflicts lists details where the sources disagree (the website against a staff check, or the listing contradicting itself). If resolved is true, use the staff (verified) value; if false, do not state either as fact: say that detail is being reconfirmed and hand over (reason conflicting_info).
 - Some things always need a person: current unit availability (unless availability is VERIFIED), special prices or negotiation beyond what knowledge or active_promotions state, promotions not listed in either, legal or contract questions, and exceptions.
 - Never invent or estimate prices, unit availability, rebates, cashback, discounts, rental yields, completion dates, maintenance fees or developer promises.
+
+Distances, routes and outside information
+- route_lookups were measured for this message with Google Maps from the project's own map pin to the place named. They are the source for distances and travel times: give the figure for the mode asked (walking, driving, public transport), say which it is, and use "around"/"sekitar". "straight_line" is distance as the crow flies: never call it a walking or road distance. Driving times are typical times without live traffic. If a route is missing, say which one could not be checked. Add maps_link when it helps.
+- route_lookups settle a distance conflict in the listing (e.g. the brochure text says 650m, the transit list 2.4km): answer from the lookup and do not hand over for that.
+- If project_location says the location is approximate, say the distance is approximate. If route_lookup_needs is set, ask the buyer for that place (one short question) instead of guessing.
+- Never state a distance or travel time that is not in the context, and never say you checked Google Maps unless route_lookups is in the context.
+- external_research (EXTERNAL, web search) may answer general and location questions our data does not cover (transport lines, nearby schools or hospitals, public infrastructure, developer background). Use only what it states, say briefly that it is based on public information, and keep "planned", "under construction" and "operational" exactly as stated. It never overrides our verified data, and never supplies our prices, promotions, availability or booking terms. If found is false, say plainly that it could not be verified and that an advisor will confirm. Never say you searched the web unless external_research is in the context.
 - Quote prices only as they appear in the context, in the format RM450,000. Say a unit is available only if the context lists it as available with a recent check. Mention a promotion or discount only if it is listed under active_promotions or described in knowledge, together with its key conditions.
 ${financing
     ? "- Monthly instalments, loan amounts and eligibility: quote only figures from financing_engine in the context (see Loan eligibility below). Never calculate or estimate them yourself."
@@ -256,6 +264,11 @@ export function renderContext(ctx) {
     active_promotions: ctx.promotions.map((x) => ({ key: `promo:${x.id}`, project_id: x.project_id || "all", title: x.title, details: x.details, conditions: x.conditions, valid_to: x.valid_to, label: "VERIFIED" })),
     knowledge: ctx.knowledge.map((k) => ({ key: `kb:${k.id}`, kind: k.kind, project_id: k.project_id, title: k.title, content: k.content, label: "VERIFIED" })),
     ...(ctx.financingView ? { financing_engine: ctx.financingView } : {}),
+    // distances and travel times looked up for this message (Google Maps), and web research findings (EXTERNAL)
+    ...(ctx.routeLookups?.length ? { route_lookups: ctx.routeLookups.map(renderLookup) } : {}),
+    ...(ctx.routeMissingPlace ? { route_lookup_needs: ctx.routeMissingPlace } : {}),
+    ...(ctx.externalResearch ? { external_research: { label: "EXTERNAL (web search)", question: ctx.externalResearch.question, found: ctx.externalResearch.found,
+      findings: ctx.externalResearch.findings, sources: ctx.externalResearch.sources.map((x) => x.url) } } : {}),
     ...(ctx.clientProfile ? { client_profile: ctx.clientProfile } : {}),
     ...(ctx.workflows?.length ? { workflows: ctx.workflows } : {}),
     ...(ctx.workflowOffers?.length ? { workflow_offers: ctx.workflowOffers } : {}),
