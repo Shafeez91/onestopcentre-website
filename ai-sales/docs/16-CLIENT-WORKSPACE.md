@@ -1,0 +1,107 @@
+# Lead workspace: client profile, AI summary, next action, embedded WhatsApp (2026-10-29)
+
+Click a lead anywhere and everything about that client is on one page: **Leads & CRM → a lead**.
+
+## Layout
+- **Header:** name, lead code, stage (coloured), temperature, AI status (AI active / a person is handling / no WhatsApp chat), waiting-for-a-person flag, main project, owner, last contact. Buttons: WhatsApp, Call, Appointment, Flag for human.
+- **Tabs (in the same page; the URL keeps the tab, e.g. `#/lead/<id>?tab=profile`):**
+  - **Summary:**
+    - AI Conversation Summary, with five sections: property interest, personal profile, lifestyle & location, purchase intent, current progress. Each field shows its status: Confirmed / Inferred / Conflict / Not provided. Unknown fields are folded away under "N not provided".
+    - AI Recommended Next Action.
+    - Needs your review (conflicts).
+    - Qualification & score, with the factors behind it and the details still unknown.
+  - **Conversation:** the WhatsApp chat (the inbox's own view and composer, so there is one history). On screens wide enough (desktop, iPad landscape) it sits beside every tab instead.
+  - **Profile:**
+    - Contact
+    - Client profile (grouped fields)
+    - Property interests: several per client, each with priority, status, unit type, budget and next action
+    - Qualification
+  - **Sales:**
+    - Lead: stage with "why / how confirmed", owner, source, campaign, main project, AI pause
+    - Follow-ups & tasks
+    - Appointments
+    - Follow-up workflows
+    - Financing check
+    - Human handover
+    - Consent
+    - PDPA erase
+  - **Activity:** timeline with filters (stages, profile, tasks & appointments, notes & calls, AI), internal notes (never sent to the client), and the field change history.
+- **Follow-up queue:** **Leads & CRM → Follow-up queue** lists the leads where someone must act now, each with the reason:
+  - waiting for a person
+  - an overdue task
+  - stuck in a follow-up workflow
+  - an AI recommendation that is high priority or due today
+
+## How the AI keeps it up to date
+- **Every answered buyer message:** the AI also returns `insights`:
+  - profile updates, each marked confirmed (the client said it) or inferred (needs confirmation)
+  - a summary (rewritten only when the message changes the picture; greetings and thanks don't)
+  - the last client question and what is outstanding
+  - the next best action, with its reason and priority
+  - rarely, a sales milestone the buyer explicitly confirmed
+- **Chats a person is handling:** the AI reads each new buyer message (and sends nothing) to keep the profile current. You can switch this off in AI agent settings. **Refresh** on the summary does the same on demand. Both count towards the daily AI limit.
+- **Database rules (`ai_lead_profile_set`), not just the prompt:**
+  - A person's entry is never overwritten by the AI. A different value from the conversation appears under **Needs your review**: *Keep entered* or *Use the client's*.
+  - A guess (inferred) never replaces what the client said (confirmed). The client's own correction does, and the old value stays in the history.
+  - The same buyer message never updates a field twice (redeliveries, retries). The AI never clears a field.
+  - Every change is stored in `ai_lead_field_history` (old → new, AI or who, which message, note) and shown on the Activity tab.
+- **What is never recorded:**
+  - invented or assumed personal details: marital status, occupation or interests are not inferred from a name, language or demographics
+  - income, creditworthiness or loan eligibility as facts
+  - a full home address
+
+## Sales pipeline
+- **Stages:** structured (stable `key`, colour, meaning) and still editable in **Settings → Pipeline stages** (rename, reorder, add, deactivate, colour, "the AI may move a lead here").
+- **The existing stages were renamed and extended, not replaced.** Every lead keeps its stage:
+
+  | Before | Now |
+  |---|---|
+  | New Lead | New Enquiry |
+  | Qualified | Interested / Qualified |
+  | Follow-Up | Follow-Up Required |
+  | Appointment Confirmed | Appointment Booked |
+  | Visited Showroom | Appointment Attended |
+  | Booking / Reservation | Unit Booked |
+  | Pending Document | Documents Pending |
+  | Pending Approval | Loan Submitted |
+  | SPA Signing | LO Signed |
+  | Won | LO, SPA & LA Signed (closes as won) |
+  | Lost | Cancelled / Lost |
+
+  - **New:** No Response, Loan Approved, Loan Declined.
+  - **Kept as they were:** Contacted, Appointment Pending, Pending SPA Signing.
+- **Who moves a lead:**
+  - **Staff:** to any stage, with an optional reason. The reason, who did it and when go on the timeline. A manual change cancels the automatic check-ins scheduled for the old situation; the buyer's next message schedules fresh ones. Closing a lead stops its automatic messages.
+  - **AI:** forward only, never closing a lead, and only to stages marked "the AI may move a lead here" (by default: Interested / Qualified, Unit Booked, Loan Submitted). It needs the buyer's own words as evidence, checked against their message. Asking about a step, intending to do it, or a scheduled appointment is not completion. Loan approval or decline, and signing, are left to a person.
+  - **Appointments:** a confirmed appointment moves the lead to Appointment Booked, and a completed one to Appointment Attended (forward only).
+- **Flags are not stages.** Follow-up due, waiting for a person and AI paused stay separate flags and tasks, so a lead can be Interested and also have a follow-up due.
+
+## Database (migration 16, additive)
+- **`ai_leads` columns:** `profile`, `profile_meta`, `ai_summary`.
+- **New table:** `ai_lead_field_history`, with RLS so staff can read it and changes go through functions.
+- **`ai_lead_interests` columns:** `priority`, `unit_type`, `budget_text`, `next_action`, `updated_at`. Existing main projects are marked primary.
+- **`ai_pipeline_stages` columns:** `key`, `color`, `ai_settable`, `description`.
+- **Functions:**
+  - `ai_lead_profile_set`, `ai_lead_profile_resolve`
+  - `ai_lead_summary_set`, `ai_lead_next_action`
+  - `ai_lead_set_stage`; the timeline trigger now records the reason
+  - an appointment → stage trigger
+- **PDPA:** the PDPA erase also clears the profile, summary, field history and interest notes.
+
+## Tests
+- **DB:**
+  - T61: profile rules (evidence, a person's entry protected and flagged, once per message, never cleared by the AI, resolve)
+  - T62: summary and next action (a dismissed one is not brought back; staff edits)
+  - T63: pipeline renamed with every lead kept; AI moves only forward, with evidence and to allowed stages; staff moves cancel stale check-ins; appointments move forward only
+- **Unit:**
+  - field cleaning
+  - writes go through the rules, tied to the buyer's message
+  - stage evidence must be the buyer's own words
+  - the AI's view of the profile
+  - a person's qualification entry is rerouted to review
+  - chats handled by a person get insights but no reply
+- **Browser:**
+  - the workspace on desktop: summary, statuses, conflict resolution, next action → task, refresh, profile save of changed fields only, stage change with reason
+  - iPad portrait: conversation tab, no sideways scrolling on any tab
+  - the follow-up queue
+  - the 12-width layout audit

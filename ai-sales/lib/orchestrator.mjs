@@ -8,6 +8,7 @@ import { scoreLead } from "../../sales/shared/scoring.mjs";
 import { loadContext } from "./context.mjs";
 import { buildSystemPrompt, renderContext, buildMessages, REPLY_SCHEMA, normalizeReply } from "./prompt.mjs";
 import { DEFAULT_MODEL, LlmError } from "./llm.mjs";
+import { applyInsights } from "./insights.mjs";
 import { mergeFinancing, attachFinancing, renderFinancing, cleanInputs, isNewAssessment, advisorSummary } from "./financing.mjs";
 
 const QUAL_FIELDS = ["purpose", "first_home", "bedrooms", "size_sqft", "budget_min", "budget_max", "employment", "financing", "timeline_months", "readiness", "concerns"];
@@ -154,7 +155,16 @@ export async function respond(p) {
   // 6) qualification, scoring, interests, appointment request
   const leadQual = {};
   if (ctx.lead?.qualification_known) Object.assign(leadQual, ctx.lead.qualification_known);
-  const { qualification, changed } = mergeQualification(leadQual, data.qualification_updates || {});
+  // a person's entry is never overwritten here: a different value goes through the insights rules (flagged for review)
+  const insights = data.insights ? { ...data.insights, profile_updates: [...(data.insights.profile_updates || [])] } : null;
+  const qualUpdates = { ...(data.qualification_updates || {}) };
+  for (const [k, v] of Object.entries(qualUpdates)) {
+    if (ctx.profileMeta?.[k]?.source === "staff" && v !== null && v !== undefined && v !== "" && leadQual[k] !== v) {
+      delete qualUpdates[k];
+      if (insights) insights.profile_updates.push({ field: k, value: String(v), status: "confirmed" });
+    }
+  }
+  const { qualification, changed } = mergeQualification(leadQual, qualUpdates);
   const fin = finOn ? ctx.financing : null;
   if (fin?.result && finChanged.length) {
     if (fin.result.route && !qualification.financing) { qualification.financing = fin.result.route; changed.push("financing"); }
@@ -193,6 +203,8 @@ export async function respond(p) {
       ...(slot ? { slot_id: slot.id, start_at: slot.start, end_at: slot.end, appointment_id: pending?.id || null } : {}) });
   }
   if (decision !== "reply") actions.push({ type: "cancel_follow_ups", reason: "conversation needs a human" });
+  // what the AI learnt about the client (profile, summary, next action, confirmed milestone): written last, by the rules
+  if (p.leadId && insights) actions.push({ type: "insights", insights, buyer_text: message });
 
   return finish({
     decision, reply, draft: data.reply, language: data.language, intent: data.intent, agent: data.agent, confidence: Number(data.confidence),
@@ -208,7 +220,7 @@ export async function respond(p) {
  * Applies a result's actions to the CRM (live channels). `db` needs get/post/patch.
  * Every write is idempotent or keyed so a redelivered message cannot duplicate records.
  */
-export async function applyActions(db, { leadId, contactId, result, conversationId = null, runId = null }) {
+export async function applyActions(db, { leadId, contactId, result, conversationId = null, runId = null, messageId = null }) {
   const done = [];
   for (const a of result.actions || []) {
     if (a.type === "record_consent") {
@@ -233,6 +245,8 @@ export async function applyActions(db, { leadId, contactId, result, conversation
         await db.post("ai_financing_assessments", { lead_id: leadId, route: a.result.route, inputs: a.inputs, result: a.result, outcome: a.result.outcome,
           rules_version: a.result.rules_version || null, engine_version: a.result.engine_version || null, source: "ai", created_by: "ai" });
       }
+    } else if (a.type === "insights") {
+      done.insights = await applyInsights(db, { leadId, insights: a.insights, messageId, buyerText: a.buyer_text });
     } else if (a.type === "workflow_enroll" || a.type === "workflow_advance") {
       const w = (await db.get(`ai_workflows?key=eq.${encodeURIComponent(a.workflow)}&status=eq.active&select=id`))?.[0];
       if (w && a.type === "workflow_enroll") await db.rpc("ai_wf_enroll", { p_wf: w.id, p_lead: leadId, p_source: a.source || "whatsapp", p_by: "ai" });

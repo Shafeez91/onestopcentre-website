@@ -444,11 +444,26 @@ test("second message while the AI owns the chat: the AI answers again (no one-re
 test("human takeover: buyer messages get no AI reply and no routine Telegram alert", async () => {
   const w = world(); w.ai_conversations[0].mode = "human"; w.ai_leads[0].ai_paused = true;
   w.ai_settings[0].notifications = { whatsapp_alerts: false };
-  const db = memdb(w), d = deps(db);
+  const writes = [];
+  const rpcs = { ai_lead_profile_set: (a) => { writes.push(["profile", a]); return { applied: ["work_area"] }; }, ai_lead_summary_set: (a) => { writes.push(["summary", a]); return {}; } };
+  const insights = { profile_updates: [{ field: "work_area", value: "KLCC", status: "confirmed" }], summary: { changed: true, text: "Works in KLCC.", last_client_question: "", outstanding: "", next_question: "" },
+    next_action: { action: "", reason: "", priority: "", due_in_days: 0 }, stage_update: { stage: "", evidence: "" } };
+  const db = memdb(w, rpcs), d = deps(db, { llm: llmOf(insights) });
   await runWorker(d);
-  assert.equal(d.llm.calls.length, 0);
-  assert.equal(d.wa.sent.length, 0);
+  assert.equal(d.wa.sent.length, 0, "no reply while a person handles the chat");
   assert.equal((db.t.telegram || []).length, 0);
+  // the AI still keeps the client's profile and summary up to date (one call, no message)
+  assert.equal(d.llm.calls.length, 1);
+  assert.match(d.llm.calls[0].system, /^You keep the CRM profile/);
+  assert.deepEqual(writes.map(([k]) => k), ["profile", "summary"]);
+  assert.deepEqual(writes[0][1].p_changes, [{ field: "work_area", value: "KLCC", status: "confirmed" }]);
+  assert.equal(writes[0][1].p_source, "ai");
+  assert.ok(writes[0][1].p_message, "tied to the buyer's message, so it is never applied twice");
+  // switched off in AI settings: not called at all
+  const w2 = world(); w2.ai_conversations[0].mode = "human"; w2.ai_leads[0].ai_paused = true; w2.ai_settings[0].ai = { ...(w2.ai_settings[0].ai || {}), auto_insights: false };
+  const db2 = memdb(w2, rpcs), d2 = deps(db2);
+  await runWorker(d2);
+  assert.equal(d2.llm.calls.length, 0);
 });
 
 test("a person takes over while the AI is writing: the AI reply is not sent (checked right before sending)", async () => {
@@ -865,4 +880,26 @@ test("workflow helpers: next stage, messages with variables, builder validation"
   assert.match(validateWorkflow({ ...good, stages: [{ ...good.stages[0], follow_up_hours: 24, max_follow_ups: 2 }, good.stages[1]] }).join(), /write a reminder message/);
   assert.match(validateWorkflow({ ...good, stages: [{ ...good.stages[0], next_stage_key: "gone" }, good.stages[1]] }).join(), /next stage/);
   assert.match(validateWorkflow({ ...good, stages: [{ ...good.stages[0], message_ms: "Hai {{nama}}" }, good.stages[1]] }).join(), /unknown placeholder/);
+});
+
+/* ================================================================ client insights on a live reply */
+test("live reply: insights are written after the reply's other changes; a person's qualification entry is not overwritten but sent for review", async () => {
+  const w = world();
+  w.ai_leads[0].qualification = { purpose: "investment", signals: {} };
+  w.ai_leads[0].profile_meta = { purpose: { status: "confirmed", source: "staff" } };
+  w.ai_messages[0].body = "Saya nak duduk sendiri, kerja di KLCC";
+  const calls = [];
+  const rpcs = { ai_lead_profile_set: (a) => { calls.push(["profile", a]); return { applied: [] }; }, ai_lead_summary_set: (a) => { calls.push(["summary", a]); return {}; } };
+  const insights = { profile_updates: [{ field: "work_area", value: "KLCC", status: "confirmed" }], summary: { changed: true, text: "Own stay; works in KLCC.", last_client_question: "", outstanding: "", next_question: "" },
+    next_action: { action: "", reason: "", priority: "", due_in_days: 0 }, stage_update: { stage: "", evidence: "" } };
+  const d0 = draft({ insights });
+  const db = memdb(w, rpcs), d = deps(db, { llm: llmOf({ ...d0, qualification_updates: { ...d0.qualification_updates, purpose: "own_stay" } }) });
+  await runWorker(d);
+  assert.equal(d.wa.sent.length, 1, "the reply itself is unaffected");
+  assert.equal(db.t.ai_leads[0].qualification.purpose, "investment", "the person's entry stays");
+  assert.deepEqual(calls[0][1].p_changes, [{ field: "work_area", value: "KLCC", status: "confirmed" }, { field: "purpose", value: "own_stay", status: "confirmed" }]);
+  assert.equal(calls[0][1].p_message, w.ai_messages[0].id, "tied to the buyer's message");
+  assert.equal(calls[1][1].p_summary.text, "Own stay; works in KLCC.");
+  // the AI's own context carries what is known and the milestones it may set
+  assert.match(d.llm.calls[0].messages.at(-1).content, /"client_profile":\{"known":\{"purpose":\{"value":"investment","status":"confirmed"\}\}/);
 });

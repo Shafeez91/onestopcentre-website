@@ -3,6 +3,7 @@
 import { extractAmounts, PROMOTION } from "../../sales/shared/validator.mjs";
 import { projectSpecs, resolveFocus, coverage, conflicts as findConflicts, numOf } from "../../sales/shared/listing.mjs";
 import { workflowContext } from "./workflows.mjs";
+import { profileContext } from "./insights.mjs";
 
 const SITE = "https://onestopcentreproperty.com/";
 const DAY = 864e5;
@@ -42,7 +43,7 @@ export async function loadContext(db, { leadId = null, message = "", history = [
   const L = siteSettings?.[0]?.data?.loan || {};
   const websiteLoan = num(L.r) || num(L.m) ? { margin_pct: num(L.m) || 90, rate_pct: num(L.r) || 4.5, tenure_years: num(L.y) || 35 } : null;
 
-  let lead = null, buyer = null, interests = [], appointments = [], aiPaused = false, workflows = [], workflowOffers = [];
+  let lead = null, buyer = null, interests = [], appointments = [], aiPaused = false, workflows = [], workflowOffers = [], clientProfile = null, profileMeta = {};
   if (leadId) {
     const rows = await db.get(`ai_leads?id=eq.${enc(leadId)}&select=*,contact:ai_contacts(full_name,salutation,preferred_language,phone_e164)`);
     const l = rows[0];
@@ -50,6 +51,9 @@ export async function loadContext(db, { leadId = null, message = "", history = [
       interests = (await db.get(`ai_lead_interests?lead_id=eq.${enc(leadId)}&select=project_id,interest`)) || [];
       appointments = (await db.get(`ai_appointments?lead_id=eq.${enc(leadId)}&status=in.(pending_confirmation,confirmed,rescheduled)&select=id,kind,status,start_at,preferred_text,project_id`)) || [];
       ({ workflows, offers: workflowOffers } = await workflowContext(db, leadId).catch(() => ({ workflows: [], offers: [] })));
+      const stages = (await db.get("ai_pipeline_stages?select=id,key,name,position,is_won,is_lost,active,ai_settable,description&order=position.asc").catch(() => [])) || [];
+      clientProfile = profileContext(l, stages);
+      profileMeta = l.profile_meta || {};
       aiPaused = !!l.ai_paused;
       buyer = { name: clean(l.contact?.full_name) || null, salutation: clean(l.contact?.salutation) || null, preferred_language: l.contact?.preferred_language || null };
       lead = {
@@ -152,7 +156,7 @@ export async function loadContext(db, { leadId = null, message = "", history = [
 
   const isFirstReply = !(history || []).some((h) => h.role === "assistant");
   return {
-    settings, objections: objections || [], lead, buyer, aiPaused, isFirstReply, websiteLoan, workflows, workflowOffers, businessWa: wa ? "https://wa.me/" + wa : null,
+    settings, objections: objections || [], lead, buyer, aiPaused, isFirstReply, websiteLoan, workflows, workflowOffers, clientProfile, profileMeta, businessWa: wa ? "https://wa.me/" + wa : null,
     today: now.toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" }),
     projects, focus, promotions: promotions || [], knowledge,
     rules: {

@@ -60,12 +60,12 @@ test("sign-in screen, then owner lands on the overview; mobile menu opens and cl
 test("unsaved form edits survive navigating away and back", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx } = await newPage(VIEWPORTS.desktop);
   try {
-    await page.goto(base + "/sales/#/lead/L1");
+    await page.goto(base + "/sales/#/lead/L1?tab=profile");
     await page.waitForSelector("#fc");
     await page.fill("#fc input[name=full_name]", "Edited Name Not Saved");
     await page.evaluate(() => { location.hash = "#/pipeline"; });
     await page.waitForSelector("#view h1:has-text('pipeline')");
-    await page.evaluate(() => { location.hash = "#/lead/L1"; });
+    await page.evaluate(() => { location.hash = "#/lead/L1?tab=profile"; });
     await page.waitForSelector("#fc");
     assert.equal(await page.inputValue("#fc input[name=full_name]"), "Edited Name Not Saved");
     assert.ok(await page.locator("#fc.has-draft").count(), "form is flagged as an unsaved draft");
@@ -93,7 +93,7 @@ test("new lead: validates phone, uses the de-duplicating database functions, sho
 test("rescoring a lead stores the transparent score and rationale", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes } = await newPage(VIEWPORTS.desktop);
   try {
-    await page.goto(base + "/sales/#/lead/L1");
+    await page.goto(base + "/sales/#/lead/L1?tab=profile");
     await page.waitForSelector("#fq");
     await page.selectOption("#fq select[name=readiness]", "ready");
     await page.fill("#fq input[name=budget_max]", "500000");
@@ -348,6 +348,96 @@ test("dashboard command centre: real counts, today's priorities, live WhatsApp, 
   } finally { await ctx.close(); }
 });
 
+test("lead workspace: one page with the AI summary, next action, conflicts, embedded WhatsApp, profile, sales and activity", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.desktop);
+  try {
+    page.on("dialog", (d) => d.accept());
+    await page.goto(base + "/sales/#/lead/L1");
+    await page.waitForSelector("#ws");
+    // header and the summary first
+    assert.match(await page.textContent(".ws-head"), /Test Buyer\s*OSC-000001[\s\S]*New Enquiry[\s\S]*AI active[\s\S]*Test Residence/);
+    const sum = await page.textContent("#aisum");
+    assert.match(sum, /Works in KLCC and takes the LRT/);
+    assert.match(sum, /Work location\s*KLCC\s*Confirmed/);
+    assert.match(sum, /Daily commute & transportation\s*LRT \/ MRT \/ Monorail\s*Inferred/);
+    assert.match(sum, /Current residential area\s*Cheras\s*Conflict/);
+    assert.match(sum, /Last client question\s*“Ada unit 3 bilik bawah RM500k\?”/);
+    assert.equal(await page.isVisible("#aisum .kvr.miss"), false, "unknown fields are folded away, never guessed");
+    // conversation beside the summary on a wide screen (the inbox's own view, with its composer)
+    assert.equal(await page.isVisible("#wsconv .chat"), true);
+    assert.match(await page.textContent("#wsconv"), /Salam, boleh info M Mira\?/);
+    assert.equal(await page.isVisible(".ws-tabs a[data-tab=conversation]"), false);
+    // conflict: use the client's value
+    assert.match(await page.textContent(".conflicts"), /Current residential area: entered Cheras, conversation says Kepong/);
+    await page.click("[data-accept=residential_area]");
+    await toastSeen(page, /Updated from the conversation/);
+    assert.deepEqual(writes.find((w) => w.rpc === "ai_lead_profile_resolve").body, { p_lead: "L1", p_field: "residential_area", p_accept: true });
+    // next action → follow-up task (only when chosen)
+    assert.match(await page.textContent("#nextact"), /Send the Type A floor plan and offer a showroom visit[\s\S]*Why: The buyer asked/);
+    await page.click("#na-task");
+    await toastSeen(page, /Follow-up task created/);
+    const t = writes.find((w) => w.table === "ai_tasks" && w.method === "POST").body;
+    assert.deepEqual([t.title, t.lead_id, t.due_at], ["Send the Type A floor plan and offer a showroom visit", "L1", "2026-10-30T02:00:00.000Z"]);
+    // refresh the summary from the conversation
+    await page.click("#refsum");
+    await page.waitForTimeout(300);
+    assert.deepEqual(writes.find((w) => w.summary).summary, { lead_id: "L1" });
+    // profile tab: only changed fields are saved, through the database rules
+    await page.click(".ws-tabs a[data-tab=profile]");
+    await page.waitForSelector("#fp");
+    await page.fill("#fp input[name=occupation]", "Engineer");
+    await page.check("#fp input[name=commute_mode][value=own_car]");
+    await page.fill("#fp input[name=__note]", "confirmed on a call");
+    await page.click("#fp button[type=submit]");
+    await toastSeen(page, /Profile saved/);
+    const ps = writes.find((w) => w.rpc === "ai_lead_profile_set").body;
+    assert.deepEqual([ps.p_source, ps.p_note, ps.p_changes], ["staff", "confirmed on a call", [{ field: "occupation", value: "Engineer" }, { field: "commute_mode", value: ["own_car", "rail"] }]]);
+    // sales tab: a stage change goes through the database function with the reason
+    await page.goto(base + "/sales/#/lead/L1?tab=sales");
+    await page.waitForSelector("#fl");
+    await page.selectOption("#fl select[name=stage_id]", "s4");
+    await page.fill("#fl input[name=stage_note]", "booking fee receipt seen");
+    await page.click("#fl button[type=submit]");
+    await toastSeen(page, /Lead saved/);
+    assert.deepEqual(writes.find((w) => w.rpc === "ai_lead_set_stage").body, { p_lead: "L1", p_stage: "s4", p_note: "booking fee receipt seen", p_source: "staff", p_evidence: null });
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("lead workspace on iPad portrait: tabs, the conversation as its own tab, no sideways scrolling", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    await page.goto(base + "/sales/#/lead/L1");
+    await page.waitForSelector("#ws");
+    assert.equal(await page.isVisible("#wsconv"), false, "conversation is a tab on a narrow screen");
+    await page.click("#gochat");
+    await page.waitForFunction(() => document.querySelector("#ws").dataset.tab === "conversation");
+    assert.equal(await page.isVisible("#wsconv .chat"), true);
+    assert.equal(await page.isVisible("#aisum"), false);
+    for (const t of ["profile", "sales", "activity", "summary"]) {
+      await page.click(`.ws-tabs a[data-tab=${t}]`);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.ok(overflow <= 1, `${t}: page scrolls sideways by ${overflow}px`);
+    }
+    // the activity filters and field history
+    await page.goto(base + "/sales/#/lead/L1?tab=activity&act=profile_update");
+    await page.waitForSelector(".act-f a.on");
+    assert.equal(await page.textContent(".act-f a.on"), "Profile");
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("leads: follow-up queue lists only the leads that need someone now, with the reason", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.desktop);
+  try {
+    await page.goto(base + "/sales/#/leads?view=queue");
+    await page.waitForSelector(".tbl");
+    assert.match(await page.textContent(".tbl"), /OSC-000001[\s\S]*Next action: Send the Type A floor plan/);
+    assert.equal(await page.textContent(".seg a.on"), "Follow-up queue");
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("app shell: grouped menu, breadcrumb, collapsible rail remembered, global search, quick add and notifications", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, errors } = await newPage(VIEWPORTS.desktop);
   try {
@@ -532,7 +622,7 @@ test("workflow settings: entry rules and sending saved in one call; history list
 test("lead page: the buyer's workflow stage is shown; 'Add to workflow' for others (asks first)", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   let { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {
-    await page.goto(base + "/sales/#/lead/L1");
+    await page.goto(base + "/sales/#/lead/L1?tab=sales");
     await page.waitForSelector("#wfc");
     assert.match(await page.textContent("#wfc"), /Follow-up workflows\s*RMK — Residensi Metropolitan Kepong: To book unit\s*Active/);
     assert.equal(await page.$("#wfadd"), null);
@@ -540,7 +630,7 @@ test("lead page: the buyer's workflow stage is shown; 'Add to workflow' for othe
   ({ page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad, { mutate: (db) => { db.ai_workflow_leads = []; } }));
   try {
     page.on("dialog", (d) => d.accept());
-    await page.goto(base + "/sales/#/lead/L1");
+    await page.goto(base + "/sales/#/lead/L1?tab=sales");
     await page.waitForSelector("#wfadd");
     await page.selectOption("#wfadd select[name=source]", "instagram");
     await page.click("#wfadd button");
@@ -622,7 +712,7 @@ test("financing check: lead page shows the saved result; the calculator previews
   for (const vp of [VIEWPORTS.phone, { width: 1280, height: 900 }]) {
     const { page, ctx, writes, errors } = await newPage(vp);
     try {
-      await page.goto(base + "/sales/#/lead/L1");
+      await page.goto(base + "/sales/#/lead/L1?tab=sales");
       await page.waitForSelector("#fin");
       const card = await page.textContent("#fin");
       assert.match(card, /Potentially affordable/);
