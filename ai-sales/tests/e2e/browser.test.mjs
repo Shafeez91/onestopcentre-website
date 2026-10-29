@@ -107,6 +107,23 @@ test("rescoring a lead stores the transparent score and rationale", { skip: skip
   } finally { await ctx.close(); }
 });
 
+test("website editor: the 'Location & accessibility' text (field nearby) has its own box and is shown under About this project", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.ipad, { signedIn: false });
+  try {
+    await page.goto(base + "/");
+    await page.waitForFunction(() => document.body.innerText.includes("Test Residence"), null, { timeout: 15000 });
+    const r = await page.evaluate(() => {
+      // the editor's own code: open the "Highlights & Description" section for a project with brochure text
+      W = nz({ n: "M MIRA", nearby: "PUBLIC TRANSPORT\n650m – Sri Rampai LRT Station", desc: "" }); esec = "h";
+      const host = document.createElement("div"); host.innerHTML = edBody(); document.body.appendChild(host);
+      const box = host.querySelector('textarea[data-k="nearby"]');
+      return { box: !!box, value: box?.value, label: host.innerText.includes("Location & accessibility"), desc: !!host.querySelector('textarea[data-k="desc"]') };
+    });
+    assert.deepEqual(r, { box: true, value: "PUBLIC TRANSPORT\n650m – Sri Rampai LRT Station", label: true, desc: true });
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("existing website homepage still renders listings and the enquiry form still writes to public.leads", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes } = await newPage(VIEWPORTS.phone, { signedIn: false });
   try {

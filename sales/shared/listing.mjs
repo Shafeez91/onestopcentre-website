@@ -175,6 +175,41 @@ export function coverage(specs, facts = null, { factsFresh = false } = {}) {
   return out;
 }
 
+// words that say what kind of stop it is, not which one ("Sri Rampai LRT Station" and "LRT Sri Rampai" are the same)
+const STOP_WORDS = /\b(lrt|mrt|ktm|brt|erl|monorail|komuter|station|stesen|stn|line|laluan|bus|stop|hentian)\b/g;
+const stopKey = (s) => ` ${String(s || "").toLowerCase().replace(/\(.*?\)/g, " ").replace(STOP_WORDS, " ").replace(/[^a-z0-9]+/g, " ").trim()} `;
+
+/** Distances written in free text, one per line: "650m – Sri Rampai LRT Station", "• 1.2 km to KLCC", "1. 820m - Wangsa Maju LRT". */
+export function textDistances(text) {
+  const out = [];
+  for (const line of String(text || "").split(/\n+/)) {
+    const m = line.match(/(~?\d[\d.,]*)\s?(km|m)\b\.?\s*(?:[–—:-]|to|ke)\s*(.+)$/i);
+    if (m) out.push({ meters: numOf(m[1]) * (/km/i.test(m[2]) ? 1000 : 1), label: `${m[1]}${m[2]} – ${m[3].trim()}`, key: stopKey(m[3]) });
+  }
+  return out;
+}
+
+/**
+ * The listing's transit list against distances written in its own text (the "Location & accessibility" box):
+ * the same station with clearly different distances (more than 300 m and more than 1.5×) is a contradiction.
+ */
+export function transitDistanceConflicts(specs) {
+  const written = textDistances([specs.surroundings, specs.description].filter(Boolean).join("\n"));
+  if (!written.length) return [];
+  const out = [];
+  for (const entry of specs.nearby?.public_transport || []) {
+    const m = String(entry).match(/^(.*?)\s*\(([^)]*\d[^)]*)\)/); // "LRT Sri Rampai (2.4km)"
+    if (!m) continue;
+    const key = stopKey(m[1]).trim(), listed = distM(m[2]);
+    if (key.length < 3 || listed >= 1e9) continue;
+    const t = written.find((w) => w.key.includes(` ${key} `));
+    if (!t || !t.meters) continue;
+    const hi = Math.max(t.meters, listed), lo = Math.min(t.meters, listed);
+    if (hi - lo > 300 && hi / lo > 1.5) out.push(`transit list: ${m[1].trim()} ${m[2].trim()} · location text: ${t.label}`);
+  }
+  return out;
+}
+
 /**
  * Details where the sources disagree: a website figure against a staff check (a fresh staff check settles it, an
  * old one does not), or the listing contradicting itself (e.g. "Unfurnished" with furnished items listed).
@@ -184,6 +219,8 @@ export function conflicts(specs, facts, { factsFresh = false } = {}) {
   if (/^unfurnished$/i.test(specs.furnishing) && specs.furnished_items?.length) {
     out.push({ field: "furnishing", values: ["website furnishing: Unfurnished", `website furnished items: ${specs.furnished_items.join(", ")}`], resolved: false });
   }
+  const transit = transitDistanceConflicts(specs);
+  if (transit.length) out.push({ field: "transport", values: transit, resolved: false });
   if (!facts) return out;
   const web = numOf(specs.maintenance_fee_psf), staff = Number(facts.maintenance_fee_psf);
   if (web && staff && Math.abs(web - staff) > 0.001) out.push({ field: "maintenance_fee", values: [`website: RM${web} psf`, `staff check: RM${staff} psf`], resolved: factsFresh });
