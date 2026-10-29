@@ -560,3 +560,7 @@ ol.stages{padding-left:1.4em}
 .tasks-l small a{color:inherit}
 .task-det{color:var(--mute)}
 .cnt.soft{background:var(--bg);color:var(--ink2)}
+
+/* new release while the dashboard is open */
+.update-bar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:60;display:flex;gap:12px;align-items:center;max-width:min(560px,calc(100vw - 32px));padding:10px 12px 10px 16px;border-radius:12px;background:var(--navy,#0b1b3a);color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.25);font-size:.92rem}
+.update-bar .btn{flex:none;background:var(--gold);border-color:var(--gold);color:var(--navy)}

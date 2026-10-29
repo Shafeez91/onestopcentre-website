@@ -41,7 +41,9 @@ test("the instructions explain separate messages vs paragraphs, keep the persona
   assert.match(sys, /6A\. ELITE WHATSAPP REPLY STYLE/, "the owner's persona text is kept as is");
   assert.match(sys, /WhatsApp messages \(the "messages" list\)/);
   assert.match(sys, /A paragraph break inside one message is not a new message/);
-  assert.match(sys, /Default to ONE message/);
+  assert.match(sys, /A short answer to a simple question .* is ONE message/);
+  assert.match(sys, /message 1 = the direct answer with its brief explanation; message 2 = the added value and the one question/);
+  assert.match(sys, /If one message would run longer than that, it is two messages/);
   assert.match(sys, /Hand-overs, opt-outs, complaints.*one message/);
   assert.match(sys, /at most one question per turn/);
 });

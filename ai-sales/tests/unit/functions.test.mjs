@@ -111,3 +111,11 @@ test("health: account labels follow what actually happened (latest AI call, cale
   await syncAccounts(t.db, { ...on, llm_anthropic: false });
   assert.equal(t.patches[0][1].status, "not_configured");
 });
+
+test("version endpoint: only the deploy id, never cached, no sign-in needed", async () => {
+  const { default: version, config } = await import("../../../netlify/functions/sales-version.mjs");
+  const res = await version(new Request("https://x/api/sales/version"), { deploy: { id: "d123" } });
+  assert.deepEqual(await res.json(), { deploy: "d123" });
+  assert.equal(res.headers.get("cache-control"), "no-store");
+  assert.deepEqual([config.path, config.method], ["/api/sales/version", ["GET"]]);
+});
