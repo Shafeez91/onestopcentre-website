@@ -25,7 +25,9 @@ The prompt was not the cause. All three layers had to change.
 | Take-over / buyer writes again | Remaining messages are marked `skipped` with the reason and are never sent later. Skipped messages are left out of the AI's conversation history and do not count as "our last message", so the buyer's new message gets a fresh reply that only knows what was actually sent. |
 | CRM | One AI run, one set of CRM actions, one follow-up restart per turn. Telegram rules are unchanged. |
 | Test console | One bubble per message, numbered 1/3, 2/3, 3/3, with "N WhatsApp messages" in the status line. Simulation still sends and writes nothing. |
-| Follow-ups | Written as a single message, as before (core schema, joined text). |
+| Follow-ups | Written as a single message, as before (joined text). |
+| Safety net | If the API ever refuses the `messages` schema, the call is retried once with `REPLY_SCHEMA_SINGLE`, the single-`reply` shape that ran in production before. The reply goes out as one message and `output.degraded` in `ai_agent_runs` says why. |
+| Client insights | Not part of the reply call. They come from a separate `lead_insights` job after the reply (see 16-CLIENT-WORKSPACE.md). |
 
 ## Tests
 

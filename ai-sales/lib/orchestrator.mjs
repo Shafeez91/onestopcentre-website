@@ -6,7 +6,7 @@ import { isOptOut, wantsHuman, detectLanguage, fixedReply, languagePreference, r
 import { validateReply } from "../../sales/shared/validator.mjs";
 import { scoreLead } from "../../sales/shared/scoring.mjs";
 import { loadContext } from "./context.mjs";
-import { buildSystemPrompt, renderContext, buildMessages, REPLY_SCHEMA, REPLY_SCHEMA_CORE, normalizeReply } from "./prompt.mjs";
+import { buildSystemPrompt, renderContext, buildMessages, REPLY_SCHEMA, REPLY_SCHEMA_SINGLE, normalizeReply } from "./prompt.mjs";
 import { DEFAULT_MODEL, LlmError } from "./llm.mjs";
 import { applyInsights } from "./insights.mjs";
 import { mergeFinancing, attachFinancing, renderFinancing, cleanInputs, isNewAssessment, advisorSummary } from "./financing.mjs";
@@ -34,17 +34,17 @@ export const retrievalTrace = (ctx) => ({
 });
 
 /**
- * One model call with the reply schema. If the API refuses that schema (kind "schema"), it is retried once without
- * the insights part, and `base.degraded` records that, so the reply still comes from the AI and the run log says why
- * insights are missing. Any other error is thrown as is.
+ * One reply call. If the API refuses the schema (kind "schema"), it is retried once with the single-text schema that
+ * is known to work, and `base.degraded` records it, so the buyer still gets an AI reply (as one message) and the run
+ * log says why. Later calls for the same message go straight to that schema. Any other error is thrown as is.
  */
 async function callReply(llm, params, base) {
-  if (base.degraded) return llm({ ...params, schema: REPLY_SCHEMA_CORE }); // already refused for this message
+  if (base.degraded) return llm({ ...params, schema: REPLY_SCHEMA_SINGLE });
   try { return await llm({ ...params, schema: REPLY_SCHEMA }); }
   catch (e) {
     if (!(e instanceof LlmError) || e.kind !== "schema") throw e;
-    base.degraded = `Insights skipped: the full reply schema was refused (${e.message}).`;
-    return await llm({ ...params, schema: REPLY_SCHEMA_CORE });
+    base.degraded = `Sent as one message: the multi-message schema was refused (${e.message}).`;
+    return await llm({ ...params, schema: REPLY_SCHEMA_SINGLE });
   }
 }
 
@@ -185,13 +185,11 @@ export async function respond(p) {
   // 6) qualification, scoring, interests, appointment request
   const leadQual = {};
   if (ctx.lead?.qualification_known) Object.assign(leadQual, ctx.lead.qualification_known);
-  // a person's entry is never overwritten here: a different value goes through the insights rules (flagged for review)
-  const insights = data.insights ? { ...data.insights, profile_updates: [...(data.insights.profile_updates || [])] } : null;
+  // a person's entry is never overwritten here: the separate insights call records a different value as a conflict
   const qualUpdates = { ...(data.qualification_updates || {}) };
   for (const [k, v] of Object.entries(qualUpdates)) {
     if (ctx.profileMeta?.[k]?.source === "staff" && v !== null && v !== undefined && v !== "" && leadQual[k] !== v) {
       delete qualUpdates[k];
-      if (insights) insights.profile_updates.push({ field: k, value: String(v), status: "confirmed" });
     }
   }
   const { qualification, changed } = mergeQualification(leadQual, qualUpdates);
@@ -236,8 +234,6 @@ export async function respond(p) {
   // remember a language the buyer asked for in this message, so later replies and follow-ups use it
   const askedNow = requestedLanguage(message);
   if (askedNow && askedNow !== ctx.buyer?.preferred_language) actions.push({ type: "set_language", language: askedNow });
-  // what the AI learnt about the client (profile, summary, next action, confirmed milestone): written last, by the rules
-  if (p.leadId && insights) actions.push({ type: "insights", insights, buyer_text: message });
 
   // separate WhatsApp messages only for a normal AI reply; a safe reply or a hand-over is one message
   const messages = decision === "reply" ? data.messages : [reply];
@@ -345,7 +341,7 @@ export async function composeFollowUp(p) {
   const contextText = renderContext(ctx);
   let feedback = null, check = null, usage = { input_tokens: 0, output_tokens: 0 }, served = model;
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const r = await p.llm({ system, messages: buildMessages(history, contextText, "", feedback, { task: p.instruction }), schema: REPLY_SCHEMA_CORE, model, effort: settings.ai?.effort || "low" });
+    const r = await p.llm({ system, messages: buildMessages(history, contextText, "", feedback, { task: p.instruction }), schema: REPLY_SCHEMA, model, effort: settings.ai?.effort || "low" });
     const data = normalizeReply(r.data); served = r.model || model;
     usage.input_tokens += r.usage?.input_tokens || 0; usage.output_tokens += r.usage?.output_tokens || 0;
     if (data.handover?.needed) return { skipped: "the AI judged that a person should follow up", usage, model: served };

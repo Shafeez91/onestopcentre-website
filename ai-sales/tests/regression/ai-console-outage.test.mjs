@@ -1,11 +1,13 @@
 // Regression: 29 Oct 2026 — every AI call failed with HTTP 400 "The compiled grammar is too large" after the
 // insights schema (a ~45-value enum inside an array item) was nested into the reply schema. The console and live
-// WhatsApp both fell back to the fixed safe reply. These tests pin the fix: the schema stays small, a schema refusal
-// is classified and retried without insights, failures are reported honestly, and language requests are respected.
+// WhatsApp both fell back to the fixed safe reply. Making the field plain text was not enough (every call was still
+// refused and retried without insights), so insights were moved out of the reply call into their own job. These tests
+// pin it: the reply schema stays at the size known to compile, a schema refusal is classified and reported, failures
+// are reported honestly, and language requests are respected.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { requestedLanguage, languagePreference } from "../../../sales/shared/guard.mjs";
-import { REPLY_SCHEMA, REPLY_SCHEMA_CORE } from "../../lib/prompt.mjs";
+import { REPLY_SCHEMA, REPLY_SCHEMA_SINGLE } from "../../lib/prompt.mjs";
 import { respond, applyActions, logRun } from "../../lib/orchestrator.mjs";
 import { callClaude, LlmError } from "../../lib/llm.mjs";
 import { cleanUpdates } from "../../../sales/shared/profile.mjs";
@@ -59,14 +61,14 @@ function schemaStats(s) {
   return { enumValues, bigEnumInArray, props };
 }
 
-test("reply schema: no large enum inside an array, and close to the schema that is known to compile", () => {
-  const full = schemaStats(REPLY_SCHEMA), core = schemaStats(REPLY_SCHEMA_CORE);
-  assert.equal(full.bigEnumInArray, 0, "a large enum inside array items is what made the grammar too large");
-  // the core schema (everything but insights) ran in production before the insights were added
-  assert.ok(full.enumValues - core.enumValues <= 10, `insights add ${full.enumValues - core.enumValues} enum values`);
-  assert.ok(full.props - core.props <= 25, `insights add ${full.props - core.props} properties`);
-  assert.ok(!("insights" in REPLY_SCHEMA_CORE.properties) && !REPLY_SCHEMA_CORE.required.includes("insights"));
-  assert.deepEqual([...REPLY_SCHEMA_CORE.required].sort(), Object.keys(REPLY_SCHEMA_CORE.properties).sort());
+test("reply schema: no insights inside, no large enum inside an array, and no bigger than the schema known to compile", () => {
+  const st = schemaStats(REPLY_SCHEMA);
+  assert.ok(!("insights" in REPLY_SCHEMA.properties) && !REPLY_SCHEMA.required.includes("insights"), "insights are a separate call");
+  assert.equal(st.bigEnumInArray, 0, "a large enum inside array items is what made the grammar too large");
+  // measured on the schema that ran in production before 29 Oct (76 enum values, 59 properties)
+  assert.ok(st.enumValues <= 76, `${st.enumValues} enum values`);
+  assert.ok(st.props <= 59, `${st.props} properties`);
+  assert.deepEqual([...REPLY_SCHEMA.required].sort(), Object.keys(REPLY_SCHEMA.properties).sort());
 });
 
 test("insights: unknown field keys from the (now free-text) field are still dropped", () => {
@@ -90,31 +92,6 @@ test("LLM adapter: schema refusal, bad key, rate limit, timeout/network, malform
 });
 
 /* ---------- orchestrator ---------- */
-test("a refused schema is retried once without insights: the buyer still gets a real AI reply, and the run says why", async () => {
-  const llm = scripted(new LlmError("AI request rejected (HTTP 400): The compiled grammar is too large", { kind: "schema", status: 400 }), draft());
-  const r = await respond({ db: fakeDb(), llm, message: "Saya nk speak in English", now: NOW, mode: "simulate" });
-  assert.equal(r.decision, "reply");
-  assert.equal(llm.calls.length, 2);
-  assert.ok("insights" in llm.calls[0].schema.properties);
-  assert.ok(!("insights" in llm.calls[1].schema.properties));
-  assert.match(r.degraded, /Insights skipped/);
-  assert.equal(r.reply, draft().reply);
-  const db = fakeDb();
-  await logRun(db, { result: r });
-  assert.match(db.writes[0].body.output.degraded, /grammar is too large/);
-  assert.equal(db.writes[0].body.decision, "reply");
-  assert.equal(db.writes[0].body.confidence, 0.85);
-});
-
-test("after a refusal, the business-rule retry for the same message goes straight to the core schema", async () => {
-  const e = new LlmError("AI request rejected (HTTP 400): grammar too large", { kind: "schema", status: 400 });
-  const llm = scripted(e, draft({ reply: "Hi, I'm an AI assistant. M Mira is only RM199,000 now!" }), draft());
-  const r = await respond({ db: fakeDb(), llm, message: "Send info M Mira", now: NOW });
-  assert.equal(llm.calls.length, 3);
-  assert.deepEqual(llm.calls.map((c) => "insights" in c.schema.properties), [true, false, false]);
-  assert.equal(r.decision, "reply");
-});
-
 test("a genuine outage: fixed safe reply, labelled as a failure, confidence 'not available' (not 0)", async () => {
   for (const kind of ["unavailable", "network", "auth", "rejected", "bad_response", "truncated"]) {
     const llm = scripted(new LlmError("boom", { kind }));
@@ -132,13 +109,36 @@ test("a genuine outage: fixed safe reply, labelled as a failure, confidence 'not
   }
 });
 
-test("a schema refusal that persists on the core schema too is reported as an error, not looped", async () => {
+test("a refused multi-message schema is retried once with the single-text schema that is known to work", async () => {
+  const e = new LlmError("AI request rejected (HTTP 400): The compiled grammar is too large", { kind: "schema", status: 400 });
+  const llm = scripted(e, draft());
+  const r = await respond({ db: fakeDb(), llm, message: "Saya nk speak in English", now: NOW, mode: "simulate" });
+  assert.equal(r.decision, "reply");
+  assert.deepEqual([llm.calls[0].schema, llm.calls[1].schema], [REPLY_SCHEMA, REPLY_SCHEMA_SINGLE]);
+  assert.deepEqual(r.messages, [draft().reply], "one message");
+  assert.match(r.degraded, /multi-message schema was refused/);
+  const db = fakeDb(); await logRun(db, { result: r });
+  assert.match(db.writes[0].body.output.degraded, /grammar is too large/);
+  // the single-text schema is the old shape: reply instead of messages, nothing else different
+  assert.deepEqual(Object.keys(REPLY_SCHEMA_SINGLE.properties).sort(), Object.keys(REPLY_SCHEMA.properties).map((k) => (k === "messages" ? "reply" : k)).sort());
+});
+
+test("after a refusal, the business-rule retry for the same message goes straight to the single-text schema", async () => {
+  const e = new LlmError("AI request rejected (HTTP 400): grammar too large", { kind: "schema", status: 400 });
+  const llm = scripted(e, draft({ reply: "Hi, I'm an AI assistant. M Mira is only RM199,000 now!" }), draft());
+  const r = await respond({ db: fakeDb(), llm, message: "Send info M Mira", now: NOW });
+  assert.deepEqual(llm.calls.map((c) => c.schema === REPLY_SCHEMA_SINGLE), [false, true, true]);
+  assert.equal(r.decision, "reply");
+});
+
+test("a schema refusal that persists on the single-text schema too is reported as an error, not looped", async () => {
   const e = new LlmError("AI request rejected (HTTP 400): grammar too large", { kind: "schema", status: 400 });
   const llm = scripted(e, e, e);
   const r = await respond({ db: fakeDb(), llm, message: "hi", now: NOW });
   assert.equal(r.decision, "error");
   assert.equal(r.errorKind, "schema");
   assert.equal(llm.calls.length, 2);
+  assert.equal(r.confidence, null);
 });
 
 test("different buyer messages reach the model with their own text and project focus", async () => {

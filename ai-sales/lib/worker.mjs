@@ -169,6 +169,12 @@ export async function processReplyJob(deps, job, settings) {
     const pendingAppt = (await db.get(`ai_appointments?lead_id=eq.${enc(lead.id)}&status=eq.pending_confirmation&select=id&limit=1`))?.length;
     try { await db.rpc("ai_follow_up_start", { p_lead: lead.id, p_lead_type: pendingAppt ? "appointment_pending" : "new_enquiry" }); } catch { /* no sequence configured */ }
   }
+  // client insights (profile, summary, next action) from the buyer's message: a separate, smaller AI call in its own
+  // job, so it never delays or blocks the reply; one per buyer message (dedupe key)
+  if (lead?.id && readable && !guard && settings.ai?.auto_insights !== false && ["reply", "handover", "blocked"].includes(result.decision)) {
+    await db.post("ai_jobs?on_conflict=dedupe_key", { kind: "lead_insights", status: "queued", payload: { lead_id: lead.id, message_id: msgId }, dedupe_key: `insights:${msgId}` },
+      { prefer: "return=minimal,resolution=ignore-duplicates" }).catch(() => null);
+  }
   // retried: the recorded rows (one per message) prevent a double send; only what is still queued or failed goes out
   if (sent && !sent.complete && !sent.blocked && !sent.superseded && sent.kind !== "config") throw new Error("WhatsApp send failed: " + sent.error);
   return { status: "done", decision: result.decision, sent: !!sent?.sent };
@@ -266,6 +272,11 @@ export async function runWorker(deps, { maxJobs = 10, followUps = true, reminder
   for (const job of jobs) {
     try {
       if (job.kind === "wa_reply") { await processReplyJob(deps, job, settings); out.replies++; }
+      else if (job.kind === "lead_insights" && deps.llm && job.payload?.lead_id) {
+        // never fails the job: insights are a convenience, and summarizeLead skips a message it already covered
+        const r = await summarizeLead(deps, job.payload.lead_id).catch((e) => ({ skipped: e?.message || String(e) }));
+        out.insights = (out.insights || 0) + (r.applied ? 1 : 0);
+      }
       await db.patch(`ai_jobs?id=eq.${enc(job.id)}`, { status: "done", last_error: null });
     } catch (e) {
       const dead = job.attempts >= job.max_attempts;
