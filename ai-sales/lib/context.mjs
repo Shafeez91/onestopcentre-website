@@ -84,6 +84,8 @@ export async function loadContext(db, { leadId = null, message = "", history = [
       inFocus,
       completion: f?.completion_date || spec.expected_completion || null, completionVerified: !!f?.completion_date,
       url: SITE + "property/" + r.slug + "/", urlMs: SITE + "ms/property/" + r.slug + "/", brochure: spec.brochure_url || null, mapUrl: spec.map_url || null,
+      // for distance lookups: coordinates typed in the editor, and the transit the listing names (station hints)
+      latlng: typeof d.latlng === "string" ? d.latlng.trim() : "", nearbyTransit: (spec.nearby?.public_transport || []).slice(0, 4).join("; "),
       layouts: spec.layouts,
       websitePrices: [...spec.layouts.map((l) => l.price_from), d.p].map(num).filter((n) => n && n >= 10000),
       maintPsfWebsite: numOf(spec.maintenance_fee_psf) || null,

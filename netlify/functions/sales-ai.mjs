@@ -2,6 +2,7 @@
 // business-rule check and the CRM changes it WOULD make. Simulation only: nothing is sent and no lead is changed.
 import { json, getCaller, hasRole, moduleEnabled, disabled, userDb, serviceDb } from "../../ai-sales/lib/server.mjs";
 import { callClaude, LlmError } from "../../ai-sales/lib/llm.mjs";
+import { researchDeps } from "../../ai-sales/lib/live.mjs";
 import { respond, logRun } from "../../ai-sales/lib/orchestrator.mjs";
 
 const MAX_HISTORY = 30;
@@ -22,7 +23,9 @@ export default async (req) => {
 
   try {
     const db = userDb(caller);
+    // the same research tools as live WhatsApp (map results are cached with the service role; nothing is sent)
     const result = await respond({ db, llm: (p) => callClaude(p), reserve: () => db.rpc("ai_reserve_ai_call", {}), leadId, message, history, mode: "simulate",
+      research: researchDeps(serviceDb()),
       financingInputs: body?.financing_inputs && typeof body.financing_inputs === "object" ? body.financing_inputs : null });
     const svc = serviceDb();
     const runId = svc ? await logRun(svc, { result, leadId, channel: "simulate", input: { by: caller.email } }) : null;

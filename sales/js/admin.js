@@ -85,6 +85,8 @@ export async function settings(el, params) {
       <label>Daily limit on AI replies<input name="daily_message_cap" type="number" min="0" max="5000" step="10" value="${attr(cap)}"${dis}></label>
       <p class="note">Each buyer message the AI answers counts once. When the limit is reached, buyers get a polite holding reply, an advisor is alerted, and you get one Telegram message that day. 0 switches AI replies off. Also set a spend limit in your Anthropic account.</p>
       <label class="switch full"><input type="checkbox" name="auto_insights"${a.auto_insights === false ? "" : " checked"}${dis}><span><b>Keep client profiles up to date from buyer messages</b><small>After each new buyer message the AI updates the lead's profile, summary and next action in a separate step (it sends nothing). In chats the AI answers this runs right after its reply; in chats a person handles it counts towards the daily limit. Each update is one extra AI call.</small></span></label>
+      <label class="switch full"><input type="checkbox" name="maps_distances"${a.maps_distances === false ? "" : " checked"}${dis}><span><b>Measure distances with Google Maps</b><small>For questions such as "how far to LRT Sri Rampai?" or "kalau jalan kaki?", the AI measures walking, driving or public transport routes from the project's own map pin. Needs GOOGLE_MAPS_API_KEY (Integrations); results are cached.</small></span></label>
+      <label class="switch full"><input type="checkbox" name="web_research"${a.web_research === false ? "" : " checked"}${dis}><span><b>Research the web when our data has no answer</b><small>Before handing a factual question to an advisor (transport, schools, infrastructure, developer background), the AI searches the web once (up to 3 searches) and answers from what it finds, saying it is public information. Never used for prices, promotions or availability. Web search must be allowed for your organisation in the Claude Console.</small></span></label>
       <p class="note full">API keys are never stored here. They live only in Netlify environment variables (see Integrations).</p>
       ${own ? `<div class="actions full"><button class="btn pri">Save</button></div>` : ""}</form>`;
     const f = $("#sf", body); if (own) { guardForm(f, "settings:ai");
@@ -262,6 +264,9 @@ export async function integrations(el) {
     ${Object.entries(h.configured).map(([k, v]) => `<dt>${esc(k.replace(/_/g, " "))}</dt><dd>${yes(v)}</dd>`).join("")}<dt>Checked</dt><dd>${esc(fmtDate(h.checked_at))}</dd></dl>` : `<p class="note">Server functions not reachable: ${esc(herr)}. They become available after this branch is deployed.</p>`}</section>
   <section class="card"><h2>Accounts</h2><ul class="list">${rows.map((r) => `<li><b>${esc(NAMES[r.provider] || r.provider)}</b> ${badge(r.status.replace("_", " "), r.status === "healthy" ? "ok" : r.status === "error" ? "alert" : "")}<small>${r.last_checked_at ? "Checked " + esc(fmtDate(r.last_checked_at)) : "Not checked yet"}${r.last_error ? " · " + esc(r.last_error) : ""}</small></li>`).join("")}</ul>
   <p class="note">Connection steps for each provider are in <code>ai-sales/docs/03-SETUP.md</code>.</p></section>
+  <section class="card"><h2>Google Maps (AI distances)</h2>
+    <p class="note">The AI measures distances from each project's own map pin (the Google Maps link in the website editor). Needs <code>GOOGLE_MAPS_API_KEY</code> in Netlify, with <b>Places API (New)</b> and <b>Routes API</b> enabled on that Google Cloud project. The test runs one real lookup and shows exactly what the AI would get.</p>
+    <p><button class="btn" id="mapst" data-busy="Testing…">Test Google Maps</button></p><div id="mapsr"></div></section>
   <section class="card"><h2>WhatsApp webhook (Meta)</h2>
     <dl class="kv"><dt>Callback URL</dt><dd><code>https://onestopcentreproperty.com/api/sales/whatsapp/webhook</code></dd>
     <dt>Verify token</dt><dd>The value you set as <code>WHATSAPP_VERIFY_TOKEN</code> in Netlify</dd><dt>Webhook fields</dt><dd><code>messages</code> and <code>smb_message_echoes</code> (replies you send from the WhatsApp Business app on your phone pause the AI for that chat)</dd></dl>
@@ -273,6 +278,12 @@ export async function integrations(el) {
     <div id="wacr"></div>` : ""}</section>
   <section class="card"><h2>Google Calendar</h2>
     <p class="note">Share the calendar with the service account email (permission: "Make changes to events"), then set <code>GOOGLE_SERVICE_ACCOUNT_EMAIL</code>, <code>GOOGLE_PRIVATE_KEY</code> and <code>GOOGLE_CALENDAR_ID</code> in Netlify. Free slots come from that calendar inside your business hours.</p></section>`;
+  const mt = $("#mapst", el);
+  if (mt) mt.onclick = () => act(mt, async () => {
+    const r = await api("/api/sales/health?maps_test=1"), box = $("#mapsr", el), l = r.lookup;
+    box.innerHTML = r.ok ? `<div class="card ok"><b>Working.</b> ${esc(l.project)} → ${esc(l.to)}<br>${l.routes.map((x) => `${esc(x.mode)}: ${esc(x.distance)} · ${esc(x.time || "")}`).join("<br>")}<br><small>Location: ${esc(l.project_location)} · checked ${esc(l.checked_at || "")}</small>${l.maps_link ? `<br><a href="${attr(l.maps_link)}" target="_blank" rel="noopener">Open in Google Maps ↗</a>` : ""}</div>`
+      : `<div class="card error"><b>Not working yet.</b> ${esc(r.error || (l?.not_verified || []).join("; ") || "No route returned.")}</div>`;
+  }, "Google Maps checked");
   const wf = $("#wac", el), out = $("#wacr", el);
   if (wf) {
     const run = (btn, action) => act(btn, async () => {

@@ -9,6 +9,8 @@ import { loadContext } from "./context.mjs";
 import { buildSystemPrompt, renderContext, buildMessages, REPLY_SCHEMA, REPLY_SCHEMA_SINGLE, normalizeReply } from "./prompt.mjs";
 import { DEFAULT_MODEL, LlmError } from "./llm.mjs";
 import { applyInsights } from "./insights.mjs";
+import { routeLookups, webResearch, shouldResearch, renderLookup } from "./research.mjs";
+import { extractDistances, extractMinutes } from "../../sales/shared/validator.mjs";
 import { mergeFinancing, attachFinancing, renderFinancing, cleanInputs, isNewAssessment, advisorSummary } from "./financing.mjs";
 
 const QUAL_FIELDS = ["purpose", "first_home", "bedrooms", "size_sqft", "budget_min", "budget_max", "employment", "financing", "timeline_months", "readiness", "concerns"];
@@ -90,6 +92,14 @@ export function checkTurn(data, rules = {}) {
   return { ok: check.violations.length === 0, hardOk: check.violations.length === styleNotes.length, violations: check.violations, styleNotes };
 }
 
+/** What was looked up for this reply (shown in the test console and kept in the run log); no coordinates. */
+function researchTrace(ctx, routes) {
+  const t = {};
+  if (routes) t.maps = { lookups: (routes.lookups || []).map(renderLookup), ...(routes.missing_place ? { ask_for: routes.missing_place } : {}), ...(routes.error ? { error: routes.error } : {}) };
+  if (ctx.externalResearch) t.web = { question: ctx.externalResearch.question, found: !!ctx.externalResearch.found, sources: ctx.externalResearch.sources, searches: ctx.externalResearch.searches, ...(ctx.externalResearch.error ? { error: ctx.externalResearch.error } : {}) };
+  return Object.keys(t).length ? t : null;
+}
+
 const summariseViolations = (vs) => vs.map((v) => `- ${v.code}: ${v.detail}`).join("\n");
 
 /**
@@ -97,7 +107,7 @@ const summariseViolations = (vs) => vs.map((v) => `- ${v.code}: ${v.detail}`).jo
  *   reserve(): Promise<{allowed, used, cap}> — books one AI reply against the daily cap
  */
 export async function respond(p) {
-  const t0 = Date.now();
+  const t0 = p._t0 || Date.now(); // a second pass after web research keeps the original start
   const now = p.now || new Date();
   const message = String(p.message || "").trim();
   const history = p.history || [];
@@ -144,8 +154,26 @@ export async function respond(p) {
     attachFinancing(ctx, { inputs: { ...cleanInputs(finSaved?.inputs), ...cleanInputs(p.financingInputs) }, saved: finSaved });
     ctx.financingView = renderFinancing(ctx.financing);
   }
+  // research tools (p.research: { maps, research, web }): Google Maps for distance questions; web research is decided
+  // after the first draft (below). Switches in Settings → AI: maps_distances, web_research (both on unless false).
+  const R = p.research || null;
+  const mapsOn = !!R?.maps?.configured && settings.ai?.maps_distances !== false;
+  const found = p._prior || {};
+  const routes = found.routes !== undefined ? found.routes
+    : mapsOn ? await routeLookups({ llm: p.llm, maps: R.maps, model }, { message, history, projects: ctx.projects }) : null;
+  ctx.routeLookups = routes?.lookups || [];
+  ctx.routeMissingPlace = routes?.missing_place || "";
+  ctx.externalResearch = found.web?.found ? found.web : found.web ? { ...found.web, findings: "", sources: [] } : null;
   const system = buildSystemPrompt(settings, ctx.objections, { calendar: !!p.calendar, financing: finOn });
   let contextText = renderContext(ctx);
+  // distances and travel times the reply may state: those in the context (listing, lookups, research) or the buyer's
+  // own words; and whether a map or web check really happened for this reply
+  const said = [message, ...history.filter((h) => h.role !== "assistant").map((h) => h.text)].join("\n");
+  ctx.rules.allowedDistances = [...extractDistances(contextText), ...extractDistances(said)].map((d) => d.value);
+  ctx.rules.allowedMinutes = [...extractMinutes(contextText), ...extractMinutes(said)].map((d) => d.value);
+  ctx.rules.usedMaps = ctx.routeLookups.some((l) => l.routes?.length || l.straight_line_m != null);
+  ctx.rules.usedWeb = !!found.web?.found;
+  for (const l of ctx.routeLookups) if (l.maps_link) ctx.rules.allowedUrls.push(l.maps_link);
 
   // 3) daily cost cap: reserve one AI reply before calling the model (fail closed if usage can't be checked)
   if (p.reserve) {
@@ -268,6 +296,17 @@ export async function respond(p) {
 
   // separate WhatsApp messages only for a normal AI reply; a safe reply or a hand-over is one message
   const messages = decision === "reply" ? data.messages : [reply];
+  // the draft hands a factual question to an advisor because our data lacks it: research it once on the web and,
+  // if something was found, write the reply again with the findings (no second daily-limit charge)
+  const handoverReason = actions.find((a) => a.type === "handover")?.reason;
+  const webOn = !!R?.research && R.web !== false && settings.ai?.web_research !== false;
+  if (webOn && !found.web && shouldResearch({ decision, handoverReason, intent: data.intent }) && Date.now() - t0 < (R.webStartWithinMs ?? 20000)) {
+    const focusNames = ctx.projects.filter((x) => x.inFocus).map((x) => x.name);
+    const web = await webResearch({ research: R.research, model, webTimeoutMs: R.webTimeoutMs }, { question: [history.filter((h) => h.role !== "assistant").slice(-1)[0]?.text, message].filter(Boolean).join("\n"), projectNames: focusNames });
+    if (web?.found) return respond({ ...p, reserve: null, _t0: t0, _prior: { routes: routes ?? null, web } });
+    ctx.externalResearch = web; // nothing usable found: keep the hand-over, and show what was tried
+  }
+
   return finish({
     decision, reply: messages.join("\n\n"), messages, draft: data.reply, draft_messages: data.messages, language: data.language, intent: data.intent, agent: data.agent, confidence: Number(data.confidence),
     facts_used: data.facts_used || [], objection_key: data.objection_key || null, violations: check.violations, style_notes: check.styleNotes, actions,
@@ -275,6 +314,7 @@ export async function respond(p) {
     ...(fin ? { financing: { inputs: fin.inputs, result: fin.result, recalculated } } : {}),
     // which project the reply was about and what its information lacked, so a hand-over can be traced to a data gap
     retrieval: retrievalTrace(ctx),
+    research: researchTrace(ctx, routes),
   });
 }
 

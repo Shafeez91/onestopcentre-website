@@ -1,7 +1,8 @@
 // Wires the worker to the real services from Netlify environment variables. Anything not configured is null,
 // and the worker then skips that part (no WhatsApp → nothing is sent; no calendar → no booking).
 import { env, serviceDb } from "./server.mjs";
-import { callClaude } from "./llm.mjs";
+import { callClaude, researchClaude } from "./llm.mjs";
+import { mapsService } from "./maps.mjs";
 import { waConfig, sendWhatsApp } from "./whatsapp.mjs";
 import { calConfig, busy, freeSlots, bookSlot, cancelEvent, CalendarError } from "./calendar.mjs";
 
@@ -35,6 +36,17 @@ export function liveDeps() {
     llm: (p) => callClaude(p),
     wa: wa ? { send: (to, msg) => sendWhatsApp(wa, to, msg) } : null,
     cal: calendarService(db),
+    research: researchDeps(db),
     now: () => new Date(),
   };
+}
+
+/**
+ * Research tools for the AI: Google Maps (when GOOGLE_MAPS_API_KEY is set; results cached through the service-role
+ * database) and Claude web search (needs web search allowed for the organisation in the Claude Console).
+ */
+export function researchDeps(db, { web = true } = {}) {
+  const key = env("GOOGLE_MAPS_API_KEY");
+  // time budget (functions stop at 60 s): research only if the first draft took under 18 s, and at most 20 s of it
+  return { maps: mapsService({ key, db }), research: (q) => researchClaude(q), web, webStartWithinMs: 18000, webTimeoutMs: 20000 };
 }

@@ -1490,4 +1490,27 @@ do $$ declare lid uuid := (select lid from t63); begin
 end $$;
 rollback;
 
+\echo 'T64 geo cache: server only — staff and visitors cannot read or write it; the service role upserts by key'
+begin;
+set local role service_role;
+insert into public.ai_geo_cache (key, kind, value, expires_at) values ('route:1,2|x|walk', 'route', '{"distance_m": 650}', now() + interval '14 days');
+insert into public.ai_geo_cache (key, kind, value, expires_at) values ('route:1,2|x|walk', 'route', '{"distance_m": 700}', now() + interval '14 days')
+  on conflict (key) do update set value = excluded.value;
+do $$ begin assert (select (value ->> 'distance_m')::int from public.ai_geo_cache where key = 'route:1,2|x|walk') = 700; end $$;
+reset role;
+set local role authenticated;
+do $$ begin
+  begin perform 1 from public.ai_geo_cache; assert false, 'staff must not read the cache'; exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+set local role anon;
+do $$ begin
+  begin insert into public.ai_geo_cache (key, kind, value, expires_at) values ('x', 'place', '{}', now()); assert false; exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+do $$ begin
+  begin insert into public.ai_geo_cache (key, kind, value, expires_at) values ('y', 'nonsense', '{}', now()); assert false; exception when check_violation then null; end;
+end $$;
+rollback;
+
 \echo 'ALL DB TESTS PASSED'
