@@ -43,7 +43,8 @@ function findAll(re, text) {
   return out;
 }
 
-const GUARANTEE = /(guarantee[ds]?|guaranteeing|dijamin|jaminan|menjamin|jamin|pasti\s+(lulus|untung|naik|dapat|approve)|confirm(ed)?\s+(lulus|approve[d]?|untung|naik)|sure\s+(get|to get|approve[d]?|lulus|profit)|definitely\s+(approved|get|increase|rise|profit)|100\s?%\s+(lulus|approved?|safe|selamat|untung|profit|dapat)|risk[-\s]?free|tanpa\s+risiko|confirm\s+boleh\s+dapat\s+loan)/i;
+// whole words only: "penjamin" (guarantor / co-applicant, common in loan talk) is not "jamin" (to promise)
+const GUARANTEE = /(?<![a-z])(guarantee[ds]?|guaranteeing|dijamin|jaminan|menjamin|jamin|pasti\s+(lulus|untung|naik|dapat|approve)|confirm(ed)?\s+(lulus|approve[d]?|untung|naik)|sure\s+(get|to get|approve[d]?|lulus|profit)|definitely\s+(approved|get|increase|rise|profit)|100\s?%\s+(lulus|approved?|safe|selamat|untung|profit|dapat)|risk[-\s]?free|tanpa\s+risiko|confirm\s+boleh\s+dapat\s+loan)/i;
 const AVAILABILITY = /((unit|units|bilik|type|jenis|layout|pelan)[^.?!\n]{0,30}(masih ada|ada lagi|masih available|still available|available now|are available|is available|tersedia|belum habis)|\b(still|masih)\s+(available|ada unit|ada kosong)|\bunits? (left|remaining)\b|tinggal\s+\d+\s+unit)/i;
 export const PROMOTION = /(cashback|cash back|rebate|rebat|diskaun|discount|percuma|free\s+(legal|spa|furniture|gift|hadiah|aircond|kitchen)|promo(tion|si)?|potongan harga|early bird)/i;
 const PROMO_HEDGE = /(tertakluk|subject to|semak|check|sahkan|confirm with|perlu (di)?sahkan|need to confirm|tiada promosi|no (current |active )?promotion|not able to confirm|belum dapat sahkan|tidak dapat sahkan|syarat|terms)/i;
