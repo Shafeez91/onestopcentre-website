@@ -82,6 +82,11 @@ export async function sendTurn(deps, { conversation, to, messages, senderType, r
 const nameOf = (c) => c?.full_name || null;
 
 /* ---------------------------------------------------------------- replies */
+const SILENT = new Set(["reaction", "sticker", "revoke"]);
+const kindsOf = (m) => (m.media?.length ? m.media.map((x) => x.type) : [/^\[(\w+)\]$/.exec(String(m.body || "").trim())?.[1]].filter(Boolean));
+const silentOnly = (m) => { const k = kindsOf(m); return k.length > 0 && k.every((x) => SILENT.has(x)) && !captionOf(m); };
+const captionOf = (m) => String(m.body || "").replace(/^\[\w+\]\s*/, "").trim();
+
 export async function processReplyJob(deps, job, settings) {
   const { db } = deps;
   const { conversation_id: convId, message_id: msgId } = job.payload || {};
@@ -109,10 +114,14 @@ export async function processReplyJob(deps, job, settings) {
   // everything the buyer sent since our last delivered message is answered together
   let cut = msgs.findIndex((m) => m.direction === "outbound" && delivered(m));
   if (cut < 0) cut = msgs.length;
-  const pending = msgs.slice(0, cut).filter((m) => m.direction === "inbound").reverse();
+  const all = msgs.slice(0, cut).filter((m) => m.direction === "inbound").reverse();
   const earlier = msgs.slice(cut).reverse();
+  // reactions, stickers and deleted messages need no answer: never an "our advisor will contact you" for a 👍
+  const pending = all.filter((m) => !silentOnly(m));
+  if (!pending.length) return { status: "done", note: "nothing to answer (" + [...new Set(all.flatMap(kindsOf))].join(", ") + ")" };
   const message = pending.map((m) => m.body).filter(Boolean).join("\n").trim();
-  const readable = pending.some((m) => !m.media && m.body);
+  // text, or the words written with a photo or document ("[image] ini unit?")
+  const readable = pending.some((m) => (!m.media?.length && m.body) || captionOf(m));
   const lead = conv.lead, contact = conv.contact, to = contact?.wa_id || contact?.phone_e164;
   const f = flagsOf(settings);
   const canSend = f.module && f.whatsapp_outbound && !!deps.wa;
@@ -133,7 +142,7 @@ export async function processReplyJob(deps, job, settings) {
   if (!readable && !guard) {
     const lang = replyLanguage(contact?.preferred_language, msgs.filter((m) => m.direction === "inbound").map((m) => m.body).filter(Boolean));
     const kinds = [...new Set(pending.flatMap((m) => (m.media || []).map((x) => x.type)))].join(", ") || "media";
-    result = { decision: "handover", reply: fixedReply("safe_fallback", lang), language: lang, intent: "other", agent: "handover", confidence: null, message,
+    result = { decision: "handover", reply: fixedReply(kinds === "audio" ? "audio" : "media", lang), language: lang, intent: "other", agent: "handover", confidence: null, message,
       actions: [{ type: "handover", reason: "other", summary: `Buyer sent ${kinds}, which the AI cannot read.`, next_action: "Open the WhatsApp conversation and reply personally." }, { type: "cancel_follow_ups", reason: "conversation needs a human" }] };
   } else {
     let slots = null;

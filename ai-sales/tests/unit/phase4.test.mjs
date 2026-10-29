@@ -304,6 +304,40 @@ test("media the AI cannot read: polite holding reply and a handover, no AI call"
   assert.match(db.t.ai_handover_events[0].summary.text, /audio/);
 });
 
+test("a reaction, sticker or deleted message alone gets no reply, no handover and no AI call (29 Oct: buyers got 'thanks for your question' for a 👍)", async () => {
+  for (const [body, type] of [["[reaction]", "reaction"], ["[sticker]", "sticker"], ["[revoke]", "revoke"], ["[reaction]", null]]) {
+    const w = world();
+    Object.assign(w.ai_messages[0], { body, media: type ? [{ type }] : null });
+    const db = memdb(w), d = deps(db);
+    await runWorker(d);
+    assert.equal(d.llm.calls.length, 0, body);
+    assert.equal(d.wa.sent.length, 0, body);
+    assert.equal((db.t.ai_handover_events || []).length, 0, body);
+    assert.equal(db.t.ai_jobs[0].status, "done");
+  }
+});
+
+test("a photo with words: the AI answers the words (no automatic hand-over); a photo or voice note alone gets a plain 'please type' reply and a hand-over", async () => {
+  let w = world();
+  Object.assign(w.ai_messages[0], { body: "[image] Ada pertanyaan utk projek M Mira, harga berapa?", media: [{ type: "image" }] });
+  let db = memdb(w), d = deps(db);
+  await runWorker(d);
+  assert.equal(d.llm.calls.length >= 1, true, "the AI reads the caption");
+  assert.match(JSON.stringify(d.llm.calls[0].messages), /harga berapa/);
+  assert.match(d.llm.calls[0].system, /you cannot see the file/);
+  w = world(); Object.assign(w.ai_messages[0], { body: "[image]", media: [{ type: "image" }] });
+  db = memdb(w); d = deps(db);
+  await runWorker(d);
+  assert.equal(d.llm.calls.length, 0);
+  assert.match(d.wa.sent[0].msg.text, /belum boleh buka gambar/);
+  assert.doesNotMatch(d.wa.sent[0].msg.text, /soalan tuan\/puan\. Saya perlu sahkan/, "not the 'thanks for your question' fallback");
+  assert.equal(db.t.ai_handover_events.length, 1);
+  w = world(); Object.assign(w.ai_messages[0], { body: "[audio]", media: [{ type: "audio" }] });
+  db = memdb(w); d = deps(db);
+  await runWorker(d);
+  assert.match(d.wa.sent[0].msg.text, /voice note/);
+});
+
 test("WhatsApp sending switched off: the AI drafts, nothing goes to the buyer, no Telegram alert", async () => {
   const db = memdb(world()); flags(db, { whatsapp_outbound: false });
   const d = deps(db);
