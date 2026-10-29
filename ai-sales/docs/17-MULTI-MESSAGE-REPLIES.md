@@ -47,6 +47,8 @@ code checks this as well (`messageStyle` in `orchestrator.mjs`, limits in `STYLE
 | Words per paragraph (bullet lines not counted) | 40 | `long_paragraph` |
 | Bullet points per list | 5 | `long_list` |
 | Words per message | 65 | `long_message` |
+| Words in the whole turn (all messages) | 80 | `long_turn` |
+| Monthly instalment the buyer did not ask about | none | `unasked_instalment` |
 | Characters per message (`max_reply_chars`) | setting | `too_long` |
 
 These are **style rules**. A draft that breaks them is rewritten once with the feedback (one extra AI call). If the
@@ -54,7 +56,15 @@ rewrite still breaks them slightly, it is sent anyway and `style_notes` records 
 message. Business rules (prices, guarantees, availability…) still block.
 
 The limits were calibrated on the real messages of 29 Oct: the owner's example and a compact comparison pass, and the
-77-word message whose first paragraph packed four topics into 47 words is flagged.
+77-word message whose first paragraph packed four topics into 47 words is flagged. (Bullet marks and dashes are not
+counted as words.)
+
+**Shorter turns (29 Oct, second pass).** After the 3-paragraph update each message stayed under 65 words, but two
+messages together still reached 80–100 words, mostly because a plain "how much?" also got a monthly-instalment example.
+Now the whole turn is checked (about 80 words), and a monthly figure (ansuran, RM…/month, sebulan) is flagged unless the
+buyer asked about monthly payments, loans or financing in this message or their last 4 (`MONTHLY_Q`). The prompt says
+the same: a price question gets the price only (at most 3 layout lines), the monthly figure is offered as a short
+question, and recommendations name at most 2–3 projects. Follow-up messages (no buyer message) skip the monthly check.
 
 ## Two quick buyer messages
 
