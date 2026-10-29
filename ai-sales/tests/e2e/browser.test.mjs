@@ -273,6 +273,28 @@ test("AI test console: a turn of three WhatsApp messages shows three bubbles in 
   } finally { await ctx.close(); }
 });
 
+test("dashboard left open across a release: a banner offers to reload; nothing shows while the deploy is unchanged", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    await page.clock.install();
+    let deploy = "deploy-A", calls = 0;
+    await page.route("**/api/sales/version", (r) => { calls++; r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ deploy }) }); });
+    await page.goto(base + "/sales/#/overview");
+    await page.waitForSelector(".main");
+    await page.waitForFunction(() => true);
+    await page.evaluate(() => { location.hash = "#/leads"; });
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator("#update-bar").count(), 0, "same deploy: no banner");
+    deploy = "deploy-B";
+    await page.clock.fastForward(121e3);
+    await page.evaluate(() => { location.hash = "#/appointments"; });
+    await page.waitForSelector("#update-bar");
+    assert.match(await page.textContent("#update-bar"), /A new version of the dashboard is available/);
+    assert.ok(calls >= 2);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("AI settings: shows today's usage and saves a valid daily limit", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {

@@ -161,6 +161,26 @@ function crumbs(name, id) {
   document.title = `${it && !DETAIL[name] ? it.label : DETAIL[name] || "AI Sales"} | AI Sales`;
 }
 
+// A new release while the dashboard is open: the page keeps running the code it loaded with until it is reloaded.
+// Checked when switching screens or returning to the tab (at most every 2 minutes); a banner offers the reload.
+let liveDeploy = null, deployCheckedAt = 0;
+async function checkForUpdate() {
+  if (Date.now() - deployCheckedAt < 120e3 || $("#update-bar")) return;
+  deployCheckedAt = Date.now();
+  try {
+    const d = (await (await fetch("/api/sales/version", { cache: "no-store" })).json())?.deploy;
+    if (!d) return;
+    if (!liveDeploy) { liveDeploy = d; return; }
+    if (d === liveDeploy) return;
+    const bar = document.createElement("div");
+    bar.id = "update-bar"; bar.className = "update-bar"; bar.setAttribute("role", "status");
+    bar.innerHTML = `<span><b>A new version of the dashboard is available.</b> Reload to use it${hasUnsaved() ? " (save your changes first)" : ""}.</span><button class="btn sm pri" type="button">Reload</button>`;
+    bar.querySelector("button").onclick = () => location.reload();
+    document.body.appendChild(bar);
+  } catch { /* offline or an older deploy without the endpoint */ }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkForUpdate(); });
+
 let renderSeq = 0, shownPath = null;
 async function route() {
   const view = $("#view");
@@ -172,6 +192,7 @@ async function route() {
   $$("[data-nav]").forEach((a) => { a.classList.toggle("on", a.dataset.nav === nav); if (a.dataset.nav === nav) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
   crumbs(name, id);
   if (Date.now() - alertsAt > 60e3) loadAlerts();
+  checkForUpdate();
   const seq = ++renderSeq;
   // a new page starts at the top; a tab or filter change on the same page keeps the current content and scroll
   // position until the new content is ready (blanking it first collapsed the page and threw the reader to the top).
