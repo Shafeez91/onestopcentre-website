@@ -56,7 +56,8 @@ const FIN_INPUTS = { route: "lppsa", age: 30, basic_salary: 4000, fixed_allowanc
 
 export function fixtures() {
   const finResult = assess(FIN_INPUTS);
-  const stages = ["New Lead", "Contacted", "Qualified", "Appointment Pending", "Won", "Lost"].map((n, i) => ({ id: "s" + i, name: n, position: i + 1, is_won: n === "Won", is_lost: n === "Lost", active: true }));
+  const stages = [["New Enquiry", "new_enquiry", "slate"], ["Contacted", "contacted", "blue"], ["Interested / Qualified", "interested", "blue"], ["Appointment Pending", "appointment_pending", "amber"], ["Unit Booked", "unit_booked", "green"],
+    ["LO, SPA & LA Signed", "signed_all", "navy"], ["Cancelled / Lost", "cancelled", "red"]].map(([n, key, color], i) => ({ id: "s" + i, name: n, key, color, position: i + 1, is_won: key === "signed_all", is_lost: key === "cancelled", active: true, ai_settable: ["interested", "unit_booked"].includes(key) }));
   const contact = { id: "c1", full_name: "Test Buyer", phone_e164: "60123456789", email: "buyer@example.test", preferred_language: "ms" };
   return {
     ai_settings: [{ id: 1, flags: { module_enabled: true, website_lead_import: true, ai_auto_reply: false, whatsapp_outbound: false, follow_ups: false, calendar_booking: false },
@@ -68,9 +69,14 @@ export function fixtures() {
     ai_campaigns: [], ai_team_members: [{ email: "advisor@test.local", role: "advisor", active: true }],
     projects: [{ id: "t1", slug: "test-residence", published: true, data: { id: "t1", slug: "test-residence", n: "Test Residence", l: "Cheras", d: "Test Developer", s: "New Launch", t: "Condominium", c: "Residential", types: [{ name: "Type A", size: "800", beds: "3", baths: "2", price: "RM450,000" }], gallery: [] } }],
     settings: [{ data: { wa: "60123456789", email: "test@example.test", order: ["t1"] } }],
-    ai_leads: [{ id: "L1", lead_code: "OSC-000001", contact_id: "c1", contact, stage_id: "s0", temperature: "warm", score: 52, score_rationale: [{ label: "Purchase readiness", points: 15, max: 25, known: true, detail: "considering" }], qualification: { readiness: "considering" }, owner_email: null, source_id: "src1", primary_project_id: "t1", handover_status: "none", ai_paused: false, created_at: NOW, updated_at: NOW, closed_at: null }],
+    ai_leads: [{ id: "L1", lead_code: "OSC-000001", contact_id: "c1", contact, stage_id: "s0", temperature: "warm", score: 52, score_rationale: [{ label: "Purchase readiness", points: 15, max: 25, known: true, detail: "considering" }], qualification: { readiness: "considering", purpose: "own_stay", budget_max: 500000 }, owner_email: null,
+      profile: { work_area: "KLCC", commute_mode: ["rail"], residential_area: "Cheras", area_familiarity: "not_familiar" },
+      profile_meta: { work_area: { status: "confirmed", source: "ai" }, commute_mode: { status: "inferred", source: "ai" }, residential_area: { status: "confirmed", source: "staff", by: "advisor@test.local", conflict: { value: "Kepong", status: "confirmed" } }, purpose: { status: "confirmed", source: "ai" } },
+      ai_summary: { text: "Works in KLCC and takes the LRT. Wants a 3-bedroom unit for own stay, budget up to RM500k.", last_client_question: "Ada unit 3 bilik bawah RM500k?", outstanding: "Floor plan for Type A",
+        next_question: "When would you like to move in?", updated_at: NOW, source: "ai", next_action: { action: "Send the Type A floor plan and offer a showroom visit", reason: "The buyer asked about 3-bedroom units within budget", priority: "high", due_at: "2026-10-30", status: "open" } }, source_id: "src1", primary_project_id: "t1", handover_status: "none", ai_paused: false, created_at: NOW, updated_at: NOW, closed_at: null }],
     ai_contacts: [contact], ai_activities: [{ id: "a1", lead_id: "L1", kind: "website_enquiry", body: "Berapa harga?", actor: "website", created_at: NOW }],
-    ai_tasks: [], ai_appointments: [{ id: "A1", lead_id: "L1", kind: "showroom_visit", status: "pending_confirmation", preferred_text: "Sabtu pagi", start_at: null, reminders: [], created_at: NOW, lead: { id: "L1", lead_code: "OSC-000001", contact } }], ai_lead_interests: [{ lead_id: "L1", project_id: "t1", interest: "enquired" }], ai_consent_current: [], ai_consent_records: [],
+    ai_tasks: [], ai_appointments: [{ id: "A1", lead_id: "L1", kind: "showroom_visit", status: "pending_confirmation", preferred_text: "Sabtu pagi", start_at: null, reminders: [], created_at: NOW, lead: { id: "L1", lead_code: "OSC-000001", contact } }], ai_lead_interests: [{ lead_id: "L1", project_id: "t1", interest: "enquired", priority: "primary", unit_type: "Type A" }],
+    ai_lead_field_history: [{ id: "H1", lead_id: "L1", field: "work_area", old_value: null, new_value: "KLCC", status: "confirmed", source: "ai", by: "ai", at: NOW }], ai_consent_current: [], ai_consent_records: [],
     ai_handover_events: [],
     ai_workflows: [
       { id: "WF1", key: "rmk", name: "RMK — Residensi Metropolitan Kepong", description: "RUMAWIP project", project_id: null, status: "active", sending_enabled: false, pause_if_active_hours: 6,
@@ -145,6 +151,9 @@ export async function newPage(viewport, { signedIn = true, mutate = null } = {})
       if (rpc[1] === "ai_resume_ai") return json({ mode: "ai", handovers_resolved: 0 });
       if (rpc[1] === "ai_cancel_automation_job") return json(true);
       if (rpc[1] === "ai_wf_save") return json("WF-new");
+      if (rpc[1] === "ai_lead_profile_set") return json({ applied: [], conflicts: [], skipped: [] });
+      if (["ai_lead_set_stage", "ai_lead_next_action", "ai_lead_profile_resolve"].includes(rpc[1])) return json(true);
+      if (rpc[1] === "ai_lead_summary_set") return json({});
       return json([]);
     }
     const t = u.pathname.replace("/rest/v1/", "");
@@ -155,6 +164,7 @@ export async function newPage(viewport, { signedIn = true, mutate = null } = {})
     if ((req.headers()["accept"] || "").includes("vnd.pgrst.object")) return rows.length ? json(rows[0]) : json(null, 406, {});
     return json(rows, 200, { "content-range": `0-${Math.max(0, rows.length - 1)}/${rows.length}` });
   });
+  await page.route("**/api/sales/ai/summary", (r) => { writes.push({ summary: JSON.parse(r.request().postData() || "{}") }); r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, applied: { summary: true } }) }); });
   await page.route("**/api/sales/ai/simulate", async (r) => {
     const req = JSON.parse(r.request().postData() || "{}");
     writes.push({ simulate: req });

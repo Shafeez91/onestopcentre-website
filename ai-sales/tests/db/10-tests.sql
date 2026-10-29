@@ -103,7 +103,7 @@ do $$ declare a uuid; b uuid; c uuid; l1 uuid; l2 uuid; begin
   assert l1 = l2, 'second enquiry reuses the open lead';
   assert (select count(*) from public.ai_lead_interests where lead_id = l1) = 2, 'both projects recorded as interests';
   assert (select lead_code from public.ai_leads where id = l1) ~ '^OSC-\d{6}$', 'lead code format';
-  assert (select s.name from public.ai_leads l join public.ai_pipeline_stages s on s.id = l.stage_id where l.id = l1) = 'New Lead';
+  assert (select s.name from public.ai_leads l join public.ai_pipeline_stages s on s.id = l.stage_id where l.id = l1) = 'New Enquiry';
 end $$;
 rollback;
 
@@ -169,9 +169,9 @@ select public.t_login('advisor@test.local');
 do $$ declare c uuid; l uuid; begin
   c := public.ai_upsert_contact('0177777777');
   l := public.ai_open_lead(c);
-  update public.ai_leads set stage_id = (select id from public.ai_pipeline_stages where name = 'Qualified') where id = l;
-  assert exists (select 1 from public.ai_activities where lead_id = l and kind = 'stage_change' and body = 'New Lead → Qualified');
-  update public.ai_leads set stage_id = (select id from public.ai_pipeline_stages where name = 'Won'), owner_email = 'advisor@test.local' where id = l;
+  update public.ai_leads set stage_id = (select id from public.ai_pipeline_stages where key = 'interested') where id = l;
+  assert exists (select 1 from public.ai_activities where lead_id = l and kind = 'stage_change' and body = 'New Enquiry → Interested / Qualified');
+  update public.ai_leads set stage_id = (select id from public.ai_pipeline_stages where key = 'signed_all'), owner_email = 'advisor@test.local' where id = l;
   assert (select closed_at from public.ai_leads where id = l) is not null, 'won closes the lead';
   assert exists (select 1 from public.ai_activities where lead_id = l and kind = 'assignment');
   assert public.ai_open_lead(c) <> l, 'a returning buyer after closing gets a new lead';
@@ -1337,6 +1337,156 @@ do $$ declare wid uuid; r jsonb; lid uuid; n int; begin
   perform public.ai_wf_set_stage(wid, lid, 'z');
   assert (select stage || '/' || status from public.ai_workflow_leads where workflow_id = wid and lead_id = lid) = 'z/completed';
   begin perform public.ai_wf_set_stage(wid, lid, 'nope'); assert false, 'unknown stage'; exception when raise_exception then null; end;
+end $$;
+rollback;
+
+\echo 'T61 client profile: AI updates by evidence, never over a person''s entry (flagged instead), never twice per message'
+begin;
+update public.ai_settings set notifications = notifications || '{"daily_digest": false}';
+create temp table t61 (lid uuid);
+grant all on t61 to authenticated;
+do $$ declare r jsonb; lid uuid; m1 uuid := gen_random_uuid(); m2 uuid := gen_random_uuid(); m3 uuid := gen_random_uuid(); begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123459001', 'Nadia', 'wamid.P1', 'text', 'Saya kerja di KLCC, naik LRT');
+  lid := (r ->> 'lead_id')::uuid;
+  insert into t61 values (lid);
+  r := public.ai_lead_profile_set(lid, '[{"field":"work_area","value":"KLCC","status":"confirmed"},{"field":"commute_mode","value":["rail"],"status":"inferred"},{"field":"purpose","value":"own_stay","status":"confirmed"}]', 'ai', m1);
+  assert jsonb_array_length(r -> 'applied') = 3, r::text;
+  assert (select profile ->> 'work_area' from public.ai_leads where id = lid) = 'KLCC';
+  assert (select qualification ->> 'purpose' from public.ai_leads where id = lid) = 'own_stay', 'qualification fields go to qualification';
+  assert (select profile_meta -> 'commute_mode' ->> 'status' from public.ai_leads where id = lid) = 'inferred';
+  assert (select count(*) from public.ai_lead_field_history where lead_id = lid) = 3;
+  assert exists (select 1 from public.ai_activities where lead_id = lid and kind = 'profile_update' and body like 'AI updated%');
+  -- the same message again (retried job): nothing applied twice
+  r := public.ai_lead_profile_set(lid, '[{"field":"work_area","value":"Bangsar","status":"confirmed"}]', 'ai', m1);
+  assert jsonb_array_length(r -> 'applied') = 0 and (select profile ->> 'work_area' from public.ai_leads where id = lid) = 'KLCC';
+  -- a guess never replaces what the buyer said; the buyer's own correction does, with history
+  r := public.ai_lead_profile_set(lid, '[{"field":"work_area","value":"Bangsar","status":"inferred"}]', 'ai', m2);
+  assert (select profile ->> 'work_area' from public.ai_leads where id = lid) = 'KLCC';
+  r := public.ai_lead_profile_set(lid, '[{"field":"work_area","value":"Bangsar","status":"confirmed"}]', 'ai', m3);
+  assert (select profile ->> 'work_area' from public.ai_leads where id = lid) = 'Bangsar';
+  assert (select old_value #>> '{}' from public.ai_lead_field_history where lead_id = lid and field = 'work_area' and message_id = m3) = 'KLCC';
+  -- the AI never clears a field; unrelated fields are untouched
+  r := public.ai_lead_profile_set(lid, '[{"field":"work_area","value":""}]', 'ai', gen_random_uuid());
+  assert (select profile ->> 'work_area' from public.ai_leads where id = lid) = 'Bangsar';
+  assert (select qualification ->> 'purpose' from public.ai_leads where id = lid) = 'own_stay';
+  -- an inferred value the buyer then states becomes confirmed
+  r := public.ai_lead_profile_set(lid, '[{"field":"commute_mode","value":["rail"],"status":"confirmed"}]', 'ai', gen_random_uuid());
+  assert (select profile_meta -> 'commute_mode' ->> 'status' from public.ai_leads where id = lid) = 'confirmed';
+  -- the AI cannot use the staff path, and the staff path is for advisors and up
+  begin perform public.ai_lead_profile_set(lid, '[{"field":"work_area","value":"X"}]', 'staff'); assert false, 'service role used the staff path'; exception when raise_exception then null; end;
+end $$;
+set local role authenticated;
+do $$ declare lid uuid := (select lid from t61); r jsonb; begin
+  perform public.t_login('viewer@test.local');
+  begin perform public.ai_lead_profile_set(lid, '[{"field":"residential_area","value":"Cheras"}]', 'staff'); assert false, 'viewer edited'; exception when raise_exception then null; end;
+  perform public.t_login('advisor@test.local');
+  begin perform public.ai_lead_profile_set(lid, '[{"field":"residential_area","value":"Cheras"}]', 'ai'); assert false, 'advisor used the AI path'; exception when raise_exception then null; end;
+  r := public.ai_lead_profile_set(lid, '[{"field":"residential_area","value":"Cheras"},{"field":"occupants","value":"4"}]', 'staff', null, 'called the buyer');
+  assert (select profile_meta -> 'residential_area' ->> 'source' from public.ai_leads where id = lid) = 'staff';
+  assert (select note from public.ai_lead_field_history where lead_id = lid and field = 'residential_area') = 'called the buyer';
+end $$;
+reset role;
+do $$ declare lid uuid := (select lid from t61); r jsonb; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  -- the AI disagrees with a person's entry: flagged for review, the person's value stays
+  r := public.ai_lead_profile_set(lid, '[{"field":"residential_area","value":"Kepong","status":"confirmed"}]', 'ai', gen_random_uuid());
+  assert r -> 'conflicts' = '["residential_area"]'::jsonb, r::text;
+  assert (select profile ->> 'residential_area' from public.ai_leads where id = lid) = 'Cheras';
+  assert (select profile_meta -> 'residential_area' -> 'conflict' ->> 'value' from public.ai_leads where id = lid) = 'Kepong';
+end $$;
+set local role authenticated;
+do $$ declare lid uuid := (select lid from t61); begin
+  perform public.t_login('advisor@test.local');
+  assert public.ai_lead_profile_resolve(lid, 'residential_area', true);
+  assert (select profile ->> 'residential_area' from public.ai_leads where id = lid) = 'Kepong';
+  assert not ((select profile_meta -> 'residential_area' from public.ai_leads where id = lid) ? 'conflict');
+  -- clearing a field is a person's choice
+  perform public.ai_lead_profile_set(lid, '[{"field":"occupants","value":""}]', 'staff');
+  assert not ((select profile from public.ai_leads where id = lid) ? 'occupants');
+end $$;
+rollback;
+
+\echo 'T62 AI summary and next action: kept per lead; a dismissed recommendation is not brought back; staff can edit'
+begin;
+create temp table t62 (lid uuid);
+grant all on t62 to authenticated;
+do $$ declare r jsonb; lid uuid; m uuid := gen_random_uuid(); begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123459002', 'Farid', 'wamid.S1', 'text', 'Berapa harga unit 3 bilik?');
+  lid := (r ->> 'lead_id')::uuid; insert into t62 values (lid);
+  perform public.ai_lead_summary_set(lid, '{"text":"Asked about 3-bedroom prices.","last_client_question":"Berapa harga unit 3 bilik?","next_action":{"action":"Send the 3-bedroom price list","reason":"Buyer asked for prices","priority":"high"}}', 'ai', m);
+  assert (select ai_summary ->> 'text' from public.ai_leads where id = lid) = 'Asked about 3-bedroom prices.';
+  assert (select ai_summary -> 'next_action' ->> 'status' from public.ai_leads where id = lid) = 'open';
+  assert exists (select 1 from public.ai_activities where lead_id = lid and kind = 'ai_summary');
+end $$;
+set local role authenticated;
+do $$ declare lid uuid := (select lid from t62); begin
+  perform public.t_login('viewer@test.local');
+  begin perform public.ai_lead_next_action(lid, 'done'); assert false, 'viewer closed an action'; exception when raise_exception then null; end;
+  perform public.t_login('advisor@test.local');
+  assert public.ai_lead_next_action(lid, 'dismissed');
+  begin perform public.ai_lead_summary_set(lid, '{"text":"x"}', 'ai'); assert false, 'advisor wrote as AI'; exception when raise_exception then null; end;
+end $$;
+reset role;
+do $$ declare lid uuid := (select lid from t62); begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  perform public.ai_lead_summary_set(lid, '{"next_action":{"action":"Send the 3-bedroom price list","priority":"high"}}', 'ai', gen_random_uuid());
+  assert (select ai_summary -> 'next_action' ->> 'status' from public.ai_leads where id = lid) = 'dismissed', 'not brought back';
+  perform public.ai_lead_summary_set(lid, '{"next_action":{"action":"Offer a showroom visit this weekend","priority":"normal","due_at":"2026-11-01"}}', 'ai', gen_random_uuid());
+  assert (select ai_summary -> 'next_action' ->> 'status' || '/' || (ai_summary -> 'next_action' ->> 'due_at') from public.ai_leads where id = lid) = 'open/2026-11-01';
+  assert (select ai_summary ->> 'text' from public.ai_leads where id = lid) = 'Asked about 3-bedroom prices.', 'summary text kept when not resent';
+end $$;
+set local role authenticated;
+do $$ declare lid uuid := (select lid from t62); begin
+  perform public.t_login('advisor@test.local');
+  perform public.ai_lead_summary_set(lid, '{"text":"Wants a 3-bedroom unit; prefers weekends."}', 'staff');
+  assert (select ai_summary ->> 'source' from public.ai_leads where id = lid) = 'staff';
+end $$;
+rollback;
+
+\echo 'T63 stages: renamed pipeline keeps every lead; AI moves forward only with evidence; staff moves cancel stale check-ins; appointments move forward'
+begin;
+update public.ai_settings set notifications = notifications || '{"daily_digest": false}', flags = flags || '{"ai_auto_reply": true}';
+create temp table t63 (lid uuid);
+grant all on t63 to authenticated;
+do $$ declare r jsonb; lid uuid; begin
+  assert (select string_agg(key, ',' order by position) from public.ai_pipeline_stages where key is not null) =
+    'new_enquiry,contacted,interested,no_response,follow_up_required,appointment_pending,appointment_booked,appointment_attended,unit_booked,documents_pending,loan_submitted,loan_approved,loan_declined,lo_signed,pending_spa_signing,signed_all,cancelled';
+  assert (select is_won from public.ai_pipeline_stages where key = 'signed_all') and (select is_lost from public.ai_pipeline_stages where key = 'cancelled');
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('60123459003', 'Lim', 'wamid.G1', 'text', 'Saya nak tahu lagi');
+  lid := (r ->> 'lead_id')::uuid; insert into t63 values (lid);
+  assert (select s.key from public.ai_leads l join public.ai_pipeline_stages s on s.id = l.stage_id where l.id = lid) = 'new_enquiry';
+  -- the AI: forward, to stages it may set, with the buyer's words
+  assert not public.ai_lead_set_stage(lid, (select id from public.ai_pipeline_stages where key = 'interested'), null, 'ai', null), 'no evidence';
+  assert public.ai_lead_set_stage(lid, (select id from public.ai_pipeline_stages where key = 'interested'), null, 'ai', 'saya berminat');
+  assert not public.ai_lead_set_stage(lid, (select id from public.ai_pipeline_stages where key = 'loan_approved'), null, 'ai', 'loan dah lulus'), 'loan approval needs a person';
+  assert not public.ai_lead_set_stage(lid, (select id from public.ai_pipeline_stages where key = 'new_enquiry'), null, 'ai', 'x y z'), 'never backwards';
+  assert not public.ai_lead_set_stage(lid, (select id from public.ai_pipeline_stages where key = 'cancelled'), null, 'ai', 'tak jadi'), 'never closes';
+  assert exists (select 1 from public.ai_activities where lead_id = lid and kind = 'stage_change' and actor = 'ai' and meta ->> 'evidence' = 'saya berminat');
+  assert exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'smart_follow_up' and status = 'scheduled'), 'AI move keeps the check-in';
+  -- a confirmed appointment moves the lead to Appointment Booked
+  insert into public.ai_appointments (lead_id, kind, status, start_at) values (lid, 'showroom_visit', 'confirmed', now() + interval '2 days');
+  assert (select s.key from public.ai_leads l join public.ai_pipeline_stages s on s.id = l.stage_id where l.id = lid) = 'appointment_booked';
+end $$;
+set local role authenticated;
+do $$ declare lid uuid := (select lid from t63); begin
+  perform public.t_login('viewer@test.local');
+  begin perform public.ai_lead_set_stage(lid, (select id from public.ai_pipeline_stages where key = 'unit_booked'), 'x'); assert false, 'viewer moved'; exception when raise_exception then null; end;
+  perform public.t_login('advisor@test.local');
+  begin perform public.ai_lead_set_stage(lid, (select id from public.ai_pipeline_stages where key = 'unit_booked'), 'x', 'ai', 'booked'); assert false, 'advisor used AI path'; exception when raise_exception then null; end;
+  -- a person moves the lead (with a note): stale automatic check-ins are cancelled, the reason is recorded
+  assert public.ai_lead_set_stage(lid, (select id from public.ai_pipeline_stages where key = 'unit_booked'), 'paid booking fee at showroom');
+  assert exists (select 1 from public.ai_activities where lead_id = lid and kind = 'stage_change' and body like '%Unit Booked · paid booking fee at showroom' and meta ->> 'source' = 'staff');
+  assert not exists (select 1 from public.ai_automation_jobs where lead_id = lid and kind = 'smart_follow_up' and status = 'scheduled');
+  assert (select reason from public.ai_automation_jobs where lead_id = lid and kind = 'smart_follow_up' order by created_at desc limit 1) = 'stage changed to Unit Booked';
+end $$;
+reset role;
+do $$ declare lid uuid := (select lid from t63); begin
+  -- a later appointment does not move a booked lead back
+  insert into public.ai_appointments (lead_id, kind, status, start_at) values (lid, 'property_viewing', 'confirmed', now() + interval '3 days');
+  assert (select s.key from public.ai_leads l join public.ai_pipeline_stages s on s.id = l.stage_id where l.id = lid) = 'unit_booked';
 end $$;
 rollback;
 

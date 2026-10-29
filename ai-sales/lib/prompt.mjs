@@ -7,6 +7,7 @@ const str = { type: "string" };
 const num = { type: "number" };
 const bool = { type: "boolean" };
 const enumOf = (...v) => ({ type: "string", enum: v });
+import { INSIGHTS_SCHEMA, INSIGHT_RULES } from "./insights.mjs";
 
 export const INTENTS = ["greeting", "project_info", "price", "instalment", "availability", "promotion", "appointment", "objection", "qualification", "comparison", "recommendation", "human_request", "complaint", "legal_or_contract", "negotiation", "opt_out", "other"];
 export const AGENTS = ["reception", "knowledge", "qualification", "recommendation", "objection", "appointment", "handover"];
@@ -19,7 +20,7 @@ const FINANCING_KEYS = ["route", "age", "basic_salary", "fixed_allowances", "var
 export const REPLY_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["reply", "language", "intent", "agent", "confidence", "facts_used", "qualification_updates", "financing_updates", "appointment_request", "handover", "objection_key", "workflow"],
+  required: ["reply", "language", "intent", "agent", "confidence", "facts_used", "qualification_updates", "financing_updates", "appointment_request", "handover", "objection_key", "workflow", "insights"],
   properties: {
     reply: { ...str, description: "The WhatsApp message to send to the buyer." },
     language: enumOf("ms", "en", "mixed"),
@@ -83,6 +84,7 @@ export const REPLY_SCHEMA = {
         stage_done: { ...str, description: "Set to that workflow's current stage only when the buyer clearly says they completed its current_step." },
       },
     },
+    insights: INSIGHTS_SCHEMA,
   },
 };
 
@@ -99,6 +101,7 @@ export function normalizeReply(d) {
     handover: blanks(d.handover),
     objection_key: blank(d.objection_key),
     workflow: blanks(d.workflow),
+    insights: d.insights || null,
   };
 }
 
@@ -168,6 +171,8 @@ Follow-up workflows (step-by-step processes some projects have, set up by the ag
 - workflow_offers are workflows the buyer could join. Set workflow.key and workflow.interest "confirmed" only once the buyer has clearly confirmed they want that project. Follow each workflow's guidance.
 - Never use one workflow's steps, keywords or messages for another workflow or another project.
 
+${INSIGHT_RULES}
+
 Hand over to a human (handover.needed = true) when:
 - the buyer asks for a person; is ready to book, pay or sign; asks for a special price, extra discount or negotiation; asks legal, tax or contract (SPA) questions; complains or is upset; needs a professional financing assessment; what they asked is genuinely not in the context after checking every field, or the context conflicts on it; you are not confident; or anything sensitive or unusual comes up.\n- Do not hand over just because a figure is INDICATIVE or because you answered a published specification.
 - When handing over, still send a short, polite reply that a human advisor will follow up, and write a useful summary for the advisor (what they want, what was answered, what is outstanding) and a next_action.
@@ -177,7 +182,7 @@ Safety
 - Do not give legal, tax or regulated financial advice. ${c.pdpa_notice_en ? `If a buyer asks how their data is used: ${c.pdpa_notice_en}` : ""}
 
 Output
-Return only the JSON object required by the schema: reply, language, intent, agent (which specialist role you acted as), confidence (0–1), facts_used, qualification_updates, financing_updates (all 0 / "" unless the buyer gave financing figures), appointment_request, handover, objection_key, workflow (all "" unless the follow-up workflow rules above apply).`;
+Return only the JSON object required by the schema: reply, language, intent, agent (which specialist role you acted as), confidence (0–1), facts_used, qualification_updates, financing_updates (all 0 / "" unless the buyer gave financing figures), appointment_request, handover, objection_key, workflow (all "" unless the follow-up workflow rules above apply), insights (see Client profile).`;
 }
 
 const label = (verified, fresh) => (verified ? (fresh ? "VERIFIED" : "STALE") : "INDICATIVE");
@@ -212,6 +217,7 @@ export function renderContext(ctx) {
     active_promotions: ctx.promotions.map((x) => ({ key: `promo:${x.id}`, project_id: x.project_id || "all", title: x.title, details: x.details, conditions: x.conditions, valid_to: x.valid_to, label: "VERIFIED" })),
     knowledge: ctx.knowledge.map((k) => ({ key: `kb:${k.id}`, kind: k.kind, project_id: k.project_id, title: k.title, content: k.content, label: "VERIFIED" })),
     ...(ctx.financingView ? { financing_engine: ctx.financingView } : {}),
+    ...(ctx.clientProfile ? { client_profile: ctx.clientProfile } : {}),
     ...(ctx.workflows?.length ? { workflows: ctx.workflows } : {}),
     ...(ctx.workflowOffers?.length ? { workflow_offers: ctx.workflowOffers } : {}),
     ...(ctx.slots ? { available_slots: ctx.slots.map((x) => ({ id: x.id, label: ctx.buyer?.preferred_language === "en" ? x.label_en : x.label_ms, label_en: x.label_en, status: "FREE (VERIFIED)" })) } : {}),

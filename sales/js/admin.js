@@ -84,6 +84,7 @@ export async function settings(el, params) {
       <label>Max reply length (characters)<input name="max_reply_chars" type="number" min="200" max="2000" step="50" value="${attr(a.max_reply_chars)}"${dis}></label>
       <label>Daily limit on AI replies<input name="daily_message_cap" type="number" min="0" max="5000" step="10" value="${attr(cap)}"${dis}></label>
       <p class="note">Each buyer message the AI answers counts once. When the limit is reached, buyers get a polite holding reply, an advisor is alerted, and you get one Telegram message that day. 0 switches AI replies off. Also set a spend limit in your Anthropic account.</p>
+      <label class="switch full"><input type="checkbox" name="auto_insights"${a.auto_insights === false ? "" : " checked"}${dis}><span><b>Keep client profiles up to date in chats a person is handling</b><small>The AI reads each new buyer message (sends nothing) and updates the lead's profile, summary and next action. Each counts towards the daily limit.</small></span></label>
       <p class="note full">API keys are never stored here. They live only in Netlify environment variables (see Integrations).</p>
       ${own ? `<div class="actions full"><button class="btn pri">Save</button></div>` : ""}</form>`;
     const f = $("#sf", body); if (own) { guardForm(f, "settings:ai");
@@ -191,16 +192,22 @@ export async function settings(el, params) {
 export async function stages(el) {
   const rows = (await q(SB.from("ai_pipeline_stages").select("*").order("position"))) || [];
   const m = can("manager");
-  el.innerHTML = `<div class="page-head"><div><a class="back" href="#/settings">← Settings</a><h1>Pipeline stages</h1></div></div>
-  <section class="card"><ol class="stages">${rows.map((s, i) => `<li><form class="inline" data-stage="${attr(s.id)}"><input name="name" value="${attr(s.name)}" aria-label="Stage name"${ro("manager")}>
-    ${s.is_won ? badge("Won", "ok") : s.is_lost ? badge("Lost", "alert") : ""}<label class="check"><input type="checkbox" name="active"${s.active ? " checked" : ""}${ro("manager")}> Active</label>
-    ${m ? `<button class="btn" type="submit">Save</button><button class="icon" type="button" data-up="${i}" aria-label="Move up"${i ? "" : " disabled"}>↑</button><button class="icon" type="button" data-down="${i}" aria-label="Move down"${i < rows.length - 1 ? "" : " disabled"}>↓</button>` : ""}</form></li>`).join("")}</ol>
+  const COLORS = ["slate", "blue", "teal", "green", "amber", "orange", "red", "purple", "gold", "navy"];
+  el.innerHTML = `<div class="page-head"><div><a class="back" href="#/settings">← Settings</a><h1>Pipeline stages</h1><p class="sub">The sales stage describes real progress. Follow-ups due, human takeover and AI paused are separate flags, not stages.</p></div></div>
+  <section class="card"><ol class="stages">${rows.map((s, i) => `<li><form class="form two stage-row" data-stage="${attr(s.id)}">
+    <div class="full stage-h"><span class="stage-chip c-${attr(s.color || "slate")}">${esc(s.name)}</span>${s.key ? ` <code>${esc(s.key)}</code>` : ""} ${s.is_won ? badge("Closes as won", "ok") : s.is_lost ? badge("Closes as lost", "alert") : ""}</div>
+    <label>Name<input name="name" value="${attr(s.name)}" maxlength="60" aria-label="Stage name"${ro("manager")}></label>
+    <label>Colour<select name="color"${ro("manager")}>${COLORS.map((c) => opt(c, c[0].toUpperCase() + c.slice(1), s.color || "slate")).join("")}</select></label>
+    <label class="full">What it means<input name="description" value="${attr(s.description)}" maxlength="200"${ro("manager")}></label>
+    <label class="check"><input type="checkbox" name="active"${s.active ? " checked" : ""}${ro("manager")}> Active</label>
+    <label class="check"${s.is_won || s.is_lost ? " hidden" : ""}><input type="checkbox" name="ai_settable"${s.ai_settable ? " checked" : ""}${ro("manager")}> The AI may move a lead here when the buyer clearly confirms it (forward only)</label>
+    ${m ? `<div class="actions full"><button class="btn" type="submit">Save</button><button class="icon" type="button" data-up="${i}" aria-label="Move up"${i ? "" : " disabled"}>↑</button><button class="icon" type="button" data-down="${i}" aria-label="Move down"${i < rows.length - 1 ? "" : " disabled"}>↓</button></div>` : ""}</form></li>`).join("")}</ol>
   ${m ? `<form id="ns" class="inline"><input name="name" required placeholder="New stage name" aria-label="New stage name"><select name="kind" aria-label="Kind">${opt("open", "Open stage")}${opt("won", "Closes as won")}${opt("lost", "Closes as lost")}</select><button class="btn pri">Add stage</button></form>` : ""}
-  <p class="note">Stages in use cannot be deleted — deactivate them instead. Moving a lead into a Won or Lost stage closes it.</p></section>`;
+  <p class="note">Stages in use cannot be deleted — deactivate them instead. Moving a lead into a won or lost stage closes it. Confirmed and completed appointments move leads to the stages with the keys <code>appointment_booked</code> and <code>appointment_attended</code>.</p></section>`;
   const reload = async () => { await loadLookups(); await keepPlace(el, () => stages(el)); };
   if (!m) return;
   $$("form[data-stage]", el).forEach((f) => f.onsubmit = (e) => { e.preventDefault(); const v = formData(f);
-    act(f.querySelector("button[type=submit]"), async () => { await q(SB.from("ai_pipeline_stages").update({ name: v.name, active: v.active }).eq("id", f.dataset.stage).select("id"), { expectRows: true }); reload(); }, "Stage saved"); });
+    act(f.querySelector("button[type=submit]"), async () => { await q(SB.from("ai_pipeline_stages").update({ name: v.name, active: v.active, color: v.color, description: v.description, ai_settable: !!v.ai_settable }).eq("id", f.dataset.stage).select("id"), { expectRows: true }); reload(); }, "Stage saved"); });
   const swap = (i, j) => act(null, async () => {
     const a = rows[i], b = rows[j];
     await q(SB.from("ai_pipeline_stages").update({ position: -1 }).eq("id", a.id).select("id"), { expectRows: true });
@@ -212,7 +219,8 @@ export async function stages(el) {
   $$("[data-down]", el).forEach((b) => b.onclick = () => swap(+b.dataset.down, +b.dataset.down + 1));
   const ns = $("#ns", el);
   ns.onsubmit = (e) => { e.preventDefault(); const v = formData(ns);
-    act(ns.querySelector("button"), async () => { await q(SB.from("ai_pipeline_stages").insert({ name: v.name, position: Math.max(0, ...rows.map((r) => r.position)) + 1, is_won: v.kind === "won", is_lost: v.kind === "lost" })); reload(); }, "Stage added"); };
+    const key = String(v.name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || null;
+    act(ns.querySelector("button"), async () => { await q(SB.from("ai_pipeline_stages").insert({ name: v.name, key: rows.some((r) => r.key === key) ? null : key, position: Math.max(0, ...rows.map((r) => r.position)) + 1, is_won: v.kind === "won", is_lost: v.kind === "lost" })); reload(); }, "Stage added"); };
 }
 
 /* ======================= Team ======================= */

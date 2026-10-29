@@ -7,6 +7,7 @@ import * as ait from "./aitest.js";
 import * as wfp from "./workflows.js";
 import { icon } from "./icons.js";
 import { dashboard } from "./dashboard.js";
+import { leadWorkspace } from "./lead.js";
 
 // grouped navigation: [group, [[route, label, icon]]]
 const NAV = [
@@ -18,7 +19,7 @@ const NAV = [
 ];
 const NAV_ITEM = Object.fromEntries(NAV.flatMap(([g, items]) => items.map(([k, l]) => [k, { group: g, label: l }])));
 const ROUTES = {
-  overview: (el) => dashboard(el), inbox: (el, p) => crm.inbox(el, p), leads: (el, p) => crm.leads(el, p), lead: (el, p, id) => crm.leadDetail(el, id),
+  overview: (el) => dashboard(el), inbox: (el, p) => crm.inbox(el, p), leads: (el, p) => crm.leads(el, p), lead: (el, p, id) => leadWorkspace(el, p, id),
   "ai-test": (el, p) => ait.aitest(el, p), workflows: (el, p) => wfp.workflows(el, p), workflow: (el, p, id) => wfp.workflow(el, p, id),
   // the RMK page before workflows were configurable: same pipeline, now the RMK workflow
   rmk: (el, p) => wfp.workflow(el, new URLSearchParams({ view: { settings: "stages" }[p.get("view")] || p.get("view") || "board" }), "rmk"),

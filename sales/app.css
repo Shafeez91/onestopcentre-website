@@ -396,3 +396,77 @@ a.kpi:hover{border-color:var(--gold2);transform:translateY(-1px)}
 .meter{height:8px;border-radius:999px;background:var(--bg);overflow:hidden;margin-bottom:12px}
 .meter i{display:block;height:100%;width:var(--w);background:linear-gradient(90deg,var(--gold),var(--gold2));border-radius:999px}
 .head-actions .btn svg{margin-right:2px}
+
+/* ---------------------------------------------------------------- lead workspace */
+.ws-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:12px}
+.ws-id{min-width:0}
+.ws-id h1{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
+.ws-id .code{font-size:.85rem;color:var(--mute);font-weight:600}
+.ws-badges{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
+.ws-id .proj{display:inline-flex;align-items:center;gap:4px;font-weight:600;color:var(--ink2)}
+.ws-id .proj svg{color:var(--gold)}
+.ws-tabs{position:sticky;top:var(--top-h);z-index:5;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin:0 calc(-1 * clamp(16px,2.6vw,32px)) 16px;padding:8px clamp(16px,2.6vw,32px);background:var(--bg);border-bottom:1px solid var(--line)}
+.ws-tabs::-webkit-scrollbar{display:none}
+.ws-tabs a{flex:none;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:999px;color:var(--ink2);text-decoration:none;font-weight:600;font-size:.9rem;min-height:40px}
+.ws-tabs a:hover{background:var(--card)}
+.ws-tabs a.on{background:var(--navy);color:#fff}
+.ws-panel{display:none}
+.ws[data-tab=summary] .ws-panel[data-p=summary],.ws[data-tab=profile] .ws-panel[data-p=profile],.ws[data-tab=sales] .ws-panel[data-p=sales],
+.ws[data-tab=activity] .ws-panel[data-p=activity],.ws[data-tab=conversation] .ws-panel[data-p=conversation]{display:block}
+.ws-body{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
+.ws-side .thread{margin:0}
+.ws-side .chat{max-height:calc(100dvh - 330px);min-height:260px}
+/* wide enough for two columns: the conversation stays beside every tab */
+@container (min-width:860px){
+  .ws-body{grid-template-columns:minmax(0,1.15fr) minmax(340px,1fr)}
+  .ws .ws-side{display:block;position:sticky;top:calc(var(--top-h) + 64px)}
+  .ws-tabs a[data-tab=conversation]{display:none}
+  .ws[data-tab=conversation] .ws-panel[data-p=summary]{display:block}
+}
+.btn.sm{min-height:34px;padding:5px 12px;font-size:.84rem}
+.btn svg{flex:none}
+.st{display:inline-block;padding:1px 7px;border-radius:999px;font-size:.66rem;font-weight:700;letter-spacing:.02em;background:var(--bg);color:var(--mute);vertical-align:middle;white-space:nowrap}
+.st.ok{background:var(--ok-bg);color:var(--ok)}.st.warn{background:var(--warn-bg);color:var(--warn)}.st.alert{background:var(--bad-bg);color:var(--bad)}
+.ai-sum h2,.next-act h2{display:flex;align-items:center;gap:8px}
+.ai-sum h2 svg,.next-act h2 svg{color:var(--gold)}
+.sum-text{font-size:.98rem;line-height:1.55;margin:.2rem 0 .4rem;white-space:pre-wrap}
+.sum-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,270px),1fr));gap:4px 22px;margin-top:10px}
+.sum-sec{padding-top:6px;border-top:1px solid var(--line)}
+.sum-sec h3{margin:.5rem 0 .3rem;font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;color:var(--gold)}
+.kvl{margin:0}
+.kvr{display:grid;grid-template-columns:minmax(110px,42%) minmax(0,1fr);gap:8px;padding:4px 0;font-size:.88rem}
+.kvr dt{color:var(--mute)}.kvr dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+.kvr.miss{display:none}.kvr.miss dd{color:var(--mute);font-weight:400}
+.sum-sec.show-miss .kvr.miss{display:grid}
+.more-miss{font-size:.78rem;padding:2px 0}
+small.inl{display:inline;font-weight:400}
+.next-act .na-action{font-size:1.02rem;font-weight:700;margin:.2rem 0}
+.next-act{border-left:3px solid var(--gold)}
+.conflicts{border-color:var(--bad)}
+.conflicts li{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.score-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:18px;align-items:start}
+.score-big b{display:block;font-size:2.4rem;line-height:1;color:var(--navy)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .score-big b{color:#cfdcf6}}
+.score-big span{font-size:.78rem;color:var(--mute)}
+.factors{list-style:none;margin:0;padding:0}
+.factors li{display:grid;grid-template-columns:minmax(100px,40%) 1fr 44px;gap:8px;align-items:center;font-size:.84rem;padding:3px 0}
+.factors i{display:block;height:8px;border-radius:999px;background:linear-gradient(90deg,var(--navy),var(--navy3));width:max(3px,var(--w))}
+.factors b{text-align:right}
+@container (max-width:440px){.score-row{grid-template-columns:minmax(0,1fr)}}
+fieldset.multi{display:flex;flex-wrap:wrap;gap:6px 16px}
+fieldset.multi legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+fieldset.multi legend small{flex-basis:100%}
+.form label .st{margin-left:4px}
+.ints{display:grid;gap:10px;margin-bottom:10px}
+.int-row{border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.int-h{display:flex;align-items:center;gap:8px}
+.stage-chip{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;font-size:.76rem;font-weight:700;white-space:nowrap;background:var(--bg);color:var(--ink2)}
+.stage-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;margin-right:6px}
+.stage-chip.c-blue{background:#e7effc;color:#1d4f9c}.stage-chip.c-teal{background:#dff4f1;color:#0f6b61}.stage-chip.c-green{background:var(--ok-bg);color:var(--ok)}
+.stage-chip.c-amber{background:var(--warn-bg);color:var(--warn)}.stage-chip.c-orange{background:#fdeedd;color:#a34d07}.stage-chip.c-red{background:var(--bad-bg);color:var(--bad)}
+.stage-chip.c-purple{background:#efe8fb;color:#5b37a4}.stage-chip.c-gold{background:var(--gold-soft);color:#8a6a2c}.stage-chip.c-navy{background:var(--navy);color:#fff}
+.act-f{margin:10px 0 0}.act-f a{font-size:.8rem;padding:4px 11px}
+.why-q{color:var(--warn);font-weight:600}
+.stage-row{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:8px 0}
+.stage-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+ol.stages{padding-left:1.4em}

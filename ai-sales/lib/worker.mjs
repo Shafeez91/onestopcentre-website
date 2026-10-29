@@ -8,6 +8,7 @@
 //
 // deps: { db (service-role adapter), llm, wa: { send(to, msg) } | null, cal: { slots(settings, now), book(details) } | null, now() }
 import { respond, applyActions, logRun, composeFollowUp } from "./orchestrator.mjs";
+import { summarizeLead } from "./insights.mjs";
 import { isOptOut, wantsHuman, fixedReply, replyLanguage } from "../../sales/shared/guard.mjs";
 import { decideFollowUp, consentState, templateParams } from "./followups.mjs";
 import { confirmationText, placeFor } from "./calendar.mjs";
@@ -60,7 +61,14 @@ export async function processReplyJob(deps, job, settings) {
   const guard = isOptOut(message) || wantsHuman(message);
 
   // no Telegram for WhatsApp messages: Telegram carries new clients, follow-up tasks and appointments only
-  if (!aiOn && !guard) return { status: "done", note: "AI not answering this conversation" };
+  if (!aiOn && !guard) {
+    // a person handles this chat: the AI still keeps the client's profile and summary up to date (no message sent)
+    if (f.module && (f.ai_auto_reply || settings.ai?.auto_insights === true) && settings.ai?.auto_insights !== false && deps.llm && lead?.id && !lead.closed_at && readable) {
+      const r = await summarizeLead(deps, lead.id, { reserve: () => db.rpc("ai_reserve_ai_call", {}) }).catch((e) => ({ skipped: e?.message || String(e) }));
+      return { status: "done", note: "AI not answering this conversation; client profile " + (r.applied ? "updated" : "not updated (" + r.skipped + ")") };
+    }
+    return { status: "done", note: "AI not answering this conversation" };
+  }
 
   let result;
   if (!readable && !guard) {
@@ -77,7 +85,7 @@ export async function processReplyJob(deps, job, settings) {
   }
 
   const runId = await logRun(db, { result, leadId: lead.id, conversationId: conv.id, channel: "whatsapp", input: { job: job.id } });
-  const done = await applyActions(db, { leadId: lead.id, contactId: contact.id, result, conversationId: conv.id, runId });
+  const done = await applyActions(db, { leadId: lead.id, contactId: contact.id, result, conversationId: conv.id, runId, messageId: msgId });
 
   let sent = null;
   if (result.reply && result.decision !== "paused") {
