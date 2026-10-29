@@ -1,6 +1,6 @@
 // Builds the verified context for one buyer turn, plus the allow-lists the validator checks the reply against.
 // `db` is a small adapter: { get(path) -> rows[], rpc(name, args) -> result } over PostgREST.
-import { extractAmounts, PROMOTION } from "../../sales/shared/validator.mjs";
+import { extractAmounts, PROMOTION, layoutKey } from "../../sales/shared/validator.mjs";
 import { projectSpecs, resolveFocus, coverage, conflicts as findConflicts, numOf } from "../../sales/shared/listing.mjs";
 import { workflowContext } from "./workflows.mjs";
 import { profileContext } from "./insights.mjs";
@@ -168,6 +168,10 @@ export async function loadContext(db, { leadId = null, message = "", history = [
       appointmentConfirmed: appointments.some((a) => a.status === "confirmed" && a.start_at && new Date(a.start_at) > now),
       isFirstReply, allowedUrls: [...allowedUrls], allowedHosts: ["onestopcentreproperty.com"],
       maxChars: settings.ai?.max_reply_chars || 700,
+      // each layout's own prices (website "from" price and staff-checked prices), for the projects being discussed
+      layoutPrices: (projects.some((p) => p.inFocus) ? projects.filter((p) => p.inFocus) : projects).map((p) => ({ project: p.name,
+        layouts: (p.layouts || []).map((l) => ({ key: layoutKey(l.layout), prices: [num(l.price_from), ...p.prices.filter((x) => layoutKey(x.unit_type) === layoutKey(l.layout)).map((x) => Number(x.price_myr))].filter((n) => n >= 10000) }))
+          .filter((l) => l.key) })),
     },
   };
 }

@@ -49,11 +49,12 @@ test("the instructions explain separate messages vs paragraphs, keep the persona
 });
 
 test("business rules: content rules run on the whole turn; the length limit is per message", () => {
-  const ok = checkTurn(normalizeReply({ messages: ["a".repeat(100), "b".repeat(100)] }), { maxChars: 120 });
-  assert.equal(ok.ok, true, "two messages of 100 characters are fine with a 120 limit");
-  const long = checkTurn(normalizeReply({ messages: ["a".repeat(100), "b".repeat(130)] }), { maxChars: 120 });
+  const w = (n) => "kata ".repeat(n).trim(); // n words, 5n-1 characters
+  const ok = checkTurn(normalizeReply({ messages: [w(20), w(20)] }), { maxChars: 120 });
+  assert.equal(ok.ok, true, "two messages of 99 characters are fine with a 120 limit");
+  const long = checkTurn(normalizeReply({ messages: [w(20), w(26)] }), { maxChars: 120 });
   assert.deepEqual(long.violations.map((v) => v.code), ["too_long"]);
-  assert.match(long.violations[0].detail, /Message 2 is 130 characters/);
+  assert.match(long.violations[0].detail, /Message 2 is 129 characters/);
 });
 
 test("respond(): a normal reply keeps the model's separate messages; a simple question stays one", async () => {
@@ -81,4 +82,41 @@ test("simulation writes nothing, whatever the number of messages", async () => {
   const db = fakeDb();
   await respond({ db, llm: llmOf({ ...base, messages: [AI + " A.", "B?"] }), message: "MRT paling dekat?", now: NOW, mode: "simulate" });
   assert.deepEqual(db.writes, []);
+});
+
+/* ---------- 29 Oct 2026, from the AI log: a stray "x" message and Type B's price given for Type C ---------- */
+import { layoutPriceMixups, layoutKey } from "../../../sales/shared/validator.mjs";
+const AZ = [{ project: "M AZURA", layouts: [{ key: "a", prices: [380000] }, { key: "b", prices: [480000] }, { key: "c", prices: [570000] }] },
+  { project: "M NOVA", layouts: [{ key: "a", prices: [350000] }, { key: "b", prices: [430000] }, { key: "c", prices: [480000] }] }];
+
+test("fragments: a stray 'x' message (or an empty-looking reply) is rejected and rewritten", () => {
+  const bad = checkTurn(normalizeReply({ messages: ["M AZURA Type C: 1,000 sqft, 4 bilik, 2 bilik air.", "x"] }), {});
+  assert.deepEqual(bad.violations.map((v) => v.code), ["fragment"]);
+  assert.match(bad.violations[0].detail, /Message 2 \("x"\)/);
+  assert.equal(checkTurn(normalizeReply({ messages: ["…"] }), {}).violations[0].code, "fragment");
+  assert.equal(checkTurn(normalizeReply({ messages: ["Baik 😊"] }), {}).ok, true, "a short one-message reply is fine");
+  assert.equal(checkTurn(normalizeReply({ messages: ["Type C ada 4 bilik dan 2 bilik air.", "Tuan/puan nak lihat pelan lantai?"] }), {}).ok, true);
+});
+
+test("layout prices: Type B's price given for Type C is caught; correct lists, mixed sentences and other projects are not", () => {
+  assert.deepEqual(layoutPriceMixups("M AZURA Type C: 1,000 sqft, 4 bilik, 2 bilik air, 2 car park, harga dari RM480,000...", AZ), ["RM480,000 is the price of another layout, not of Type C"]);
+  assert.deepEqual(layoutPriceMixups("• Type A – 700 sqft, from RM380,000\n• Type B – 850 sqft, from RM480,000\n• Type C – 1000 sqft, from RM570,000", AZ), []);
+  assert.deepEqual(layoutPriceMixups("Untuk M AZURA Type C (dari RM570,000), ansuran sekitar RM2,406 sebulan.", AZ), [], "monthly figures are not layout prices");
+  assert.deepEqual(layoutPriceMixups("M NOVA Type C from RM480,000.", AZ), [], "the right price for that project's Type C");
+  assert.deepEqual(layoutPriceMixups("Type B and Type C from RM480,000 and RM570,000.", AZ), [], "a sentence naming both layouts");
+  assert.deepEqual(layoutPriceMixups("Type D from RM480,000", AZ), [], "a layout with no price on record: left to the other rules");
+  assert.deepEqual([layoutKey("Type C"), layoutKey("Jenis A1"), layoutKey("C")], ["c", "a1", "c"]);
+});
+
+test("respond(): the layout-price rule sees the real context (focus project's layouts) and blocks the mix-up", async () => {
+  const db = { get: async (p) => (p.startsWith("projects") ? [{ id: "az", slug: "m-azura", data: { n: "M AZURA", l: "Setapak", types: [{ name: "Type A", price: "RM380,000" }, { name: "Type B", price: "RM480,000" }, { name: "Type C", price: "RM570,000" }] } }]
+    : p.startsWith("ai_settings") ? [{ id: 1, persona: {}, ai: { confidence_threshold: 0.7 }, business: {}, scoring: {}, compliance: {} }] : []), rpc: async () => [], post: async () => [{}], patch: async () => null };
+  const wrong = { ...base, messages: [AI + " M AZURA Type C: 1,000 sqft, 4 bilik, harga dari RM480,000 (anggaran)."] };
+  const right = { ...base, messages: [AI + " M AZURA Type C: 1,000 sqft, 4 bilik, harga dari RM570,000 (anggaran)."] };
+  const llm = llmOf(wrong, right);
+  const r = await respond({ db, llm, message: "Saya berminat dgn M Azura type C", now: NOW, mode: "simulate" });
+  assert.equal(r.attempts[0].violations[0].code, "wrong_layout_price");
+  assert.match(llm.calls[1].messages.at(-1).content, /wrong_layout_price/, "the AI is told what to fix");
+  assert.equal(r.decision, "reply");
+  assert.match(r.reply, /RM570,000/);
 });

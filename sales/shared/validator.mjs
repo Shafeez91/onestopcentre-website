@@ -56,6 +56,35 @@ const CONFIRM_WORD = /(confirmed|disahkan|sudah (di)?sahkan|telah ditempah|dah b
 const sentenceAt = (text, index) => { const s = text.lastIndexOf(".", index) + 1, e = text.slice(index).search(/[.!?\n]/); return text.slice(s, e < 0 ? undefined : index + e); };
 const LINK = /\bhttps?:\/\/[^\s)>\]]+|\bwa\.me\/\d+[^\s)]*/gi;
 
+/** "Type C", "type c", "Jenis C", "C" → "c"; "Type A1" → "a1". The key used to match a layout named in a reply. */
+export const layoutKey = (s) => String(s || "").toLowerCase().replace(/\b(type|jenis|tipe|layout)\b/g, "").replace(/[^a-z0-9]/g, "");
+const LAYOUT_REF = /\b(?:type|jenis|tipe)\s*([a-z]\d{0,2}|\d{1,2}[a-z]?)\b/gi;
+
+/**
+ * A price given for a layout must be that layout's price. Looks at each line and sentence that names layouts and
+ * gives RM figures of property-price size: a figure that is the price of a DIFFERENT layout of the projects being
+ * discussed (and not of the named one) is a mix-up, e.g. "Type C from RM480,000" when RM480,000 is Type B.
+ * ctx.layoutPrices: [{ project, layouts: [{ key, prices: [n] }] }]
+ */
+export function layoutPriceMixups(text, layoutPrices = []) {
+  const out = [];
+  if (!layoutPrices.length) return out;
+  for (const seg of String(text || "").split(/\n+|(?<=[.!?])\s+(?=[A-Z•*-])/)) {
+    const named = [...new Set([...seg.matchAll(LAYOUT_REF)].map((m) => m[1].toLowerCase()))];
+    if (!named.length) continue;
+    const amounts = extractAmounts(seg).filter((a) => a.value >= 50000);
+    if (!amounts.length) continue;
+    const low = seg.toLowerCase();
+    const mentioned = layoutPrices.filter((p) => low.includes(String(p.project || "").toLowerCase()));
+    const scope = mentioned.length ? mentioned : layoutPrices;
+    const ofNamed = scope.flatMap((p) => p.layouts.filter((l) => named.includes(l.key)).flatMap((l) => l.prices));
+    if (!ofNamed.length) continue; // a layout we have no price for: the other rules decide
+    const ofOthers = scope.flatMap((p) => p.layouts.filter((l) => !named.includes(l.key)).flatMap((l) => l.prices));
+    for (const a of amounts) if (!near(a.value, ofNamed) && near(a.value, ofOthers)) out.push(`${a.raw} is the price of another layout, not of Type ${named.map((n) => n.toUpperCase()).join("/")}`);
+  }
+  return out;
+}
+
 /**
  * @returns {{ ok: boolean, violations: {code: string, detail: string}[] }}
  */
@@ -76,6 +105,9 @@ export function validateReply(reply, ctx = {}) {
     else if (ctx.strictAmounts && a.value < 20000 && assumptions) add("uncalculated_amount", `${a.raw} is not a figure from the loan engine; quote only financing_engine figures.`);
     else add("unverified_price", `${a.raw} does not match any verified price, fee or promotion on record.`);
   }
+
+  // 1b) a layout's price must be that layout's (not a neighbouring layout's)
+  for (const d of layoutPriceMixups(text, ctx.layoutPrices)) add("wrong_layout_price", d + ". Use the price listed for the layout named.");
 
   // 2) guarantees (negated phrases such as "tidak dapat dijamin" / "cannot guarantee" are fine)
   for (const m of findAll(GUARANTEE, text)) if (!negated(text, m.index)) add("guarantee_language", `"${m[0]}" promises an outcome that cannot be guaranteed.`);
