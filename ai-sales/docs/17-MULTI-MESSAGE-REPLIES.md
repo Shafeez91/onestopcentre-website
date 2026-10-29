@@ -34,3 +34,32 @@ The prompt was not the cause. All three layers had to change.
 - `tests/regression/multi-message.test.mjs`: schema, cleaning and cap, instructions, per-message length, which decisions keep several messages, and simulation writing nothing.
 - `tests/unit/phase4.test.mjs`: three messages sent in order with one record each and CRM updated once; one-message turns unchanged; human take-over mid-turn; buyer writing during delivery; a failed second message retried alone; hand-overs as one message.
 - `tests/e2e/browser.test.mjs`: the console shows three bubbles for a three-message turn and one for a one-message turn.
+
+## Readability rules (29 Oct 2026, later)
+
+The owner wants short, simple WhatsApp replies. The instructions ask for at most 3 short paragraphs per message
+(prefer 1–2), one idea per paragraph, about 20–60 words, and a second message only when it is genuinely useful. The
+code checks this as well (`messageStyle` in `orchestrator.mjs`, limits in `STYLE`):
+
+| Rule | Limit | Code |
+|---|---|---|
+| Paragraphs per message | 3 | `too_many_paragraphs` |
+| Words per paragraph (bullet lines not counted) | 40 | `long_paragraph` |
+| Bullet points per list | 5 | `long_list` |
+| Words per message | 65 | `long_message` |
+| Characters per message (`max_reply_chars`) | setting | `too_long` |
+
+These are **style rules**. A draft that breaks them is rewritten once with the feedback (one extra AI call). If the
+rewrite still breaks them slightly, it is sent anyway and `style_notes` records why; it never falls back to the safe
+message. Business rules (prices, guarantees, availability…) still block.
+
+The limits were calibrated on the real messages of 29 Oct: the owner's example and a compact comparison pass, and the
+77-word message whose first paragraph packed four topics into 47 words is flagged.
+
+## Two quick buyer messages
+
+On 29 Oct a buyer sent two messages 4 seconds apart while the AI was still writing the reply to the first. Both
+replies went out (3 overlapping messages). The sender now also checks for a newer buyer message **before the first
+message** of an AI reply. If there is one, the older reply is dropped whole (status `skipped`, with the reason, and
+no staff task), and the reply to the newer message, which reads every message since the last delivered one, answers
+both. Fixed replies (STOP, "talk to a person") always go out.

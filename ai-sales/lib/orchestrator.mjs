@@ -48,19 +48,46 @@ async function callReply(llm, params, base) {
   }
 }
 
+// Readability rules for one WhatsApp message (owner's style: at most 3 short paragraphs, short lists, about 20–60
+// words, more only when needed). Unlike the business rules they never block a reply: a draft that breaks them is
+// rewritten once with the feedback, and if the rewrite still slightly breaks them it is sent as it is.
+export const STYLE = { maxParagraphs: 3, maxParagraphWords: 40, maxBullets: 5, maxMessageWords: 65 };
+export const STYLE_CODES = new Set(["too_long", "too_many_paragraphs", "long_paragraph", "long_list", "long_message"]);
+const BULLET = /^\s*(?:[•*\-–]|\d{1,2}[.)])\s+/;
+const wordCount = (t) => (String(t).match(/\S+/g) || []).length;
+
+/** Style problems of one message: [{ code, detail }] */
+export function messageStyle(text, i = 1, style = STYLE) {
+  const out = [], paras = String(text || "").split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean);
+  if (paras.length > style.maxParagraphs) out.push({ code: "too_many_paragraphs", detail: `Message ${i} has ${paras.length} paragraphs; use at most ${style.maxParagraphs} short ones (move extra detail to the next message, or leave it out).` });
+  paras.forEach((p, j) => {
+    const lines = p.split("\n"), bullets = lines.filter((l) => BULLET.test(l));
+    if (bullets.length > style.maxBullets) out.push({ code: "long_list", detail: `Message ${i}, paragraph ${j + 1} lists ${bullets.length} points; keep to the ${style.maxBullets} that matter most.` });
+    const prose = bullets.length >= 2 ? lines.filter((l) => !BULLET.test(l)).join(" ") : p;
+    if (wordCount(prose) > style.maxParagraphWords) out.push({ code: "long_paragraph", detail: `Message ${i}, paragraph ${j + 1} is ${wordCount(prose)} words; keep each paragraph to one idea in 1–3 short sentences.` });
+  });
+  const n = wordCount(text);
+  if (n > style.maxMessageWords) out.push({ code: "long_message", detail: `Message ${i} is ${n} words; aim for about 20–60 words per message.` });
+  return out;
+}
+
 /**
- * The business-rule check for a whole turn: every rule runs on all its messages together (one turn, one set of
- * facts), and the length limit applies to each WhatsApp message on its own.
+ * The check for a whole turn. Business rules run on all its messages together (one turn, one set of facts) and
+ * block a reply that breaks them (hardOk false); readability rules run per message and only ask for a rewrite.
+ * ok: nothing to fix. hardOk: safe to send. styleNotes: the readability problems found.
  */
 export function checkTurn(data, rules = {}) {
   const check = validateReply(data.reply, { ...rules, maxChars: 0 });
-  const max = rules.maxChars, long = max ? (data.messages || [data.reply]).map((m, i) => [i + 1, m.length]).filter(([, n]) => n > max) : [];
+  const list = data.messages || [data.reply];
+  const max = rules.maxChars, long = max ? list.map((m, i) => [i + 1, m.length]).filter(([, n]) => n > max) : [];
   if (long.length) check.violations.push({ code: "too_long", detail: long.map(([i, n]) => `Message ${i} is ${n} characters; the limit is ${max} per message.`).join(" ") });
   // a stray fragment ("x", "ok", a lone emoji) is never a WhatsApp message of its own; a reply needs some words
-  const list = data.messages || [data.reply], words = (m) => (String(m).match(/\p{L}{2,}/gu) || []).length;
+  const words = (m) => (String(m).match(/\p{L}{2,}/gu) || []).length;
   const frags = list.map((m, i) => [i + 1, m]).filter(([, m]) => (list.length > 1 ? words(m) < 3 : words(m) < 1));
   if (frags.length) check.violations.push({ code: "fragment", detail: frags.map(([i, m]) => `Message ${i} ("${String(m).slice(0, 20)}") is not a complete message; fold it into another message or remove it.`).join(" ") });
-  return { ok: check.violations.length === 0, violations: check.violations };
+  list.forEach((m, i) => check.violations.push(...messageStyle(m, i + 1)));
+  const styleNotes = check.violations.filter((v) => STYLE_CODES.has(v.code));
+  return { ok: check.violations.length === 0, hardOk: check.violations.length === styleNotes.length, violations: check.violations, styleNotes };
 }
 
 const summariseViolations = (vs) => vs.map((v) => `- ${v.code}: ${v.detail}`).join("\n");
@@ -174,7 +201,7 @@ export async function respond(p) {
   // 5) decision
   const actions = [];
   let decision = "reply", reply = data.reply;
-  if (!check.ok) {
+  if (!check.hardOk) {
     decision = "blocked";
     reply = fixedReply("safe_fallback", data.language === "en" ? "en" : "ms");
     actions.push({ type: "handover", reason: "conflicting_info", summary: `AI draft blocked by business rules:\n${summariseViolations(check.violations)}\nBuyer wrote: "${message.slice(0, 300)}"`, next_action: "Check the facts and reply to the buyer personally." });
@@ -243,7 +270,7 @@ export async function respond(p) {
   const messages = decision === "reply" ? data.messages : [reply];
   return finish({
     decision, reply: messages.join("\n\n"), messages, draft: data.reply, draft_messages: data.messages, language: data.language, intent: data.intent, agent: data.agent, confidence: Number(data.confidence),
-    facts_used: data.facts_used || [], objection_key: data.objection_key || null, violations: check.violations, actions,
+    facts_used: data.facts_used || [], objection_key: data.objection_key || null, violations: check.violations, style_notes: check.styleNotes, actions,
     qualification, score: scored.score, temperature: scored.temperature,
     ...(fin ? { financing: { inputs: fin.inputs, result: fin.result, recalculated } } : {}),
     // which project the reply was about and what its information lacked, so a hand-over can be traced to a data gap
@@ -318,7 +345,7 @@ export async function logRun(db, { result, leadId = null, conversationId = null,
         actions: (result.actions || []).map((a) => (a.type === "save_financing" ? { type: a.type, changed: a.changed, outcome: a.result?.outcome || null, new_assessment: a.new_assessment } : a)) },
       // confidence null = the model gave none (a fixed reply or a failed call)
       confidence: Number.isFinite(result.confidence) ? Math.max(0, Math.min(1, result.confidence)) : null, decision: result.decision,
-      validation: { ok: !(result.violations || []).length, violations: result.violations }, input_tokens: result.usage?.input_tokens ?? null,
+      validation: { ok: !(result.violations || []).some((v) => !STYLE_CODES.has(v.code)), violations: result.violations }, input_tokens: result.usage?.input_tokens ?? null,
       output_tokens: result.usage?.output_tokens ?? null, latency_ms: result.latency_ms, error: result.error || null,
     }, { prefer: "return=representation" });
     return Array.isArray(rows) && rows[0] ? rows[0].id : null;
@@ -350,7 +377,7 @@ export async function composeFollowUp(p) {
     usage.input_tokens += r.usage?.input_tokens || 0; usage.output_tokens += r.usage?.output_tokens || 0;
     if (data.handover?.needed) return { skipped: "the AI judged that a person should follow up", usage, model: served };
     check = checkTurn(data, ctx.rules);
-    if (check.ok) return { reply: data.reply, language: data.language, usage, model: served };
+    if (check.ok || (attempt === 2 && check.hardOk)) return { reply: data.reply, language: data.language, usage, model: served };
     feedback = summariseViolations(check.violations);
   }
   return { skipped: "the follow-up draft failed the business-rule check", violations: check?.violations || [], usage, model: served };

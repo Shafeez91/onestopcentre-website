@@ -245,7 +245,8 @@ test("AI test console: a turn of three WhatsApp messages shows three bubbles in 
   try {
     const M = ["Stesen paling dekat ialah LRT Sri Rampai.", "MRT3 Circle Line masih dalam perancangan.", "Tuan/puan kerja di kawasan mana?"];
     const results = [
-      { decision: "reply", reply: M.join("\n\n"), messages: M, intent: "project_info", agent: "knowledge", language: "ms", confidence: 0.9, model: "claude-opus-5-5", latency_ms: 9000, attempts: [{ attempt: 1, reply: "x", violations: [] }], actions: [] },
+      { decision: "reply", reply: M.join("\n\n"), messages: M, intent: "project_info", agent: "knowledge", language: "ms", confidence: 0.9, model: "claude-opus-5-5", latency_ms: 9000, attempts: [{ attempt: 1, reply: "x", violations: [] }], actions: [],
+        style_notes: [{ code: "long_message", detail: "Message 1 is 70 words; aim for about 20–60 words per message." }] },
       { decision: "reply", reply: "Harga dari RM476,000.\n\nItu harga Type A.", messages: ["Harga dari RM476,000.\n\nItu harga Type A."], intent: "price", agent: "knowledge", language: "ms", confidence: 0.9, model: "claude-opus-5-5", latency_ms: 8000, attempts: [], actions: [] },
     ];
     const sent = [];
@@ -259,6 +260,8 @@ test("AI test console: a turn of three WhatsApp messages shows three bubbles in 
     const bubbles = await page.$$eval(".msg.ai .turn .bubble", (b) => b.map((x) => x.textContent));
     assert.deepEqual(bubbles, M.map((m, i) => `${i + 1}/3${m}`), "three separate bubbles, numbered, in order");
     assert.match(await page.textContent(".msg.ai .why"), /3 WhatsApp messages/);
+    await page.click(".msg.ai details summary");
+    assert.match(await page.textContent(".msg.ai details"), /Readability.*Message 1 is 70 words.*never block a reply/s);
     if (process.env.E2E_SHOTS) await page.screenshot({ path: path.join(process.env.E2E_SHOTS, "phone-ai-test-multi.png"), fullPage: true });
     await page.fill("#msg", "Harga?");
     await page.click("#say button");
