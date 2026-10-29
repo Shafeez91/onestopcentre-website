@@ -89,6 +89,7 @@ export async function aitest(el, params) {
           ${row("Conflicting data", rt && Object.keys(rt.conflicts || {}).length ? Object.entries(rt.conflicts).map(([n, f]) => `${esc(n)}: ${f.map((x) => esc(pretty(x))).join(", ")}`).join("<br>") : "")}
           ${row("Sources used", r.facts_used?.length ? r.facts_used.map(esc).join(", ") : r.decision === "error" ? "" : "None cited")}
           ${row("Human alert", h ? esc(REASON[h.reason] || h.reason) + (h.summary ? `<br><small>${esc(String(h.summary).slice(0, 400))}</small>` : "") : "No")}
+          ${row("Readability", r.style_notes?.length ? r.style_notes.map((v) => esc(v.detail)).join("<br>") + "<br><small>Rewritten once; sent as it is (style notes never block a reply).</small>" : "")}
           ${row("Note", r.degraded ? esc(r.degraded) : "")}
           ${row("Error", r.error ? (can("manager") ? esc(r.error) : "Details are visible to managers and owners.") : "")}
         </dl>

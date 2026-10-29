@@ -60,9 +60,15 @@ export async function sendTurn(deps, { conversation, to, messages, senderType, r
     if (i > 0) {
       const pause = deps.messageGapMs ?? 1200;
       if (pause) await new Promise((r) => setTimeout(r, pause));
+    }
+    // the buyer wrote again while this reply was being written or sent: the reply to their newer message (another
+    // job, which sees every message since our last delivered one) answers everything, so the rest of this one is
+    // dropped — before the first message too, so two quick buyer messages never get two overlapping replies.
+    // Fixed replies (STOP, "talk to a person") always go out.
+    if (senderType === "ai" && inboundId) {
       const newest = (await db.get(`ai_messages?conversation_id=eq.${enc(conversation.id)}&direction=eq.inbound&order=created_at.desc,id.desc&limit=1&select=id`))?.[0];
-      if (inboundId && newest && newest.id !== inboundId) {
-        await skipRest(i, "the buyer wrote again before this part was sent; the next reply answers them");
+      if (newest && newest.id !== inboundId) {
+        await skipRest(i, i ? "the buyer wrote again before this part was sent; the next reply answers them" : "the buyer wrote again while this reply was being written; the next reply answers both");
         return { sent, total: messages.length, superseded: true };
       }
     }
@@ -147,8 +153,9 @@ export async function processReplyJob(deps, job, settings) {
       // fixed replies to STOP / "talk to a person" are system messages: sent even while a person handles the chat
       const t = await sendTurn(deps, { conversation: conv, to, messages: out, senderType: guard ? "system" : "ai", runId, jobId: job.id, inboundId: msgId });
       sent = { ...t, sent: t.sent > 0, complete: t.sent === t.total };
-      if (t.blocked && !t.sent) {
-        // a person took over while the AI was writing: their conversation, nothing more to do
+      if ((t.blocked || t.superseded) && !t.sent) {
+        // a person took over while the AI was writing (their conversation), or the buyer wrote again and the reply
+        // to their newer message answers everything: nothing more to do here
       } else if (sent.sent) {
         await db.patch(`ai_conversations?id=eq.${enc(conv.id)}`, { unread_count: 0 });
         if (!lead.first_response_at) await db.patch(`ai_leads?id=eq.${enc(lead.id)}`, { first_response_at: deps.now().toISOString() });

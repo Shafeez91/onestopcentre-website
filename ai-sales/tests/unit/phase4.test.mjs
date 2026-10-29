@@ -5,7 +5,7 @@ import { createHmac, generateKeyPairSync, createVerify } from "node:crypto";
 import { verifySignature, parseWebhook, inWindow, sendWhatsApp, textOf, WhatsAppError } from "../../lib/whatsapp.mjs";
 import { isOpen, nextOpening, decideFollowUp, consentState, renderTemplate, templateParams } from "../../lib/followups.mjs";
 import { freeSlots, signAssertion, bookSlot, cancelEvent, calConfig, confirmationText, formatWhen, _resetTokenCache } from "../../lib/calendar.mjs";
-import { runWorker } from "../../lib/worker.mjs";
+import { runWorker, sendTurn } from "../../lib/worker.mjs";
 import { memdb } from "./helpers/memdb.mjs";
 
 // Wednesday 28 Oct 2026, 11:00 in Malaysia (03:00 UTC)
@@ -1011,4 +1011,43 @@ test("hand-overs and safe replies are one message, whatever the model drafted", 
   await runWorker(d);
   assert.equal(d.wa.sent.length, 1);
   assert.equal(d.wa.sent[0].msg.text, THREE.join("\n\n"));
+});
+
+test("two quick buyer messages: the reply still being written when the second arrives is dropped whole; one reply answers both, no staff task", async () => {
+  // as on 29 Oct 14:19: message A, then B 4 s later, while the AI is still writing A's reply
+  const w = world();
+  w.ai_messages[0].body = "Kalau M Azura pergi bangsar";
+  const db = memdb(w);
+  let n = 0;
+  const llm = async (p) => {
+    n++;
+    if (n === 1) { // B arrives while A's reply is being written
+      db.t.ai_messages.push({ id: "M2", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "How was the distance", created_at: new Date(Date.now() + 5).toISOString(), status: "received" });
+      db.t.ai_jobs.push({ id: "J2", kind: "wa_reply", payload: { conversation_id: "V1", message_id: "M2" }, status: "queued", attempts: 0, max_attempts: 5 });
+      return { data: multi(2, { messages: ["Reply to A only: saya pembantu AI, part one with enough words.", "Reply to A only, part two with enough words."] }), model: "m", usage: {} };
+    }
+    llm.last = p;
+    return { data: multi(1, { messages: ["Saya pembantu AI One Stop Centre. Dari M AZURA ke Bangsar, naik LRT dari Sri Rampai."] }), model: "m", usage: {} };
+  };
+  const d = depsM(db, { llm });
+  await runWorker(d);           // A's job: reply dropped before anything is sent
+  await runWorker(d);           // B's job: answers both
+  assert.deepEqual(d.wa.sent.map((s) => s.msg.text), ["Saya pembantu AI One Stop Centre. Dari M AZURA ke Bangsar, naik LRT dari Sri Rampai."], "the buyer gets one reply");
+  const a = outbound(db).filter((m) => m.source_job_id !== "J2" && m.body.startsWith("Reply to A"));
+  assert.deepEqual(a.map((m) => m.status), ["skipped", "skipped"]);
+  assert.match(a[0].status_reason, /buyer wrote again while this reply was being written/);
+  assert.equal((db.t.ai_tasks || []).length, 0, "no 'reply could not be delivered' task");
+  assert.match(llm.last.messages.at(-1).content, /Kalau M Azura pergi bangsar\nHow was the distance/, "the second reply answers both messages");
+  assert.equal(db.t.ai_jobs.find((j) => j.id === "J1").status, "done");
+});
+
+test("fixed replies (STOP, 'talk to a person') always go out, even if the buyer has written again", async () => {
+  const w = world(); w.ai_messages.push({ id: "M2", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "ok", created_at: new Date(Date.now() + 5).toISOString(), status: "received" });
+  const db = memdb(w), d = depsM(db);
+  const conv = db.t.ai_conversations[0];
+  const sys = await sendTurn(d, { conversation: conv, to: "60123456789", messages: ["Baik, kami tidak akan menghantar mesej lagi."], senderType: "system", jobId: "J9", inboundId: "M1" });
+  assert.deepEqual([sys.sent, sys.superseded], [1, undefined]);
+  const ai = await sendTurn(d, { conversation: conv, to: "60123456789", messages: ["Jawapan AI yang sudah lapuk."], senderType: "ai", jobId: "J8", inboundId: "M1" });
+  assert.deepEqual([ai.sent, ai.superseded], [0, true], "an AI reply to an older message is dropped");
+  assert.equal(d.wa.sent.length, 1);
 });

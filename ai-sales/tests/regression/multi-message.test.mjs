@@ -40,10 +40,11 @@ test("the instructions explain separate messages vs paragraphs, keep the persona
   const sys = buildSystemPrompt({ persona: { name: "X", tone: "6A. ELITE WHATSAPP REPLY STYLE" } }, []);
   assert.match(sys, /6A\. ELITE WHATSAPP REPLY STYLE/, "the owner's persona text is kept as is");
   assert.match(sys, /WhatsApp messages \(the "messages" list\)/);
-  assert.match(sys, /A paragraph break inside one message is not a new message/);
-  assert.match(sys, /A short answer to a simple question .* is ONE message/);
-  assert.match(sys, /message 1 = the direct answer with its brief explanation; message 2 = the added value and the one question/);
-  assert.match(sys, /If one message would run longer than that, it is two messages/);
+  assert.match(sys, /A blank line inside a message is a paragraph, not a new message/);
+  assert.match(sys, /A simple question gets one message/);
+  assert.match(sys, /message 1 = the direct answer and its essential explanation; message 2 = the additional useful detail/);
+  assert.match(sys, /at most 3 short paragraphs, and prefer 1–2/);
+  assert.match(sys, /A third message is rare/);
   assert.match(sys, /Hand-overs, opt-outs, complaints.*one message/);
   assert.match(sys, /at most one question per turn/);
 });
@@ -119,4 +120,46 @@ test("respond(): the layout-price rule sees the real context (focus project's la
   assert.match(llm.calls[1].messages.at(-1).content, /wrong_layout_price/, "the AI is told what to fix");
   assert.equal(r.decision, "reply");
   assert.match(r.reply, /RM570,000/);
+});
+
+/* ---------- readability (29 Oct 2026): at most 3 short paragraphs, short lists, about 20–60 words per message ---------- */
+import { messageStyle, STYLE } from "../../lib/orchestrator.mjs";
+// the two messages sent to a real buyer at 14:31 (Malaysia time)
+const JUN_1 = "Ni perbandingan 2 bilik (ilustrasi 100% pembiayaan bank, 3.65%, 35 tahun):\n\n• M AURORA Type B (737 sqft, freehold): dari RM430,000, ansuran ~RM1,815 + maintenance ~RM243 = ~RM2,058 sebulan.\n• M AZURA Type A (700 sqft, leasehold 99 thn): dari RM380,000, ansuran ~RM1,604 + maintenance ~RM231 = ~RM1,835 sebulan.\n\nHarga anggaran dari website, final disahkan masa booking. Ini ilustrasi, bukan tawaran loan.";
+const JUN_2 = "Pakej yang sama untuk kedua-dua projek: booking RM500, legal fee SPA & LA free oleh Mah Sing, dan kalau dapat 100% loan dari harga website, tak perlu fikir deposit. Cuma MOT stamp duty ditanggung pembeli, boleh settle kemudian. Bumiputera biasanya dapat 5% diskaun untuk projek di KL.\n\nM AURORA partially furnished (aircond, kabinet dapur, hob & hood, water heater). Status furnishing M AZURA sedang disahkan semula oleh advisor.\n\nNak saya buat semakan kelayakan loan ringkas untuk tuan/puan?";
+// the owner's example of the wanted style
+const WANT_1 = "Based on the illustrative figures, M Azura Type A has a lower estimated monthly commitment than M Aurora Type B.\n\n• M Azura: approximately RM1,835/month, including estimated maintenance.\n• M Aurora: approximately RM2,058/month, including estimated maintenance.\n\nThese estimates depend on the actual financing terms and verified project costs.";
+const WANT_2 = "M Aurora is freehold, while M Azura is leasehold. We should also compare the layout, location and total ownership costs before deciding.\n\nAre you buying for own stay or investment?";
+
+test("readability: the owner's example passes; the long real message is flagged; limits are 3 paragraphs / 40 words / 5 bullets / 65 words", () => {
+  assert.deepEqual(STYLE, { maxParagraphs: 3, maxParagraphWords: 40, maxBullets: 5, maxMessageWords: 65 });
+  assert.deepEqual(messageStyle(WANT_1), []);
+  assert.deepEqual(messageStyle(WANT_2), []);
+  assert.deepEqual(messageStyle(JUN_1), [], "a compact comparison with two bullets is fine");
+  assert.deepEqual(messageStyle(JUN_2, 2).map((v) => v.code), ["long_paragraph", "long_message"]);
+  assert.match(messageStyle(JUN_2, 2)[0].detail, /Message 2, paragraph 1 is 47 words/);
+  assert.deepEqual(messageStyle("A.\n\nB.\n\nC.\n\nD.").map((v) => v.code), ["too_many_paragraphs"]);
+  assert.deepEqual(messageStyle("Pilihan:\n• 1\n• 2\n• 3\n• 4\n• 5\n• 6").map((v) => v.code), ["long_list"]);
+  assert.deepEqual(messageStyle("Harga dari RM570,000."), [], "a short answer");
+});
+
+test("readability problems are rewritten once and never block a reply; business-rule problems still do", async () => {
+  // too long first, a shorter rewrite second
+  const long = { ...base, messages: [AI + " " + "Ini maklumat projek yang panjang. ".repeat(14).trim()] };
+  const short = { ...base, messages: [AI + " M MIRA di Wangsa Maju, dekat LRT Sri Rampai."] };
+  let llm = llmOf(long, short);
+  let r = await respond({ db: fakeDb(), llm, message: "info M Mira?", now: NOW });
+  assert.equal(llm.calls.length, 2);
+  assert.match(llm.calls[1].messages.at(-1).content, /long_message|long_paragraph/, "the AI is told what to shorten");
+  assert.equal(r.decision, "reply"); assert.deepEqual(r.messages, short.messages); assert.deepEqual(r.style_notes, []);
+  // still too long after the rewrite: sent anyway (not the safe fallback), with the note recorded
+  llm = llmOf(long, long);
+  r = await respond({ db: fakeDb(), llm, message: "info M Mira?", now: NOW });
+  assert.equal(r.decision, "reply");
+  assert.deepEqual(r.messages, long.messages);
+  assert.ok(r.style_notes.some((v) => v.code === "long_message"));
+  // a business-rule problem that persists still blocks
+  const bad = { ...base, messages: [AI + " Loan confirm lulus!"] };
+  r = await respond({ db: fakeDb(), llm: llmOf(bad, bad), message: "loan lulus?", now: NOW });
+  assert.equal(r.decision, "blocked");
 });
