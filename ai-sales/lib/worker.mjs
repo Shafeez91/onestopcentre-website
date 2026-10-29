@@ -74,7 +74,7 @@ export async function processReplyJob(deps, job, settings) {
   if (!readable && !guard) {
     const lang = replyLanguage(contact?.preferred_language, msgs.filter((m) => m.direction === "inbound").map((m) => m.body).filter(Boolean));
     const kinds = [...new Set(pending.flatMap((m) => (m.media || []).map((x) => x.type)))].join(", ") || "media";
-    result = { decision: "handover", reply: fixedReply("safe_fallback", lang), language: lang, intent: "other", agent: "handover", confidence: 1, message,
+    result = { decision: "handover", reply: fixedReply("safe_fallback", lang), language: lang, intent: "other", agent: "handover", confidence: null, message,
       actions: [{ type: "handover", reason: "other", summary: `Buyer sent ${kinds}, which the AI cannot read.`, next_action: "Open the WhatsApp conversation and reply personally." }, { type: "cancel_follow_ups", reason: "conversation needs a human" }] };
   } else {
     let slots = null;

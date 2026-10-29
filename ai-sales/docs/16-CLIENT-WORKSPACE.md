@@ -105,3 +105,27 @@ Click a lead anywhere and everything about that client is on one page: **Leads &
   - iPad portrait: conversation tab, no sideways scrolling on any tab
   - the follow-up queue
   - the 12-width layout audit
+
+## Incident, 29 Oct 2026: every AI reply fell back to the safe message
+
+**What happened.** After this release went live (01:17 UTC), every AI call failed with
+`HTTP 400: The compiled grammar is too large`. This hit both the test console and live WhatsApp. The insights schema
+had an enum of every profile field key (about 45 values) inside an array item. Nested in the reply schema, that made
+the API's structured-output grammar too large. The orchestrator then sent the fixed safe reply and alerted a human,
+and the console showed "AI unavailable · 0% sure".
+
+**Fix**
+- `insights.profile_updates[].field` is now plain text. The keys are listed in the instructions, and `cleanUpdates()`
+  drops anything that is not a known field.
+- `llm.mjs` classifies a schema refusal as `kind: "schema"`, separate from an outage.
+- If the API refuses the full schema again, the orchestrator retries once without insights (`REPLY_SCHEMA_CORE`).
+  The buyer still gets a real AI reply, and the run log stores `output.degraded` with the reason.
+- Follow-up messages use the core schema (they never used insights).
+- Failures are labelled by kind in the console, and confidence is `null` ("not available") when the model gave no
+  answer.
+- Regression test: `ai-sales/tests/regression/ai-console-outage.test.mjs`. It fails if a large enum is placed inside
+  an array again, or if the reply schema grows far beyond the core schema.
+
+**Checking it in production.** Run
+`select created_at, decision, error, output->>'degraded' from ai_agent_runs order by created_at desc limit 20;`.
+`decision = 'error'` with a grammar or schema message means the schema needs trimming again.

@@ -21,6 +21,28 @@ const HUMAN = [
 const MS_WORDS = /\b(saya|nak|boleh|berapa|harga|rumah|bilik|tak|tidak|ada|untuk|dengan|ini|itu|bila|mana|kat|dekat|bulan|tuan|puan|encik|terima kasih|tq|projek|lokasi|bulanan|sewa|beli|ke|lah|kah|dah|sudah|belum)\b/gi;
 const EN_WORDS = /\b(i|my|the|is|are|how|much|price|what|when|where|can|please|thanks|thank you|house|unit|room|bedroom|monthly|rent|buy|want|interested|available|loan|hi|hello|this|that|you|your|have|got|will|for|and|with|about|abt|any|there|morning|afternoon|evening|tomorrow|today|weekend|saturday|sunday|good|sure|yes|okay|sir|see|visit|need|still)\b/gi;
 
+// An explicit request for a reply language ("Saya nk speak in English", "english pls", "boleh cakap melayu?").
+// Not a guess from the words used: only a buyer asking for a language counts.
+const LANG_REQ = (lang) => new RegExp(
+  `\\b(speak|cakap|reply|balas|talk|chat|write|tulis|answer|jawab|guna|use|pakai|in|dalam)\\s+(in\\s+|dalam\\s+)?(${lang})\\b`
+  + `|\\b(${lang})\\s+(please|pls|plz|boleh|can|ok|okay|je|jer|sahaja|saja|only)\\b|^\\s*(${lang})\\s*[?.!]*\\s*$`, "i");
+const ASK_EN = LANG_REQ("english|eng|bahasa inggeris|b\\.?\\s?inggeris");
+const ASK_MS = LANG_REQ("malay|melayu|bahasa melayu|bahasa malaysia|bm");
+
+/** "en" / "ms" when the text asks for a reply language, else null. */
+export function requestedLanguage(text) {
+  const t = String(text || "");
+  const en = ASK_EN.test(t), ms = ASK_MS.test(t);
+  return en && !ms ? "en" : ms && !en ? "ms" : null;
+}
+
+/** The buyer's latest explicit language request: this message first, then their earlier messages, newest first. */
+export function languagePreference(message, history = []) {
+  const own = [message, ...[...(history || [])].reverse().filter((h) => h?.role !== "assistant").map((h) => h.text)];
+  for (const t of own) { const l = requestedLanguage(t); if (l) return l; }
+  return null;
+}
+
 export const isOptOut = (text) => OPT_OUT.some((r) => r.test(String(text || "")));
 export const wantsHuman = (text) => HUMAN.some((r) => r.test(String(text || "")));
 

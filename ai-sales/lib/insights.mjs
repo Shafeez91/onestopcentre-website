@@ -21,7 +21,10 @@ export const INSIGHTS_SCHEMA = {
       items: {
         type: "object", additionalProperties: false, required: ["field", "value", "status"],
         properties: {
-          field: enumOf(...ALL_FIELDS.map((f) => f.key)),
+          // a plain string, not an enum of every field key: a large enum inside an array item makes the constrained-output
+          // grammar too big once this schema is nested in REPLY_SCHEMA (HTTP 400 "compiled grammar is too large").
+          // cleanUpdates() drops any key that is not a known field, and INSIGHT_RULES lists the keys for the model.
+          field: { ...str, description: "One field key from the Fields list in the instructions." },
           value: { ...str, description: "For select fields one option key; for multi fields option keys separated by commas; numbers as digits." },
           status: { ...enumOf("confirmed", "inferred"), description: "confirmed = the buyer stated it directly; inferred = a careful reading of what they said (needs confirmation)." },
         },

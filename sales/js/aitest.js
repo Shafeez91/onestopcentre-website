@@ -8,9 +8,23 @@ const save = (lead, turns) => { try { sessionStorage.setItem(KEY(lead), JSON.str
 
 const SAMPLES = ["Hi, how much is this property?", "Monthly berapa?", "Saya cikgu, boleh check layak LPPSA?", "Cashback betul ke?", "Saya nak datang showroom Sabtu", "Saya takut tak boleh dapat loan", "Boleh bagi discount lagi?", "Bro got unit left or not?", "STOP"];
 const DECISION = {
-  reply: ["Would send", "ok"], handover: ["Would send + alert a human", "warn"], blocked: ["Draft blocked — safe reply + human alert", "alert"],
-  opt_out: ["Opt-out honoured", "warn"], capped: ["Daily AI limit reached — safe reply + human alert", "alert"], paused: ["AI paused — no reply", ""], error: ["AI unavailable — safe reply + human alert", "alert"], ignored: ["Ignored", ""],
+  reply: ["AI reply — would send", "ok"], handover: ["AI reply + alert a human", "warn"], blocked: ["Draft blocked by business rules — safe reply + human alert", "alert"],
+  opt_out: ["Opt-out honoured", "warn"], capped: ["Daily AI limit reached — safe reply + human alert", "alert"], paused: ["AI paused — no reply", ""], ignored: ["Ignored", ""],
 };
+// decision "error": the model gave no answer, so the reply is the fixed safe reply. Say which kind of failure it was.
+const FAILURE = {
+  unavailable: "AI service busy or down", network: "AI service unreachable", auth: "AI key rejected — check ANTHROPIC_API_KEY",
+  schema: "AI request refused (system setup)", rejected: "AI request refused (system setup)", truncated: "AI reply cut off", bad_response: "AI reply unreadable",
+  refusal: "AI declined this message",
+};
+const LANG = { en: "English", ms: "Bahasa Malaysia", mixed: "Mixed / Manglish" };
+const pretty = (s) => String(s || "").replace(/_/g, " ");
+function outcome(r) {
+  if (r.decision === "error") return [`${FAILURE[r.errorKind] || "AI could not answer"} — fixed safe reply + human alert`, "alert"];
+  const h = (r.actions || []).find((a) => a.type === "handover");
+  if (r.decision === "handover" && h?.reason === "conflicting_info") return ["AI reply — information not on record, advisor alerted", "warn"];
+  return DECISION[r.decision] || [r.decision, ""];
+}
 const REASON = { customer_request: "buyer asked for a person", ready_to_buy: "ready to buy", negotiation: "price negotiation", legal: "legal / contract question", complaint: "complaint", financing: "financing assessment", conflicting_info: "facts missing or conflicting", low_confidence: "AI not confident", sensitive: "sensitive situation", other: "other" };
 function actionText(a) {
   switch (a.type) {
@@ -20,6 +34,10 @@ function actionText(a) {
     case "handover": return `Alert a human — ${REASON[a.reason] || a.reason}${a.next_action ? `. Next: ${a.next_action}` : ""}`;
     case "update_qualification": return `Update qualification${a.changed?.length ? ` (${a.changed.join(", ")})` : ""} → score ${a.score} (${a.temperature})`;
     case "add_interest": return `Add interest: ${projectName(a.project_id)}`;
+    case "set_language": return `Remember the buyer's language: ${LANG[a.language] || a.language}`;
+    case "insights": return "Update the client profile / summary from this message";
+    case "workflow_enroll": return `Join follow-up workflow ${a.workflow}`;
+    case "workflow_advance": return `Move workflow ${a.workflow} past stage ${a.from}`;
     case "save_financing": return `Save financing figures (${(a.changed || []).join(", ")}) → ${String(a.result?.outcome || "").replace(/_/g, " ")}${a.new_assessment ? " — new assessment recorded" : ""}`;
     case "request_appointment": return `Create appointment request: ${String(a.kind).replace(/_/g, " ")}${a.preferred_text ? `, "${a.preferred_text}"` : ""}${a.project_id ? ` · ${projectName(a.project_id)}` : ""} — pending confirmation`;
     default: return a.type;
@@ -48,13 +66,28 @@ export async function aitest(el, params) {
     chat.scrollTop = chat.scrollHeight;
   };
   const detail = (r) => {
-    const [label, kind] = DECISION[r.decision] || [r.decision, ""];
-    return `<div class="why">${badge(label, kind)} <small>${[r.intent, r.agent, r.language, isFinite(r.confidence) ? Math.round(r.confidence * 100) + "% sure" : "", r.model, r.latency_ms ? (r.latency_ms / 1000).toFixed(1) + " s" : ""].filter(Boolean).map(esc).join(" · ")}</small>
-      <details><summary>What the AI would do</summary>
-        ${r.actions?.length ? `<ul class="list">${r.actions.map((a) => `<li>${esc(actionText(a))}</li>`).join("")}</ul>` : "<p class='note'>No CRM changes.</p>"}
-        ${(r.attempts || []).some((a) => a.violations.length) ? `<h4>Business-rule checker</h4>${r.attempts.map((a) => `<p class="note"><b>Draft ${a.attempt}:</b> ${a.violations.length ? a.violations.map((v) => `${esc(v.code)} — ${esc(v.detail)}`).join("<br>") : "passed"}</p>${a.violations.length ? `<pre class="content">${esc(a.reply)}</pre>` : ""}`).join("")}` : "<p class='note'>Business-rule checker: passed.</p>"}
-        ${r.facts_used?.length ? `<p class="note">Facts used: ${r.facts_used.map(esc).join(", ")}</p>` : ""}
-        ${r.error ? `<p class="note">Error: ${esc(r.error)}</p>` : ""}
+    const [label, kind] = outcome(r);
+    // the model's own 0–1 rating is a self-assessment, not a measured probability; none at all when the model gave no answer
+    const rating = r.model && Number.isFinite(r.confidence) ? `AI self-rating ${Math.round(r.confidence * 100)}%` : "Self-rating: not available";
+    const h = (r.actions || []).find((a) => a.type === "handover"), rt = r.retrieval;
+    const row = (k, v) => (v ? `<div class="kvr"><dt>${esc(k)}</dt><dd>${v}</dd></div>` : "");
+    return `<div class="why">${badge(label, kind)} <small>${[r.intent && pretty(r.intent), LANG[r.language] || r.language, rating, r.model, r.latency_ms ? (r.latency_ms / 1000).toFixed(1) + " s" : ""].filter(Boolean).map(esc).join(" · ")}</small>
+      <details><summary>Why the AI did this</summary>
+        <dl class="kvl">
+          ${row("AI service", r.decision === "error" ? `<span class="late">No answer — ${esc(FAILURE[r.errorKind] || "error")}</span>` : r.model ? `Answered (${esc(r.model)})` : "Not called — fixed rule")}
+          ${row("Understood as", esc(pretty(r.intent) || "—") + (r.agent ? ` · ${esc(pretty(r.agent))} step` : ""))}
+          ${row("Language", esc(LANG[r.language] || r.language || "—"))}
+          ${row("Project", rt ? (rt.focus?.length ? esc(rt.focus.join(", ")) + ` <small>(${esc(rt.focus_source || "")})</small>` : rt.ambiguous ? "Not named yet" : "None") : "")}
+          ${row("Not on record", rt && Object.keys(rt.not_on_record || {}).length ? Object.entries(rt.not_on_record).map(([n, f]) => `${esc(n)}: ${f.map((x) => esc(pretty(x))).join(", ")}`).join("<br>") : "")}
+          ${row("Conflicting data", rt && Object.keys(rt.conflicts || {}).length ? Object.entries(rt.conflicts).map(([n, f]) => `${esc(n)}: ${f.map((x) => esc(pretty(x))).join(", ")}`).join("<br>") : "")}
+          ${row("Sources used", r.facts_used?.length ? r.facts_used.map(esc).join(", ") : r.decision === "error" ? "" : "None cited")}
+          ${row("Human alert", h ? esc(REASON[h.reason] || h.reason) + (h.summary ? `<br><small>${esc(String(h.summary).slice(0, 400))}</small>` : "") : "No")}
+          ${row("Note", r.degraded ? esc(r.degraded) : "")}
+          ${row("Error", r.error ? (can("manager") ? esc(r.error) : "Details are visible to managers and owners.") : "")}
+        </dl>
+        <h4>CRM changes it would make</h4>
+        ${r.actions?.length ? `<ul class="list">${r.actions.map((a) => `<li>${esc(actionText(a))}</li>`).join("")}</ul>` : "<p class='note'>None.</p>"}
+        ${(r.attempts || []).some((a) => a.violations.length) ? `<h4>Business-rule checker</h4>${r.attempts.map((a) => `<p class="note"><b>Draft ${a.attempt}:</b> ${a.violations.length ? a.violations.map((v) => `${esc(v.code)} — ${esc(v.detail)}`).join("<br>") : "passed"}</p>${a.violations.length ? `<pre class="content">${esc(a.reply)}</pre>` : ""}`).join("")}` : r.attempts?.length ? "<p class='note'>Business-rule checker: passed.</p>" : ""}
       </details></div>`;
   };
   render();

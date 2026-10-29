@@ -88,6 +88,13 @@ export const REPLY_SCHEMA = {
   },
 };
 
+/** The reply schema without insights: used once if the API refuses the full schema, so buyers still get a real reply. */
+export const REPLY_SCHEMA_CORE = {
+  ...REPLY_SCHEMA,
+  required: REPLY_SCHEMA.required.filter((k) => k !== "insights"),
+  properties: Object.fromEntries(Object.entries(REPLY_SCHEMA.properties).filter(([k]) => k !== "insights")),
+};
+
 const blank = (v) => (v === "" || v === 0 || v === null || v === undefined ? null : v);
 const blanks = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k, typeof v === "boolean" ? v : blank(v)]));
 
@@ -115,6 +122,7 @@ How you work
 - You are an AI assistant. In your first reply of a conversation, say so plainly, in the buyer's language, before anything else, introducing yourself by your name (e.g. "Saya ${name}, pembantu AI" / "I'm ${name}, an AI assistant"). If anyone asks, never claim to be human, and never claim to have visited a property or showroom.
 - Write like an experienced, friendly Malaysian property advisor on WhatsApp: short, clear, warm, never pushy. Usually 1–4 short sentences and at most ${ai.max_reply_chars || 700} characters. Ask at most one question per message. Use "tuan/puan" in Bahasa Malaysia unless you know how the buyer prefers to be addressed.
 - Reply in the buyer's language: Bahasa Malaysia, English${manglish ? ", or Manglish if they write in Manglish" : " (do not use Manglish; answer mixed messages in Bahasa Malaysia)"}. Keep property terms buyers use (booking fee, SPA, LPPSA, freehold, built-up, sqft).
+- If the buyer asks for a language (buyer.language_requested in the context, e.g. "Saya nk speak in English"), reply in that language from then on, even when they keep mixing in Malay words, until they ask for another one. Acknowledge the switch briefly and carry on helping. Never translate project names or terms such as LPPSA, SPA, LO or Bumiputera.
 - Do not repeat questions the buyer already answered (see the lead's qualification in the context).
 - Tone guidance from the owner: ${p.tone || "Professional, friendly, patient, concise."}
 

@@ -50,7 +50,12 @@ export async function callClaude(p) {
     }
     let json;
     try { json = await res.json(); } catch { throw new LlmError(`Unreadable response from the AI service (HTTP ${res.status}).`, { kind: "bad_response", status: res.status }); }
-    if (!res.ok) throw new LlmError(`AI request rejected (HTTP ${res.status}): ${json?.error?.message || "unknown error"}`, { kind: res.status === 401 || res.status === 403 ? "auth" : "rejected", status: res.status });
+    if (!res.ok) {
+      const msg = json?.error?.message || "unknown error";
+      // "schema" = the request's output schema was refused (e.g. its compiled grammar is too large): our bug, not an outage
+      const kind = res.status === 401 || res.status === 403 ? "auth" : res.status === 400 && /grammar|schema/i.test(msg) ? "schema" : "rejected";
+      throw new LlmError(`AI request rejected (HTTP ${res.status}): ${msg}`, { kind, status: res.status });
+    }
     if (json.stop_reason === "refusal") throw new LlmError("The AI declined to answer this message.", { kind: "refusal" });
     if (json.stop_reason === "max_tokens") throw new LlmError("The AI reply was cut off (max_tokens).", { kind: "truncated" });
     const text = (json.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
