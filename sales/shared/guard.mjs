@@ -77,6 +77,15 @@ export const FIXED_REPLIES = {
     ms: "Baik, saya akan minta penasihat hartanah kami menghubungi tuan/puan secepat mungkin. Terima kasih atas kesabaran tuan/puan.",
     en: "Sure — I'll ask one of our property advisors to get in touch with you as soon as possible. Thank you for your patience.",
   },
+  // a photo, document or voice note with no words: say what happened and ask for the question in words
+  media: {
+    ms: "Terima kasih 🙏 Saya pembantu AI dan belum boleh buka gambar atau dokumen di sini. Boleh taip soalan tuan/puan? Advisor kami juga akan semak mesej tadi.",
+    en: "Thank you 🙏 I'm an AI assistant and can't open photos or documents here yet. Could you type your question? Our advisor will also check what you sent.",
+  },
+  audio: {
+    ms: "Terima kasih 🙏 Saya pembantu AI dan belum boleh dengar voice note. Boleh taip soalan tuan/puan? Advisor kami juga akan dengar mesej tadi.",
+    en: "Thank you 🙏 I'm an AI assistant and can't listen to voice notes yet. Could you type your question? Our advisor will also listen to it.",
+  },
   safe_fallback: {
     ms: "Terima kasih atas soalan tuan/puan. Saya perlu sahkan maklumat ini dengan penasihat kami dahulu supaya jawapannya tepat. Penasihat kami akan menghubungi tuan/puan tidak lama lagi.",
     en: "Thanks for your question. I need to confirm this with our advisor first so the answer is accurate. One of our advisors will get back to you shortly.",
