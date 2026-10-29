@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { loadContext } from "../../lib/context.mjs";
 import { renderContext, buildSystemPrompt } from "../../lib/prompt.mjs";
 import { respond } from "../../lib/orchestrator.mjs";
-import { projectSpecs, coverage, conflicts, mentionedProjects, resolveFocus, unitList } from "../../../sales/shared/listing.mjs";
+import { projectSpecs, coverage, conflicts, mentionedProjects, resolveFocus, unitList, textDistances, transitDistanceConflicts } from "../../../sales/shared/listing.mjs";
 import { LIVE_PROJECTS } from "./helpers/live-projects.mjs";
 
 const NOW = new Date("2026-10-28T04:00:00Z");
@@ -135,9 +135,12 @@ test("Test 7 · CRM and conversation memory: a follow-up question uses the proje
 test("Test 8 · conflicting records are flagged; an old staff figure does not settle a disagreement, a fresh one does", async () => {
   const facts = (verified_at) => ({ ai_project_facts: [{ project_id: ID["M MIRA"], maintenance_fee_psf: 0.42, verified_at }] });
   let { j } = await ctxJson({ message: "M Mira maintenance?" }, facts("2026-06-01T00:00:00Z"));
-  assert.deepEqual(proj(j, "M MIRA").conflicts, [{ field: "maintenance_fee", values: ["website: RM0.38 psf", "staff check: RM0.42 psf"], resolved: false }]);
+  const mf = (j) => proj(j, "M MIRA").conflicts.find((c) => c.field === "maintenance_fee");
+  assert.deepEqual(mf(j), { field: "maintenance_fee", values: ["website: RM0.38 psf", "staff check: RM0.42 psf"], resolved: false });
+  // the live M MIRA listing also contradicts itself on transit distances (brochure text vs transit list)
+  assert.equal(proj(j, "M MIRA").conflicts.find((c) => c.field === "transport")?.resolved, false);
   ({ j } = await ctxJson({ message: "M Mira maintenance?" }, facts("2026-10-25T00:00:00Z")));
-  assert.equal(proj(j, "M MIRA").conflicts[0].resolved, true);
+  assert.equal(mf(j).resolved, true);
   // the live M AZURA listing contradicts itself: "Unfurnished" with 12 furnished items listed
   ({ j } = await ctxJson({ message: "M Azura fully furnished ke?" }));
   assert.equal(proj(j, "M AZURA").conflicts[0].field, "furnishing");
@@ -181,6 +184,34 @@ test("coverage audit of the 7 live listings: per-field status, with not-applicab
   assert.equal(rows["M ARAYA"].address.status, "published");
   assert.equal(rows["M MIRA"].booking_fee.status, "missing", "staff-only details stay missing until verified");
   assert.equal(conflicts(projectSpecs(LIVE_PROJECTS[0].data), null).length, 1);
+});
+
+// M MIRA as published on 29 Oct 2026: the brochure text in the "Location & accessibility" box said 650m / 820m while
+// the transit list said 2.4km / 2km, and the AI quoted the text. The contradiction must be flagged, not answered.
+const MIRA_TEXT = "M MIRA @ SRI RAMPAI – ACCESSIBILITY & SURROUNDING AMENITIES\n\nHIGHWAYS / ACCESSIBILITY\n\n1. DUKE Highway\n2. Middle Ring Road 2 (MRR2)\n\nPUBLIC TRANSPORT – LRT KELANA JAYA LINE\n\n1. 650m – Sri Rampai LRT Station\n2. 820m – Wangsa Maju LRT Station\n3. 4km – Setiawangsa LRT Station\n\nMRT 3 CIRCLE LINE (PROPOSED)\n\n1. 2km – Setapak MRT Station\n\nCOMMERCIAL / SHOPPING MALLS\n\n1. 500m – AEON Mall";
+const mira = (transit, nearby = MIRA_TEXT) => ({ n: "M MIRA", l: "Wangsa Maju", near: { transit }, nearby });
+
+test("distances in the location text are read line by line, in the formats staff paste", () => {
+  assert.deepEqual(textDistances("1. 650m – Sri Rampai LRT Station\n• 1.2 km to KLCC\n* 820 m - Wangsa Maju LRT\nDUKE Highway\n2. Middle Ring Road 2").map((x) => [x.meters, x.key.trim()]),
+    [[650, "sri rampai"], [1200, "klcc"], [820, "wangsa maju"]]);
+});
+
+test("transit list vs location text: a clear distance contradiction is a conflict the AI must not answer", async () => {
+  const c = conflicts(projectSpecs(mira([{ t: "LRT", n: "Wangsa Maju", d: "2km", ok: true }, { t: "LRT", n: "Sri Rampai", d: "2.4km", ok: true }])), null);
+  assert.deepEqual(c, [{ field: "transport", resolved: false, values: [
+    "transit list: LRT Wangsa Maju 2km · location text: 820m – Wangsa Maju LRT Station",
+    "transit list: LRT Sri Rampai 2.4km · location text: 650m – Sri Rampai LRT Station"] }]);
+  assert.equal(coverage(projectSpecs(mira([{ t: "LRT", n: "Sri Rampai", d: "2.4km", ok: true }]))).transport.status, "conflict", "shown on 'What the AI knows'");
+  // the same distances, small differences, a blank distance, or a station only one side names: no conflict
+  for (const transit of [[{ t: "LRT", n: "Sri Rampai", d: "650m", ok: true }], [{ t: "LRT", n: "Sri Rampai", d: "800m", ok: true }], [{ t: "LRT", n: "Sri Rampai", d: "", ok: true }],
+    [{ t: "MRT", n: "Setapak", d: "2.2km", ok: true }], [{ t: "LRT", n: "Setiawangsa", d: "4km", ok: true }], [{ t: "LRT", n: "Gombak", d: "9km", ok: true }]]) {
+    assert.deepEqual(transitDistanceConflicts(projectSpecs(mira(transit))), [], JSON.stringify(transit));
+  }
+  assert.deepEqual(transitDistanceConflicts(projectSpecs(mira([{ t: "LRT", n: "Wangsa Maju", d: "2km", ok: true }], "* LRT Wangsa Maju\n* LRT Setiawangsa"))), [], "text without distances");
+  assert.deepEqual(transitDistanceConflicts(projectSpecs(mira([{ t: "LRT", n: "Wangsa Maju", d: "4km", ok: true }], "4km – Setiawangsa LRT Station"))), [], "Setiawangsa is not Wangsa Maju");
+  // the AI sees it as an unresolved conflict on the project
+  const { j } = await ctxJson({ message: "M MIRA LRT dekat?" }, { projects: [{ id: "mm", slug: "m-mira", published: true, data: mira([{ t: "LRT", n: "Sri Rampai", d: "2.4km", ok: true }]) }] });
+  assert.deepEqual(proj(j, "M MIRA").conflicts.map((x) => [x.field, x.resolved]), [["transport", false]]);
 });
 
 test("layouts are merged from 'types' and 'layouts' like the website does", () => {
