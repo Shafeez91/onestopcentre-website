@@ -1,8 +1,9 @@
 // AI Sales dashboard — loan eligibility & affordability: the lead page card (advisor+) and the owner's
 // "Financing rules" settings. All figures come from the shared engine (../shared/finance.mjs), the same code the
 // WhatsApp AI uses. Results are preliminary estimates, never approvals.
-import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, badge, opt, empty, money } from "./core.js";
+import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, badge, opt, empty, money, api } from "./core.js";
 import { assess, financingRules, DEFAULT_FINANCING, OUTCOMES, DISCLAIMER, advisorSummary } from "../shared/finance.mjs";
+import { DOC_KINDS, DOC_MIME, DOC_MAX_BYTES, suggestInputs } from "../shared/finance-docs.mjs";
 
 const OUTCOME_KIND = { potentially_affordable: "ok", may_be_affordable_with_adjustments: "warn", potentially_challenging: "alert", insufficient_information: "" };
 const ESCALATE = {
@@ -16,16 +17,19 @@ const FIELD_LABEL = {
 };
 export const outcomeBadge = (o) => badge((OUTCOMES[o] || {}).en || "No check yet", OUTCOME_KIND[o] || "");
 const rules = () => financingRules(S.settings?.financing);
+const docsOn = () => S.settings?.flags?.financing_documents !== false;
 
 // null hides the card: viewers never see income figures, and the lead page keeps working if the tables are missing
 export async function loadFinancing(leadId) {
   if (!can("advisor")) return null;
   try {
-    const [profile, history] = await Promise.all([
+    const [profile, history, docs] = await Promise.all([
       q(SB.from("ai_financing_profiles").select("*").eq("lead_id", leadId).maybeSingle()),
       q(SB.from("ai_financing_assessments").select("id,route,outcome,result,source,created_by,created_at,rules_version").eq("lead_id", leadId).order("created_at", { ascending: false }).limit(10)),
+      // null when the documents table is not there yet (migration 19) or the feature is switched off
+      docsOn() ? q(SB.from("ai_financing_documents").select("*").eq("lead_id", leadId).order("created_at", { ascending: false })).catch(() => null) : null,
     ]);
-    return { profile, history: history || [] };
+    return { profile, history: history || [], docs };
   } catch (e) { console.warn("financing check unavailable:", e?.message || e); return null; }
 }
 
@@ -65,8 +69,9 @@ export function financingSection(data) {
   if (!data) return "";
   const p = data.profile, i = p?.inputs || {};
   return `<section class="card" id="fin"><h2>Financing check</h2>
-    <p class="note">Preliminary LPPSA / bank estimate from figures the buyer chose to share. Never record IC numbers, payslips or bank details here.</p>
+    <p class="note">Preliminary LPPSA / bank estimate from figures the buyer chose to share. Never type IC, account or card numbers here; documents go in <b>Financing documents</b>.</p>
     <div id="fin-result">${p?.result ? resultHtml(p.result) + `<p class="note">Last updated ${esc(fmtDate(p.updated_at))} by ${esc(p.updated_by)}.</p>` : empty("No financing check yet. The AI fills this in when a buyer asks, or use the calculator below.")}</div>
+    ${docsSection(data.docs)}
     <details id="fin-calc"><summary>Calculator — check or update figures</summary>
     <form id="ffin" class="form two">
       <label>Route<select name="route">${opt("", "Choose…", i.route)}${opt("lppsa", "LPPSA (government servant)", i.route)}${opt("bank", "Bank loan", i.route)}</select></label>
@@ -114,6 +119,7 @@ function inputsOf(form) {
 export function bindFinancing(el, { leadId, contactId, data, qualification, reload }) {
   const f = $("#ffin", el);
   if (!f || !data) return;
+  bindDocs(el, { leadId, data, form: f, reload });
   guardForm(f, `lead:${leadId}:financing`);
   const preview = $("#fin-preview", f);
   const show = () => { const i = inputsOf(f); preview.innerHTML = Object.keys(i).length ? `<h3>Preview (not saved)</h3>${resultHtml(assess(i, rules()))}` : ""; };
@@ -137,6 +143,112 @@ export function bindFinancing(el, { leadId, contactId, data, qualification, relo
       clearDraft(f); reload();
     }, "Financing check saved");
   };
+}
+
+/* ---------- Financing documents: staff upload, the AI reads, staff confirm ---------- */
+const DOC_STATUS = { uploaded: ["Not read yet", ""], read: ["Read, check figures", "warn"], unreadable: ["Could not read", "alert"], failed: ["Reading failed", "alert"], confirmed: ["Figures confirmed", "ok"] };
+const lineList = (items) => (items || []).map((i) => `${esc(i.name)} ${esc(money(i.amount))}`).join(" · ");
+
+function extractedHtml(x) {
+  if (!x) return "";
+  const p = x.payslip || {}, c = x.ccris || {}, b = x.bank_statement || {};
+  const kv = [];
+  const add = (k, v) => { if (v !== null && v !== undefined && v !== "") kv.push([k, v]); };
+  if (x.document_kind === "payslip") {
+    add("Basic salary", money(p.basic_salary)); add("Fixed allowances", lineList(p.fixed_allowances)); add("Overtime / commission", lineList(p.variable_income));
+    add("Statutory deductions", lineList(p.statutory_deductions)); add("Loan deductions", lineList(p.loan_deductions)); add("Other deductions", lineList(p.other_deductions));
+    add("Gross / net pay", [money(p.gross_pay), money(p.net_pay)].filter(Boolean).join(" / ")); add("Employer", p.employer_sector !== "unknown" ? p.employer_sector.replace("_", " ") : "");
+    add("Birth year", p.birth_year); add("Appointed", p.appointment_date); add("Service status", p.service_status !== "unknown" ? p.service_status.replace(/_/g, " ") : "");
+  } else if (x.document_kind === "ccris") {
+    add("Report date", c.report_date);
+    for (const f of c.facilities || []) add(f.facility + (f.is_credit_card ? " (card)" : ""), [f.monthly_instalment !== null ? money(f.monthly_instalment) + "/month" : "", f.outstanding !== null ? money(f.outstanding) + " outstanding" : "", f.in_arrears ? "IN ARREARS" : ""].filter(Boolean).join(" · "));
+    if (c.special_attention) add("Special attention account", "Yes");
+  } else if (x.document_kind === "bank_statement") {
+    add("Months covered", b.months_covered); add("Average salary credit", money(b.average_salary_credit)); add("Regular loan payments", lineList(b.regular_loan_payments));
+    add("Average month-end balance", money(b.average_month_end_balance)); if (b.returned_payments) add("Returned / bounced payments", "Yes");
+  }
+  return `<dl class="kv">${kv.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+    ${(x.warnings || []).map((w) => `<p class="note">⚠ ${esc(w)}</p>`).join("")}`;
+}
+
+function docsSection(docs) {
+  if (!docs) return "";
+  const usable = docs.filter((d) => (d.status === "read" || d.status === "confirmed") && d.extracted);
+  const sug = suggestInputs(usable.map((d) => d.extracted));
+  const sugKeys = Object.keys(sug.inputs);
+  return `<details id="fin-docs"${docs.length ? " open" : ""}><summary>Financing documents (${docs.length})</summary>
+    <p class="note">Upload the buyer's payslip, CCRIS report or bank statement. The AI reads the figures; <b>you check them</b> before they go into the calculator. Files are private to staff, never sent to anyone, and deleted automatically after ${esc(String(S.settings?.compliance?.financing_docs_retention_days || 30))} days. Only upload documents the buyer agreed to share for this check.</p>
+    <form id="fdoc" class="form two">
+      <label>Document<select name="kind">${Object.entries(DOC_KINDS).map(([k, v]) => opt(k, v.en, "payslip")).join("")}</select></label>
+      <label>File (PDF or photo, up to 4 MB)<input type="file" name="file" accept="${attr(DOC_MIME.join(","))}" required></label>
+      <div class="actions full"><button class="btn pri">Upload and read</button></div>
+    </form>
+    ${docs.length ? `<ul class="list">${docs.map((d) => { const [label, kind] = DOC_STATUS[d.status] || [d.status, ""]; return `<li data-doc="${attr(d.id)}">
+      <b>${esc(DOC_KINDS[d.kind]?.en || d.kind)}</b> ${badge(label, kind)} <small>${esc(d.file_name)} · ${esc(d.uploaded_by)} · ${esc(fmtDate(d.created_at))} · deleted ${esc(fmtDate(d.expires_at, false))}</small>
+      ${d.extracted?.readable ? `<details><summary>What the AI read${d.extracted.period ? " · " + esc(d.extracted.period) : ""} · ${esc(d.extracted.confidence)} confidence</summary>${extractedHtml(d.extracted)}</details>` : ""}
+      ${d.status === "unreadable" ? `<p class="note">${esc((d.extracted?.warnings || [])[0] || "The AI could not read this as a " + (DOC_KINDS[d.kind]?.en || "document").toLowerCase() + ". Upload a clearer, uncropped copy.")}</p>` : ""}
+      ${d.status === "failed" ? `<p class="note">${esc(d.error || "")}</p>` : ""}
+      <div class="actions"><button type="button" class="btn sm" data-doc-view>View</button>${["uploaded", "failed", "unreadable"].includes(d.status) ? ` <button type="button" class="btn sm" data-doc-read>Read with AI</button>` : ""} <button type="button" class="btn sm" data-doc-del>Delete</button></div></li>`; }).join("")}</ul>` : ""}
+    ${sugKeys.length ? `<div class="card notice" id="fin-sug"><div><h3>Suggested calculator figures</h3>
+      <table class="mini"><thead><tr><th>Field</th><th>Value</th><th>From</th></tr></thead><tbody>${sugKeys.map((k) => `<tr><td>${esc(FIELD_LABEL[k] || k.replace(/_/g, " "))}</td><td>${esc(typeof sug.inputs[k] === "number" && !["age", "service_years"].includes(k) ? money(sug.inputs[k]) : sug.inputs[k])}</td><td>${esc(sug.sources[k])}</td></tr>`).join("")}</tbody></table>
+      ${sug.checks.map((c) => `<p class="note">⚠ ${esc(c)}</p>`).join("")}
+      <p class="note">Check each figure against the document. Using them fills the calculator below; nothing is saved until you press <b>Save to lead</b>.</p>
+      <button type="button" class="btn pri" id="fin-use">I checked these: use in calculator</button></div></div>` : ""}
+  </details>`;
+}
+
+// photos are scaled down in the browser (the AI reads 1600 px well, and the request limit is 6 MB)
+async function prepareFile(file) {
+  if (!file.type.startsWith("image/")) return { blob: file, mime: file.type, name: file.name };
+  const img = await createImageBitmap(file).catch(() => null);
+  if (!img) return { blob: file, mime: file.type, name: file.name };
+  const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.85));
+  return blob ? { blob, mime: "image/jpeg", name: file.name.replace(/\.[^.]+$/, "") + ".jpg" } : { blob: file, mime: file.type, name: file.name };
+}
+const toBase64 = (blob) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
+const docApi = (body) => api("/api/sales/financing/documents", { method: "POST", body: JSON.stringify(body) });
+
+function bindDocs(el, { leadId, data, form, reload }) {
+  const box = $("#fin-docs", el);
+  if (!box) return;
+  const up = $("#fdoc", box);
+  up.onsubmit = (e) => {
+    e.preventDefault();
+    const file = up.file.files[0];
+    if (!file) return toast("Choose a file first.", "err");
+    if (!DOC_MIME.includes(file.type)) return toast("Only PDF, JPG, PNG or WEBP files.", "err");
+    act(up.querySelector("button"), async () => {
+      const f = await prepareFile(file);
+      if (f.blob.size > DOC_MAX_BYTES) throw new Error("The file is larger than 4 MB. Upload a smaller scan or one page at a time.");
+      const { document: doc } = await docApi({ action: "upload", lead_id: leadId, kind: up.kind.value, file_name: f.name, mime: f.mime, data: await toBase64(f.blob) });
+      toast("Uploaded. The AI is reading it…");
+      let failed = null;
+      try { await docApi({ action: "read", id: doc.id }); } catch (err) { failed = err; }
+      reload();
+      if (failed) throw failed;
+    }, "Document read: check the figures");
+  };
+  $$("[data-doc]", box).forEach((li) => {
+    const id = li.dataset.doc;
+    const v = $("[data-doc-view]", li), r = $("[data-doc-read]", li), d = $("[data-doc-del]", li);
+    v.onclick = () => act(v, async () => { const { url } = await docApi({ action: "view", id }); window.open(url, "_blank", "noopener"); });
+    if (r) r.onclick = () => act(r, async () => { await docApi({ action: "read", id }); reload(); }, "Document read: check the figures");
+    d.onclick = () => confirm("Delete this document now? The file and what the AI read are removed.") && act(d, async () => { await docApi({ action: "delete", id }); reload(); }, "Document deleted");
+  });
+  const use = $("#fin-use", box);
+  if (use) use.onclick = () => act(use, async () => {
+    const usable = data.docs.filter((d) => (d.status === "read" || d.status === "confirmed") && d.extracted);
+    const { inputs } = suggestInputs(usable.map((d) => d.extracted));
+    for (const [k, v] of Object.entries(inputs)) { const inp = form.elements[k]; if (inp) inp.value = v; }
+    $("#fin-calc", el).open = true;
+    form.dispatchEvent(new Event("input"));
+    await Promise.all(usable.filter((d) => d.status === "read").map((d) => docApi({ action: "confirm", id: d.id })));
+    $("#fin-calc", el).scrollIntoView({ behavior: "smooth", block: "start" });
+  }, "Figures added to the calculator: choose the route and price, then Save to lead");
 }
 
 /* ---------- Settings → Financing rules (owner) ---------- */

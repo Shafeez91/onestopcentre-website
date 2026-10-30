@@ -1539,4 +1539,56 @@ begin
 end $$;
 rollback;
 
+\echo 'T66 financing documents: private bucket, staff read only, server writes, expiry and purge, PDPA erase wipes what was read'
+begin;
+do $$ begin
+  assert (select public from storage.buckets where id = 'ai-financing-docs') = false, 'the bucket is private';
+  assert (select (flags ->> 'financing_documents')::boolean from public.ai_settings where id = 1), 'on by default';
+  assert (select (compliance ->> 'financing_docs_retention_days')::int from public.ai_settings where id = 1) = 30;
+end $$;
+do $$
+declare cid uuid; lid uuid; d1 uuid := gen_random_uuid(); d2 uuid := gen_random_uuid(); n int;
+begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  cid := public.ai_upsert_contact('60111222333', 'Doc Buyer', null);
+  lid := public.ai_open_lead(cid, 'WhatsApp (direct)');
+  insert into public.ai_financing_documents (id, lead_id, kind, file_name, mime, size_bytes, storage_path, uploaded_by, extracted, status)
+  values (d1, lid, 'payslip', 'slip.pdf', 'application/pdf', 1000, lid || '/' || d1 || '.pdf', 'adv@test.local', '{"readable":true}', 'read'),
+         (d2, lid, 'ccris', 'ccris.pdf', 'application/pdf', 1000, lid || '/' || d2 || '.pdf', 'adv@test.local', null, 'uploaded');
+  assert (select expires_at::date from public.ai_financing_documents where id = d1) = (now() + interval '30 days')::date, '30-day expiry';
+  assert (select count(*) from public.ai_financing_docs_due(50)) = 0, 'nothing due yet';
+  -- a stray file with no row, older than a day, is purged too
+  insert into storage.objects (bucket_id, name, created_at) values ('ai-financing-docs', 'stray/file.pdf', now() - interval '2 days');
+  assert (select count(*) from public.ai_financing_docs_due(50) where id is null and storage_path = 'stray/file.pdf') = 1;
+  -- PDPA erase: what was read is wiped and the files fall due at once
+  perform public.ai_erase_contact(cid, 'test');
+  assert (select count(*) from public.ai_financing_documents where lead_id = lid and extracted is null and file_name = '[erased]') = 2;
+  assert (select count(*) from public.ai_financing_docs_due(50) where id in (d1, d2)) = 2;
+  n := public.ai_financing_docs_purged(array[d1, d2]);
+  assert n = 2 and not exists (select 1 from public.ai_financing_documents where id in (d1, d2));
+  -- the table has no audit trigger: nothing read from a document is copied into the audit trail
+  assert not exists (select 1 from public.ai_audit_logs where table_name = 'ai_financing_documents');
+end $$;
+-- staff: advisors read, nobody writes directly; viewers and strangers see nothing; the purge functions are server-only
+do $$ declare lid uuid; begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  lid := public.ai_open_lead(public.ai_upsert_contact('60111222444', 'Doc Buyer 2', null), 'WhatsApp (direct)');
+  insert into public.ai_financing_documents (lead_id, kind, file_name, mime, size_bytes, storage_path, uploaded_by) values (lid, 'payslip', 's.jpg', 'image/jpeg', 10, lid || '/x.jpg', 'adv@test.local');
+  begin insert into public.ai_financing_documents (lead_id, kind, file_name, mime, size_bytes, storage_path, uploaded_by) values (lid, 'payslip', 'big.pdf', 'application/pdf', 5000000, lid || '/big.pdf', 'a'); assert false, 'over 4 MB'; exception when check_violation then null; end;
+  begin insert into public.ai_financing_documents (lead_id, kind, file_name, mime, size_bytes, storage_path, uploaded_by) values (lid, 'payslip', 'x.exe', 'application/x-msdownload', 10, lid || '/x.exe', 'a'); assert false, 'not a document type'; exception when check_violation then null; end;
+  perform set_config('request.jwt.claims', '{}', true);
+end $$;
+set local role authenticated;
+select public.t_login('advisor@test.local');
+do $$ begin
+  assert (select count(*) from public.ai_financing_documents) = 1, 'advisors see the list';
+  begin update public.ai_financing_documents set status = 'confirmed'; assert false, 'no direct writes'; exception when insufficient_privilege then null; end;
+  begin delete from public.ai_financing_documents; assert false, 'no direct deletes'; exception when insufficient_privilege then null; end;
+  begin perform public.ai_financing_docs_due(5); assert false, 'purge list is server-only'; exception when insufficient_privilege then null; end;
+end $$;
+select public.t_login('viewer@test.local');
+do $$ begin assert (select count(*) from public.ai_financing_documents) = 0, 'viewers see no documents'; end $$;
+reset role;
+rollback;
+
 \echo 'ALL DB TESTS PASSED'

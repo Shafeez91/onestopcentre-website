@@ -1060,6 +1060,58 @@ test("financing check: lead page shows the saved result; the calculator previews
   }
 });
 
+test("financing documents: upload and read a payslip, see what was read, use the checked figures in the calculator", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const blank = { payslip: { employer_sector: "unknown", fixed_allowances: [], variable_income: [], statutory_deductions: [], loan_deductions: [], other_deductions: [], service_status: "unknown" }, ccris: { facilities: [] }, bank_statement: { regular_loan_payments: [] } };
+  const slip = { ...blank, readable: true, document_kind: "payslip", period: "2026-09", confidence: "high", warnings: ["Totals do not add up by RM10"],
+    payslip: { ...blank.payslip, employer_sector: "government", basic_salary: 4200, fixed_allowances: [{ name: "ITKA", amount: 300 }], statutory_deductions: [{ name: "PCB", amount: 120 }], loan_deductions: [{ name: "Koperasi", amount: 450 }], service_status: "permanent_confirmed", net_pay: 3500 } };
+  const ccris = { ...blank, readable: true, document_kind: "ccris", period: "2026-10", confidence: "medium", warnings: [],
+    ccris: { report_date: "2026-10-20", special_attention: false, facilities: [{ facility: "Hire purchase", monthly_instalment: 780, outstanding: 40000, in_arrears: false, is_credit_card: false }, { facility: "Credit card", monthly_instalment: null, outstanding: 3200, in_arrears: false, is_credit_card: true }] } };
+  const docs = [
+    { id: "D1", lead_id: "L1", kind: "payslip", file_name: "slip-sept.pdf", mime: "application/pdf", size_bytes: 1000, status: "read", extracted: slip, uploaded_by: "advisor@test.local", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 30 * 864e5).toISOString() },
+    { id: "D2", lead_id: "L1", kind: "ccris", file_name: "ccris.pdf", mime: "application/pdf", size_bytes: 1000, status: "read", extracted: ccris, uploaded_by: "advisor@test.local", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 30 * 864e5).toISOString() },
+  ];
+  const { page, ctx, errors } = await newPage({ width: 1280, height: 900 }, { mutate: (db) => { db.ai_financing_documents = docs; } });
+  try {
+    const sent = [];
+    await page.route("**/api/sales/financing/documents", (r) => { const b = JSON.parse(r.request().postData() || "{}"); sent.push(b);
+      const body = b.action === "upload" ? { document: { id: "D3", status: "uploaded" } } : b.action === "read" ? { document: { id: b.id, status: "read" } } : { ok: true };
+      r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) }); });
+    await page.goto(base + "/sales/#/lead/L1?tab=sales");
+    await page.waitForSelector("#fin-docs");
+    const box = await page.textContent("#fin-docs");
+    assert.match(box, /Financing documents \(2\)/);
+    assert.match(box, /deleted automatically after 30 days/);
+    assert.match(box, /Read, check figures/);
+    assert.match(box, /Totals do not add up/);
+    assert.match(box, /Suggested calculator figures/);
+    assert.match(box, /RM4,200/);
+    assert.match(box, /RM780/, "commitments from CCRIS, not the payslip");
+    assert.match(box, /koperasi and ANGKASA/);
+
+    // upload: a PDF goes up as base64 with its type, then the AI reads it
+    await page.setInputFiles("#fdoc input[name=file]", { name: "payslip-oct.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 test") });
+    await page.click("#fdoc button.pri");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Document read/.test(t.textContent)));
+    assert.equal(sent[0].action, "upload");
+    assert.equal(sent[0].lead_id, "L1"); assert.equal(sent[0].kind, "payslip"); assert.equal(sent[0].mime, "application/pdf");
+    assert.equal(Buffer.from(sent[0].data, "base64").toString(), "%PDF-1.4 test");
+    assert.deepEqual(sent[1], { action: "read", id: "D3" });
+
+    // the checked figures fill the calculator (not saved), and both documents are marked confirmed
+    await page.waitForSelector("#fin-use");
+    sent.length = 0;
+    await page.click("#fin-use");
+    await page.waitForFunction(() => document.querySelector("#ffin input[name=basic_salary]").value === "4200");
+    assert.equal(await page.inputValue("#ffin input[name=fixed_allowances]"), "300");
+    assert.equal(await page.inputValue("#ffin input[name=commitments_monthly]"), "780");
+    assert.equal(await page.inputValue("#ffin input[name=credit_card_balance]"), "3200");
+    assert.equal(await page.inputValue("#ffin select[name=confirmed_service]"), "yes");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Figures added to the calculator/.test(t.textContent)));
+    assert.deepEqual(sent.map((b) => b.action + ":" + b.id).sort(), ["confirm:D1", "confirm:D2"]);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("financing check is hidden from viewers; settings validate and save the rule set", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage({ width: 1024, height: 900 });
   try {
