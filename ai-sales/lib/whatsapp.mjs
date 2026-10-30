@@ -31,27 +31,37 @@ export const isReadable = (m) => ["text", "button", "interactive"].includes(m?.t
  * when the number is used in the app and the API at the same time (coexistence).
  * Only events for `phoneNumberId` are kept when it is given (other numbers on the same app are ignored).
  */
+// A buyer with a WhatsApp username may hide their number. Their messages then carry a business-scoped user id (BSUID,
+// e.g. "MY.1349120865530274") in from_user_id / contacts[].user_id instead of a phone number in from / wa_id; replies
+// go to it in "recipient" instead of "to". Such an id is stored as the contact's wa_id, never as a phone number.
+export const isUserId = (id) => /[A-Za-z.]/.test(String(id || ""));
+
 export function parseWebhook(payload, phoneNumberId = null) {
   const messages = [], statuses = [], echoes = [];
-  if (payload?.object !== "whatsapp_business_account") return { messages, statuses, echoes };
+  let unidentified = 0;
+  if (payload?.object !== "whatsapp_business_account") return { messages, statuses, echoes, unidentified };
   for (const entry of payload.entry || []) {
     for (const ch of entry.changes || []) {
       const v = ch.value || {};
       if (phoneNumberId && v.metadata?.phone_number_id && String(v.metadata.phone_number_id) !== String(phoneNumberId)) continue;
       if (ch.field === "smb_message_echoes") {
         for (const m of v.message_echoes || []) {
-          if (!m?.id || !m?.to) continue;
-          echoes.push({ wa_id: String(m.to), wamid: String(m.id), type: m.type || "unknown", text: textOf(m).slice(0, 4096),
+          const to = m?.to || m?.to_user_id || m?.recipient_user_id;
+          if (!m?.id || !to) continue;
+          echoes.push({ wa_id: String(to), wamid: String(m.id), type: m.type || "unknown", text: textOf(m).slice(0, 4096),
             sent_at: m.timestamp ? new Date(Number(m.timestamp) * 1000).toISOString() : null });
         }
         continue;
       }
       if (ch.field !== "messages") continue;
-      const names = Object.fromEntries((v.contacts || []).map((c) => [c.wa_id, c.profile?.name || null]));
+      // the phone number when WhatsApp gives it (as before), else the username's business-scoped id
+      const contacts = v.contacts || [], names = {};
+      for (const c of contacts) for (const k of [c.wa_id, c.user_id]) if (k) names[k] = c.profile?.name || c.profile?.username || null;
       for (const m of v.messages || []) {
-        if (!m?.id || !m?.from) continue;
+        const who = m?.from || m?.from_user_id || (contacts.length === 1 ? contacts[0].wa_id || contacts[0].user_id : null);
+        if (!m?.id || !who) { if (m?.id) unidentified++; continue; }
         messages.push({
-          wa_id: String(m.from), name: names[m.from] || null, wamid: String(m.id), type: m.type || "unknown",
+          wa_id: String(who), user_id: m.from_user_id || null, name: names[who] || names[m.from_user_id] || null, wamid: String(m.id), type: m.type || "unknown",
           text: textOf(m).slice(0, 4096), readable: isReadable(m),
           sent_at: m.timestamp ? new Date(Number(m.timestamp) * 1000).toISOString() : null, raw: m,
         });
@@ -63,7 +73,7 @@ export function parseWebhook(payload, phoneNumberId = null) {
       }
     }
   }
-  return { messages, statuses, echoes };
+  return { messages, statuses, echoes, unidentified };
 }
 
 /** True while free-form messages are allowed: within 24 hours of the buyer's last message. */
@@ -91,7 +101,8 @@ export function waConfig(env) {
  */
 export async function sendWhatsApp(cfg, to, msg, { fetchImpl = fetch } = {}) {
   if (!cfg) throw new WhatsAppError("WhatsApp is not configured (WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID).", { kind: "config" });
-  const base = { messaging_product: "whatsapp", recipient_type: "individual", to: String(to).replace(/\D/g, "") };
+  const base = { messaging_product: "whatsapp", recipient_type: "individual",
+    ...(isUserId(to) ? { recipient: String(to).trim() } : { to: String(to).replace(/\D/g, "") }) };
   let body;
   if (msg.template) {
     const params = (msg.template.params || []).map((t) => ({ type: "text", text: String(t ?? "").slice(0, 1000) || "-" }));
