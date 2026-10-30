@@ -92,6 +92,27 @@ test("pipeline: won and lost columns show closed leads at the end, with a link t
   } finally { await ctx.close(); }
 });
 
+test("leads list: picking a won or lost stage shows the closed leads (status follows the stage)", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.desktop);
+  try {
+    const asked = [];
+    page.on("request", (r) => { if (/\/rest\/v1\/ai_leads\?/.test(r.url()) && /stage_id=eq/.test(r.url())) asked.push(decodeURIComponent(r.url())); });
+    await page.goto(base + "/sales/#/leads");
+    await page.waitForSelector("#flt");
+    assert.equal(await page.inputValue("#flt select[name=status]"), "open");
+    await page.selectOption("#flt select[name=stage]", "s5");   // LO, SPA & LA Signed (won)
+    await page.waitForFunction(() => /stage=s5/.test(location.hash) && /status=closed/.test(location.hash));
+    await page.waitForFunction(() => document.querySelector("#flt select[name=status]")?.value === "closed");
+    assert.ok(asked.some((u) => /closed_at=not\.is\.null/.test(u) && /stage_id=eq\.s5/.test(u)), "closed leads asked for");
+    await page.selectOption("#flt select[name=stage]", "s2");   // an open stage
+    await page.waitForFunction(() => /stage=s2/.test(location.hash) && /status=open/.test(location.hash));
+    // an old link with Open + a closing stage still shows the closed leads
+    await page.goto(base + "/sales/#/leads?status=open&stage=s6");
+    await page.waitForFunction(() => document.querySelector("#flt select[name=status]")?.value === "closed");
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("new lead: validates phone, uses the de-duplicating database functions, shows success", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes } = await newPage(VIEWPORTS.ipad);
   try {
