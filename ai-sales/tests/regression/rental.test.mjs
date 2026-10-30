@@ -122,3 +122,13 @@ test("prompt: rent and yield only from rental_estimates, labelled as estimates w
   assert.match(sys, /Never work out a rent, yield or rate yourself/);
   assert.match(sys, /If rental_estimates says NO SOURCE: give no rent or yield figure/);
 });
+
+test("respond(): a long rental reference outside the AI's knowledge budget is still used for the estimate", async () => {
+  const filler = { id: "k0", project_id: null, title: "FAQ", content: "Soalan lazim. ".repeat(700) }; // ~9,800 characters, fills the budget
+  const long = { ...REFERENCE, content: REFERENCE.content + "\n" + "Nota pasaran sewa. ".repeat(450) };
+  const llm = llmOf(draft(["Senario konservatif (bukan data sewa sebenar): Type D ~RM2,290 sebulan, gross yield 5.3%. Bukan jaminan."], { intent: "objection" }));
+  const r = await respond({ db: db([filler, long]), llm, message: "Mana margin lg untung?", history, now: NOW, mode: "simulate" });
+  assert.match(ctxOf(llm.calls[0]).rental_estimates.projects[0].based_on, /CONSERVATIVE SCENARIO/);
+  assert.equal(r.decision, "reply", JSON.stringify(r.violations));
+});
+
