@@ -190,7 +190,7 @@ export async function newPage(viewport, { signedIn = true, mutate = null } = {})
 }
 
 /** Every dashboard route the browser tests visit. */
-export const SECTIONS = ["overview", "inbox", "inbox?c=V1", "ai-test", "leads", "lead/L1", "pipeline", "appointments", "appointments?view=calendar", "appointments?view=tasks", "handover", "workflows", "workflow/rmk", "workflow/rmk?view=list", "workflow/rmk?view=stages", "workflow/rmk?view=settings", "workflow/rmk?view=history", "properties", "property/t1", "knowledge", "knowledge?tab=entries", "knowledge?tab=faqs", "knowledge?tab=search",
+export const SECTIONS = ["overview", "inbox", "inbox?c=V1", "ai-test", "calc-lppsa", "calc-bank", "calc-compare", "leads", "lead/L1", "pipeline", "appointments", "appointments?view=calendar", "appointments?view=tasks", "handover", "workflows", "workflow/rmk", "workflow/rmk?view=list", "workflow/rmk?view=stages", "workflow/rmk?view=settings", "workflow/rmk?view=history", "properties", "property/t1", "knowledge", "knowledge?tab=entries", "knowledge?tab=faqs", "knowledge?tab=search",
   "templates", "templates?tab=templates", "followups", "campaigns", "reports", "settings", "settings?tab=persona", "settings?tab=ai", "settings?tab=scoring", "settings?tab=business", "settings?tab=compliance", "settings?tab=notifications", "settings?tab=financing", "settings/pipeline", "team", "integrations", "audit", "audit?tab=consent", "audit?tab=retention"];
 
 /** Navigates the dashboard to `#/route` and waits until that page (not the previous one) has rendered. */

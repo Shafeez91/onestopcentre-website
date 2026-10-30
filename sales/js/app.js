@@ -5,6 +5,7 @@ import * as kb from "./knowledge.js";
 import * as adm from "./admin.js";
 import * as ait from "./aitest.js";
 import * as wfp from "./workflows.js";
+import * as calc from "./calculators.js";
 import { icon } from "./icons.js";
 import { dashboard } from "./dashboard.js";
 import { leadWorkspace } from "./lead.js";
@@ -14,6 +15,7 @@ import { inbox } from "./inbox.js";
 const NAV = [
   ["Overview", [["overview", "Dashboard", "dashboard"], ["inbox", "WhatsApp inbox", "inbox"], ["handover", "Handover queue", "flag"]]],
   ["Sales & Clients", [["leads", "Leads & CRM", "users"], ["pipeline", "Pipeline", "columns"], ["appointments", "Tasks & appointments", "calendar"], ["workflows", "Follow-up workflows", "workflow"]]],
+  ["Financing tools", [["calc-lppsa", "LPPSA calculator", "calculator"], ["calc-bank", "Bank loan calculator", "bank"]]],
   ["AI & Knowledge", [["settings", "AI agent settings", "sliders"], ["ai-test", "AI test console", "sparkle"], ["properties", "Property projects", "building"], ["knowledge", "Knowledge base", "book"], ["templates", "Templates & objections", "quote"]]],
   ["Reporting", [["reports", "Reports", "chart"], ["campaigns", "Campaigns", "megaphone"], ["followups", "Follow-up automation", "refresh"]]],
   ["Administration", [["team", "Team & permissions", "team"], ["integrations", "Integrations", "plug"], ["audit", "Consent, security & audit", "shield"]]],
@@ -21,7 +23,7 @@ const NAV = [
 const NAV_ITEM = Object.fromEntries(NAV.flatMap(([g, items]) => items.map(([k, l]) => [k, { group: g, label: l }])));
 const ROUTES = {
   overview: (el) => dashboard(el), inbox: (el, p) => inbox(el, p), leads: (el, p) => crm.leads(el, p), lead: (el, p, id) => leadWorkspace(el, p, id),
-  "ai-test": (el, p) => ait.aitest(el, p), workflows: (el, p) => wfp.workflows(el, p), workflow: (el, p, id) => wfp.workflow(el, p, id),
+  "ai-test": (el, p) => ait.aitest(el, p), "calc-lppsa": (el) => calc.lppsaCalc(el), "calc-bank": (el) => calc.bankCalc(el), "calc-compare": (el) => calc.compareCalc(el), workflows: (el, p) => wfp.workflows(el, p), workflow: (el, p, id) => wfp.workflow(el, p, id),
   // the RMK page before workflows were configurable: same pipeline, now the RMK workflow
   rmk: (el, p) => wfp.workflow(el, new URLSearchParams({ view: { settings: "stages" }[p.get("view")] || p.get("view") || "board" }), "rmk"),
   pipeline: (el) => crm.pipeline(el), appointments: (el, p) => crm.appointments(el, p), handover: (el) => crm.handover(el),
@@ -29,8 +31,8 @@ const ROUTES = {
   templates: (el, p) => adm.templates(el, p), followups: (el) => adm.followups(el), campaigns: (el) => adm.campaigns(el), reports: (el, p) => adm.reports(el, p),
   settings: (el, p, id) => (id === "pipeline" ? adm.stages(el) : adm.settings(el, p)), team: (el) => adm.team(el), integrations: (el) => adm.integrations(el), audit: (el, p) => adm.audit(el, p),
 };
-const NAV_OF = { lead: "leads", property: "properties", workflow: "workflows", rmk: "workflows" };
-const DETAIL = { lead: "Lead", property: "Project", workflow: "Workflow" };
+const NAV_OF = { lead: "leads", property: "properties", workflow: "workflows", rmk: "workflows", "calc-compare": "calc-lppsa" };
+const DETAIL = { lead: "Lead", property: "Project", workflow: "Workflow", "calc-compare": "LPPSA vs bank" };
 const NAV_KEY = "sales:nav-collapsed";
 
 const root = $("#app");

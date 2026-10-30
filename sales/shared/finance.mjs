@@ -137,28 +137,30 @@ export function principalFor(payment, ratePct, months) {
   return (A * (f - 1)) / (r * f);
 }
 
-/** Tiered rates (e.g. LPPSA 4% up to RM750k, 4.5% on the rest): each band is repaid as its own reducing balance over the same term. */
-export function tieredInstalment(principal, tiers, months) {
-  let left = Number(principal), prev = 0, total = 0;
+/**
+ * Tiered rates (LPPSA: 4% on the first RM750,000, 4.5% on the part above) as LPPSA applies them: one weighted-average
+ * rate on the whole amount, {(A1 × R1) + (A2 × R2)} / A (Smart Kira; e.g. RM1,000,000 → 4.125%).
+ */
+export function weightedRatePct(principal, tiers) {
+  const P = Number(principal);
+  if (!(P > 0)) return Number(tiers[0].rate_pct);
+  let left = P, prev = 0, sum = 0;
   for (const t of tiers) {
     if (left <= 0) break;
     const cap = t.up_to === null || t.up_to === undefined ? Infinity : t.up_to - prev;
     const part = Math.min(left, cap);
-    total += instalment(part, t.rate_pct, months);
-    left -= part; prev = t.up_to ?? prev;
+    sum += part * t.rate_pct; left -= part; prev += part;
   }
-  return total;
+  return sum / P;
+}
+export function tieredInstalment(principal, tiers, months) {
+  return instalment(principal, weightedRatePct(principal, tiers), months);
 }
 export function tieredPrincipalFor(payment, tiers, months) {
-  let left = Number(payment), prev = 0, total = 0;
-  for (const t of tiers) {
-    if (!(left > 0)) break;
-    const cap = t.up_to === null || t.up_to === undefined ? Infinity : t.up_to - prev;
-    const full = cap === Infinity ? Infinity : instalment(cap, t.rate_pct, months);
-    if (left >= full) { total += cap; left -= full; } else { total += principalFor(left, t.rate_pct, months); left = 0; }
-    prev = t.up_to ?? prev;
-  }
-  return total;
+  if (!(Number(payment) > 0)) return 0;
+  let lo = 0, hi = principalFor(payment, Math.min(...tiers.map((t) => t.rate_pct)), months);
+  for (let i = 0; i < 80; i++) { const mid = (lo + hi) / 2; if (tieredInstalment(mid, tiers, months) <= payment) lo = mid; else hi = mid; }
+  return lo;
 }
 /** Single rate that gives the same instalment as the tiers for this amount (for display). */
 export function effectiveRate(principal, tiers, months) {

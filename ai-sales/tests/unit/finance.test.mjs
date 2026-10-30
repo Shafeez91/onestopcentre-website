@@ -31,9 +31,10 @@ test("loan a payment can carry (inverse) and round trip", () => {
   close(instalment(principalFor(1234.56, 4.1, 300), 4.1, 300), 1234.56);
 });
 
-test("LPPSA tiered profit: 4% up to RM750k, 4.5% on the rest", () => {
+test("LPPSA tiered profit: one weighted-average rate on the whole amount (4% up to RM750k, 4.5% above)", () => {
   const tiers = R.lppsa.rate_tiers;
-  close(tieredInstalment(1000000, tiers, 420), 4503.95);
+  // RM1,000,000 → (750,000 × 4% + 250,000 × 4.5%) / 1,000,000 = 4.125%, 35 years (reference: Python Decimal)
+  close(tieredInstalment(1000000, tiers, 420), 4503.04, 0.01);
   close(tieredInstalment(500000, tiers, 420), 2213.87, 0.01); // all in the first band
   close(tieredPrincipalFor(2700, tiers, 420), 609790.88, 0.05);
   close(tieredPrincipalFor(tieredInstalment(900000, tiers, 420), tiers, 420), 900000, 0.05);
@@ -89,7 +90,7 @@ test("LPPSA: second financing uses 50%, the RM1M cap leaves a top-up → adjustm
   assert.equal(r.buyer_top_up, 212150);
   assert.equal(r.package.property, 987850);
   assert.equal(r.package.total, 1000000);
-  assert.equal(r.instalment_for_needed, 4504);   // RM1M: 750k @4% + 250k @4.5%, 35 years
+  assert.equal(r.instalment_for_needed, 4503);   // RM1M at the weighted 4.125%, 35 years (RM4,503.04)
   assert.equal(r.outcome, "may_be_affordable_with_adjustments");
   assert.ok(r.escalate.includes("second_lppsa_financing"));
 });
