@@ -232,3 +232,47 @@ test("prompt: whole-turn limit, price answers without unasked monthly figures, a
   assert.match(sys, /No monthly instalment, maintenance or package details unless the buyer asked/);
   assert.match(sys, /Recommendations: at most 2–3 projects/);
 });
+
+/* ---------- "Short chat" reply style (owner, 30 Oct 2026): up to 3 one-line messages of about 7–10 words ---------- */
+import { STYLE_SHORT, styleFor } from "../../lib/orchestrator.mjs";
+const shortCodes = (msgs) => checkTurn({ messages: msgs, reply: msgs.join("\n\n") }, { style: STYLE_SHORT }).styleNotes.map((v) => v.code);
+
+test("short chat: the owner's example passes; a standard-length message is sent back to be shortened", () => {
+  assert.equal(styleFor({ reply_style: "short" }), STYLE_SHORT);
+  assert.notEqual(styleFor({}), STYLE_SHORT, "standard stays the default");
+  assert.deepEqual(shortCodes(["M MIRA bermula dari RM476,000 😊", "Type A, 800 sqft, 3 bilik.", "Nak saya kira anggaran bulanan?"]), []);
+  // the AI introduction and a required price note may add words to their message
+  assert.deepEqual(shortCodes(["Hi! Saya Hafiz_Ai, pembantu AI One Stop Centre 😊 M MIRA bermula dari RM476,000.", "Harga anggaran, final disahkan masa booking.", "Untuk duduk sendiri atau pelaburan?"]), []);
+  // a message of the standard style is too long for short chat
+  const long = "M MIRA (Wangsa Maju) starts from around RM476,000 for Type A, 800 sqft with 3 rooms, and Type B is 900 sqft from RM533,000.";
+  const notes = checkTurn({ messages: [long] }, { style: STYLE_SHORT }).styleNotes;
+  assert.ok(notes.some((v) => v.code === "long_message"));
+  assert.match(notes.find((v) => v.code === "long_message").detail, /about 7–10 words .*Move the rest to the next message \(3 at most\)/);
+  assert.deepEqual(shortCodes(["Satu dua tiga empat lima enam tujuh lapan sembilan sepuluh sebelas dua belas tiga belas empat belas lima belas enam belas."]), ["long_message"], "16 words: over the 15-word cap");
+  // standard style is unchanged: the same long message is fine there
+  assert.deepEqual(checkTurn({ messages: [long] }, {}).styleNotes, []);
+});
+
+test("short chat: the prompt switches to the short-chat section only when chosen; respond() rewrites a long draft into short lines", async () => {
+  const short = buildSystemPrompt({ persona: { reply_style: "short", tone: "6A. ELITE WHATSAPP REPLY STYLE" } }, []);
+  assert.match(short, /Message 1: the direct answer to the buyer's question, short and confident/);
+  assert.match(short, /aim for 7–10 words, never more than 15/);
+  assert.match(short, /6A\. ELITE WHATSAPP REPLY STYLE/, "the owner's persona text is kept");
+  assert.doesNotMatch(short, /About 20–60 words per message/);
+  const std = buildSystemPrompt({}, []);
+  assert.match(std, /About 20–60 words per message/);
+  assert.doesNotMatch(std, /7–10 words/);
+
+  const t = { ai_settings: [{ id: 1, persona: { name: "OSC Property Assistant", reply_style: "short" }, ai: { confidence_threshold: 0.7 }, business: {}, scoring: {}, compliance: {} }],
+    projects: [{ id: "mm", slug: "m-mira", data: { n: "M MIRA", l: "Wangsa Maju", types: [{ name: "Type A", price: "RM476,000" }] } }] };
+  const db = { get: async (p) => structuredClone(t[p.split("?")[0]] || []), rpc: async () => [], post: async () => [{}], patch: async () => null };
+  const long = { ...base, messages: [AI + " M MIRA di Wangsa Maju bermula dari anggaran RM476,000 untuk Type A seluas 800 sqft dengan tiga bilik tidur dan dua bilik air."] };
+  const ok = { ...base, messages: [AI + " M MIRA bermula RM476,000 😊", "Type A, 800 sqft, 3 bilik.", "Untuk duduk sendiri atau pelaburan?"] };
+  const llm = llmOf(long, ok);
+  const r = await respond({ db, llm, message: "Berapa harga M Mira?", now: NOW });
+  assert.equal(llm.calls.length, 2);
+  assert.match(llm.calls[0].system, /short chat style/);
+  assert.match(llm.calls[1].messages.at(-1).content, /long_message.*about 7–10 words/s);
+  assert.deepEqual(r.messages, ok.messages);
+  assert.equal(r.decision, "reply");
+});

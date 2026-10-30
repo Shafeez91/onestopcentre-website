@@ -55,6 +55,16 @@ async function callReply(llm, params, base) {
 // not ask for). Unlike the business rules they never block a reply: a draft that breaks them is rewritten once with
 // the feedback, and if the rewrite still slightly breaks them it is sent as it is.
 export const STYLE = { maxParagraphs: 3, maxParagraphWords: 40, maxBullets: 5, maxMessageWords: 65, maxTurnWords: 80 };
+// "Short chat" (Settings → AI persona → Reply style, owner's choice 30 Oct): up to 3 messages of about 7–10 words —
+// answer first, then a short explanation, then one more detail or a question. 15 words at most per message; the AI
+// introduction on the first reply and a required note (indicative price, loan illustration) may add a few words.
+// (one line per message, so only the message's length is checked, not its paragraphs')
+export const STYLE_SHORT = { maxParagraphs: 2, maxParagraphWords: Infinity, maxBullets: 3, maxMessageWords: 15, maxTurnWords: 45, targetWords: "7–10", introWords: 8, noteWords: 6, short: true };
+export const styleFor = (persona) => (persona?.reply_style === "short" ? STYLE_SHORT : STYLE);
+// required wording that may make a short message longer: the AI introduction and the price / loan notes
+const INTRO = /\b(pembantu AI|AI assistant|asisten AI)\b/i;
+const extraWords = (style, text) => (style.short ? (INTRO.test(text) ? style.introWords : 0) + (NOTE.test(text) ? style.noteWords : 0) : 0);
+const NOTE = /(anggaran|indicative|disahkan|confirmed at booking|final price|harga akhir|ilustrasi|illustration|bukan tawaran|not a loan offer|\d+(\.\d+)?%|tahun|years)/i;
 export const STYLE_CODES = new Set(["too_long", "too_many_paragraphs", "long_paragraph", "long_list", "long_message", "long_turn", "unasked_instalment"]);
 const BULLET = /^\s*(?:[•*\-–]|\d{1,2}[.)])\s+/;
 // words only: bullet marks and dashes ("•", "–") are not words
@@ -75,7 +85,10 @@ export function messageStyle(text, i = 1, style = STYLE) {
     if (wordCount(prose) > style.maxParagraphWords) out.push({ code: "long_paragraph", detail: `Message ${i}, paragraph ${j + 1} is ${wordCount(prose)} words; keep each paragraph to one idea in 1–3 short sentences.` });
   });
   const n = wordCount(text);
-  if (n > style.maxMessageWords) out.push({ code: "long_message", detail: `Message ${i} is ${n} words; aim for about 20–60 words per message.` });
+  const limit = style.maxMessageWords + extraWords(style, text);
+  if (n > limit) out.push({ code: "long_message", detail: style.short
+    ? `Message ${i} is ${n} words; keep each message to one short line of about ${style.targetWords} words (at most ${limit}). Move the rest to the next message (3 at most), or leave it out.`
+    : `Message ${i} is ${n} words; aim for about 20–60 words per message.` });
   return out;
 }
 
@@ -93,9 +106,11 @@ export function checkTurn(data, rules = {}) {
   const words = (m) => (String(m).match(/\p{L}{2,}/gu) || []).length;
   const frags = list.map((m, i) => [i + 1, m]).filter(([, m]) => (list.length > 1 ? words(m) < 3 : words(m) < 1));
   if (frags.length) check.violations.push({ code: "fragment", detail: frags.map(([i, m]) => `Message ${i} ("${String(m).slice(0, 20)}") is not a complete message; fold it into another message or remove it.`).join(" ") });
-  list.forEach((m, i) => check.violations.push(...messageStyle(m, i + 1)));
+  const style = rules.style || STYLE;
+  list.forEach((m, i) => check.violations.push(...messageStyle(m, i + 1, style)));
   const total = list.reduce((n, m) => n + wordCount(m), 0);
-  if (total > STYLE.maxTurnWords) check.violations.push({ code: "long_turn", detail: `The whole reply is ${total} words${list.length > 1 ? ` across ${list.length} messages` : ""}; keep the whole turn to about ${STYLE.maxTurnWords} words: answer what was asked and leave out the rest.` });
+  const turnMax = style.maxTurnWords + extraWords(style, list.join(" "));
+  if (total > turnMax) check.violations.push({ code: "long_turn", detail: `The whole reply is ${total} words${list.length > 1 ? ` across ${list.length} messages` : ""}; keep the whole turn to about ${turnMax} words: answer what was asked and leave out the rest.` });
   // rules.buyerAskedMonthly is set for replies to a buyer (false = they have not asked about monthly payments or loans)
   if (rules.buyerAskedMonthly === false && MONTHLY_FIGURE.test(data.reply || list.join("\n\n"))) check.violations.push({ code: "unasked_instalment", detail: "The buyer did not ask about monthly payments or loans: leave out the monthly instalment (and its assumptions). You may offer it in a short question instead, e.g. \"Nak saya kira anggaran bulanan?\"" });
   const styleNotes = check.violations.filter((v) => STYLE_CODES.has(v.code));
@@ -196,6 +211,7 @@ export async function respond(p) {
   // stations whose distance the listing gives twice: no figure for them unless a map lookup measured it
   ctx.rules.disputedDistances = ctx.rules.usedMaps ? [] : ctx.projects.filter((x) => x.inFocus).flatMap((x) => x.distanceDisputes || []);
   // monthly figures only once the buyer has asked about monthly payments, loans or financing (now or recently)
+  ctx.rules.style = styleFor(settings.persona); // the owner's reply style (standard or short chat)
   ctx.rules.buyerAskedMonthly = MONTHLY_Q.test([message, ...history.filter((h) => h.role !== "assistant").slice(-4).map((h) => h.text)].join("\n"));
   for (const l of ctx.routeLookups) if (l.maps_link) ctx.rules.allowedUrls.push(l.maps_link);
 
@@ -442,6 +458,7 @@ export async function composeFollowUp(p) {
   const now = p.now || new Date();
   const history = p.history || [];
   const ctx = await loadContext(p.db, { leadId: p.leadId, message: p.instruction, history, now });
+  ctx.rules.style = styleFor(ctx.settings?.persona);
   if (ctx.aiPaused) return { skipped: "AI is paused for this lead" };
   const settings = ctx.settings || {};
   const model = settings.ai?.model || DEFAULT_MODEL;

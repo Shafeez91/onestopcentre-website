@@ -422,6 +422,8 @@ test("AI persona: the Tone guidance editor is ~7× the old height on desktop and
       await page.$eval("#sf textarea[name=tone]", (el) => { el.scrollTop = el.scrollHeight; });
       assert.ok(await page.$eval("#sf textarea[name=tone]", (el) => el.scrollTop > 0), "scrolls to the end of the prompt");
       if (name === "ipad") {
+        assert.equal(await page.inputValue("#sf select[name=reply_style]"), "standard", "standard until the owner picks short chat");
+        await page.selectOption("#sf select[name=reply_style]", "short");
         await page.$eval("#sf textarea[name=tone]", (el) => { el.value += "\n\nNEW LINE ADDED"; el.dispatchEvent(new Event("input", { bubbles: true })); });
         await page.locator("#sf button").scrollIntoViewIfNeeded();
         await page.click("#sf button");
@@ -431,6 +433,7 @@ test("AI persona: the Tone guidance editor is ~7× the old height on desktop and
         assert.equal(w.body.persona.greeting_en, "Hi!");
         assert.equal(w.body.persona.name, "Hafiz_Ai");
         assert.equal(w.body.persona.discloses_ai, true);
+        assert.equal(w.body.persona.reply_style, "short", "the reply style is saved with the persona");
       }
       if (process.env.E2E_SHOTS) await page.screenshot({ path: path.join(process.env.E2E_SHOTS, `${name}-persona.png`) });
       assert.deepEqual(errors, []);

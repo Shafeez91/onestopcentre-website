@@ -73,3 +73,15 @@ replies went out (3 overlapping messages). The sender now also checks for a newe
 message** of an AI reply. If there is one, the older reply is dropped whole (status `skipped`, with the reason, and
 no staff task), and the reply to the newer message, which reads every message since the last delivered one, answers
 both. Fixed replies (STOP, "talk to a person") always go out.
+
+## Reply style: Standard or Short chat (30 Oct)
+Settings → AI persona → **Reply style** (`persona.reply_style`, default `standard`).
+
+- **Standard:** the rules above.
+- **Short chat (`short`):** up to 3 one-line messages of about **7–10 words**.
+  - Message 1 answers the question, short and confident.
+  - Message 2 explains.
+  - Message 3 adds one detail or asks the one question.
+  - A simple message (thanks, ok) gets one reply.
+
+The prompt gets a separate "short chat" section instead of the standard one; the owner's tone guidance is kept. The checker (`STYLE_SHORT`) flags a message over **15 words**, with **+8** for the AI introduction and **+6** for a required price or loan note. Paragraph length is not checked, only the whole message. As always, a draft that is too long is rewritten once and never blocked; business rules are unchanged.
