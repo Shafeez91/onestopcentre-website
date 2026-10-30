@@ -72,6 +72,26 @@ test("unsaved form edits survive navigating away and back", { skip: skip || (!ch
   } finally { await ctx.close(); }
 });
 
+test("pipeline: won and lost columns show closed leads at the end, with a link to the full list; moving one back reopens it", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const closedLead = (id, stage, name) => ({ id, lead_code: "OSC-" + id, contact_id: "c" + id, contact: { id: "c" + id, full_name: name, phone_e164: "6011" + id }, stage_id: stage, temperature: "warm", score: 50, closed_at: "2026-10-28T03:00:00Z", updated_at: "2026-10-28T03:00:00Z" });
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.desktop, { mutate: (db) => { db.ai_leads.push(closedLead("W1", "s5", "Signed Buyer"), closedLead("X1", "s6", "Lost Buyer")); } });
+  try {
+    await page.goto(base + "/sales/#/pipeline");
+    await page.waitForSelector(".kanban");
+    const cols = await page.$$eval(".col-k h3", (h) => h.map((x) => x.textContent.replace(/\s+/g, " ").trim()));
+    assert.deepEqual(cols.slice(-2), ["LO, SPA & LA Signed 1", "Cancelled / Lost 1"]);
+    assert.match(await page.textContent(".col-closing.won"), /Signed Buyer/);
+    assert.match(await page.textContent(".col-closing.lost"), /Lost Buyer/);
+    assert.match(await page.textContent(".col-closing.lost"), /closed 28/);
+    assert.equal(await page.getAttribute(".col-closing.lost a.link", "href"), "#/leads?status=closed&stage=s6");
+    assert.match(await page.textContent("#view .sub"), /\d+ closed \(won \/ lost\)/);
+    await page.selectOption('.col-closing.lost select[data-move="X1"]', "s2");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Moved to Interested/.test(t.textContent)));
+    assert.ok(writes.some((w) => w.table === "ai_leads" && w.method === "PATCH" && w.body.stage_id === "s2" && /id=eq\.X1/.test(w.query)));
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("new lead: validates phone, uses the de-duplicating database functions, shows success", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes } = await newPage(VIEWPORTS.ipad);
   try {
@@ -1118,11 +1138,12 @@ test("financing documents: upload and read a payslip, see what was read, use the
 
     // the checked figures fill the calculator (not saved), and both documents are marked confirmed
     await page.waitForSelector("#fin-use");
+    await page.waitForLoadState("networkidle"); // the page reload after the read has finished re-rendering
     sent.length = 0;
     await page.click("#fin-use");
     await page.waitForFunction(() => document.querySelector("#ffin input[name=basic_salary]").value === "4200");
     assert.equal(await page.inputValue("#ffin input[name=fixed_allowances]"), "300");
-    assert.equal(await page.inputValue("#ffin input[name=commitments_monthly]"), "780");
+    await page.waitForFunction(() => document.querySelector("#ffin input[name=commitments_monthly]").value === "780");
     assert.equal(await page.inputValue("#ffin input[name=credit_card_balance]"), "3200");
     assert.equal(await page.inputValue("#ffin select[name=confirmed_service]"), "yes");
     await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Figures added to the calculator/.test(t.textContent)));
