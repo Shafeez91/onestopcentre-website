@@ -27,10 +27,12 @@ export async function aiMaySend(db, conversationId) {
  * Records and sends a message. `sourceJobId` makes the send idempotent for retried jobs (unique per job).
  * Returns { sent, id, error?, blocked?, duplicate? }.
  */
-export async function sendOutbound(deps, { conversation, to, text, template = null, senderType, senderEmail = null, purpose, runId = null, sourceJobId = null }) {
+export async function sendOutbound(deps, { conversation, to, text, template = null, file = null, senderType, senderEmail = null, purpose, runId = null, sourceJobId = null }) {
   const { db, wa } = deps;
-  const body = template ? renderTemplate(template.body, template.params) : text;
+  // a file is recorded as "[document] title" (what the inbox and the AI's history show) with its document id in media
+  const body = template ? renderTemplate(template.body, template.params) : file ? `[${file.kind}] ${file.title}` : text;
   const row = { conversation_id: conversation.id, direction: "outbound", sender_type: senderType, sender_email: senderEmail, body, template_name: template?.wa_template_name || null,
+    ...(file ? { media: [{ type: file.kind, document_id: file.document_id, title: file.title }] } : {}),
     provider: "whatsapp_cloud", status: "queued", purpose, agent_run_id: runId, source_job_id: sourceJobId };
   let rec = (await db.post("ai_messages" + (sourceJobId ? "?on_conflict=source_job_id" : ""), row, { prefer: "return=representation" + (sourceJobId ? ",resolution=ignore-duplicates" : "") }))?.[0];
   if (!rec && sourceJobId) {
@@ -43,7 +45,9 @@ export async function sendOutbound(deps, { conversation, to, text, template = nu
     if (!may.ok) { await db.patch(`ai_messages?id=eq.${enc(rec.id)}`, { status: "skipped", status_reason: may.reason }); return { sent: false, id: rec.id, blocked: true, error: may.reason }; }
   }
   try {
-    const wamid = await wa.send(to, template ? { template: { name: template.wa_template_name, lang: template.lang, params: template.params } } : { text });
+    const msg = template ? { template: { name: template.wa_template_name, lang: template.lang, params: template.params } }
+      : file ? { file: { kind: file.kind, link: await file.link(), filename: file.filename, caption: file.caption } } : { text };
+    const wamid = await wa.send(to, msg);
     await db.patch(`ai_messages?id=eq.${enc(rec.id)}`, { status: "sent", provider_message_id: wamid, status_reason: null });
     await db.patch(`ai_conversations?id=eq.${enc(conversation.id)}`, { last_outbound_at: deps.now().toISOString() });
     return { sent: true, id: rec.id, wamid };

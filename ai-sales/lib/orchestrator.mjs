@@ -341,6 +341,11 @@ export async function respond(p) {
       ...(slot ? { slot_id: slot.id, start_at: slot.start, end_at: slot.end, appointment_id: pending?.id || null } : {}) });
   }
   if (decision !== "reply") actions.push({ type: "cancel_follow_ups", reason: "conversation needs a human" });
+  // files the AI chose to send (only ones staff marked shareable and the context offered); sent after the reply
+  if (decision === "reply") for (const id of data.send_files || []) {
+    const f = (ctx.files || []).find((x) => x.id === id);
+    if (f && !actions.some((a) => a.type === "send_file" && a.document_id === id)) actions.push({ type: "send_file", document_id: f.id, title: f.title, kind: f.kind, project_id: f.project_id });
+  }
   // remember a language the buyer asked for in this message, so later replies and follow-ups use it
   const askedNow = requestedLanguage(message);
   if (askedNow && askedNow !== ctx.buyer?.preferred_language) actions.push({ type: "set_language", language: askedNow });

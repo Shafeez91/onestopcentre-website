@@ -43,6 +43,7 @@ function actionText(a) {
     case "add_interest": return `Add interest: ${projectName(a.project_id)}`;
     case "set_language": return `Remember the buyer's language: ${LANG[a.language] || a.language}`;
     case "insights": return "Update the client profile / summary from this message";
+    case "send_file": return `Send file after the reply: ${a.title}${a.project_id ? ` (${projectName(a.project_id)})` : ""}`;
     case "workflow_enroll": return `Join follow-up workflow ${a.workflow}`;
     case "workflow_advance": return `Move workflow ${a.workflow} past stage ${a.from}`;
     case "save_financing": return `Save financing figures (${(a.changed || []).join(", ")}) → ${String(a.result?.outcome || "").replace(/_/g, " ")}${a.new_assessment ? " — new assessment recorded" : ""}`;
