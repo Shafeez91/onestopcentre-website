@@ -4,6 +4,7 @@ import { extractAmounts, PROMOTION, layoutKey } from "../../sales/shared/validat
 import { projectSpecs, resolveFocus, coverage, conflicts as findConflicts, transitDistanceDisputes, numOf } from "../../sales/shared/listing.mjs";
 import { workflowContext } from "./workflows.mjs";
 import { profileContext } from "./insights.mjs";
+import { addressFor } from "../../sales/shared/salutation.mjs";
 
 // what WhatsApp accepts as a document / image sent by link (Meta: documents up to 100 MB, images up to 5 MB)
 export const SENDABLE = /^(application\/pdf|image\/jpeg|image\/png)$/;
@@ -49,7 +50,7 @@ export async function loadContext(db, { leadId = null, message = "", history = [
 
   let lead = null, buyer = null, interests = [], appointments = [], aiPaused = false, workflows = [], workflowOffers = [], clientProfile = null, profileMeta = {};
   if (leadId) {
-    const rows = await db.get(`ai_leads?id=eq.${enc(leadId)}&select=*,contact:ai_contacts(full_name,salutation,preferred_language,phone_e164)`);
+    const rows = await db.get(`ai_leads?id=eq.${enc(leadId)}&select=*,contact:ai_contacts(*)`);
     const l = rows[0];
     if (l) {
       interests = (await db.get(`ai_lead_interests?lead_id=eq.${enc(leadId)}&select=project_id,interest`)) || [];
@@ -59,7 +60,9 @@ export async function loadContext(db, { leadId = null, message = "", history = [
       clientProfile = profileContext(l, stages);
       profileMeta = l.profile_meta || {};
       aiPaused = !!l.ai_paused;
-      buyer = { name: clean(l.contact?.full_name) || null, salutation: clean(l.contact?.salutation) || null, preferred_language: l.contact?.preferred_language || null };
+      buyer = { name: clean(l.contact?.full_name) || null, salutation: clean(l.contact?.salutation) || null, preferred_language: l.contact?.preferred_language || null,
+        // Smart Salutation: how to address this buyer (a confirmed preference wins; otherwise only a clear name)
+        address: addressFor(l.contact || {}, { preferredName: l.profile?.preferred_name?.value ?? l.profile?.preferred_name ?? null }) };
       lead = {
         lead_code: l.lead_code, temperature: l.temperature, score: l.score,
         qualification_known: Object.fromEntries(Object.entries(l.qualification || {}).filter(([k, v]) => k !== "signals" && v !== null && v !== "")),

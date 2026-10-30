@@ -60,9 +60,11 @@ export async function settings(el, params) {
     const p = st.persona;
     body.innerHTML = `<h2>AI persona</h2><form id="sf" class="form two">
       <label>Assistant name<input name="name" value="${attr(p.name)}"${dis}></label>
+      <label>Advisor the AI assists<input name="advisor_name" value="${attr(p.advisor_name || "Hafizan Hanis")}" maxlength="80"${dis}></label>
+      <label class="full">Advisor's credentials (the AI may mention them when it helps; it never claims them as its own)<input name="advisor_credentials" value="${attr(p.advisor_credentials || "a Malaysian real estate advisor with 12 years of experience in the Klang Valley (KL and Selangor), who has helped more than 500 purchasers own their property")}" maxlength="400"${dis}></label>
       <label class="check"><input type="checkbox" checked disabled> Discloses it is an AI (mandatory)</label>
       <label class="check"><input type="checkbox" name="allow_manglish"${p.allow_manglish ? " checked" : ""}${dis}> Mirror Manglish when the buyer uses it</label>
-      <label class="full">Reply style<select name="reply_style"${dis}>${opt("standard", "Standard — up to 3 messages, short paragraphs (about 20–60 words each)", p.reply_style || "standard")}${opt("short", "Short chat — up to 3 one-line messages (about 7–10 words each): answer first, then explain", p.reply_style || "standard")}</select>
+      <label class="full">Reply style<select name="reply_style"${dis}>${opt("adaptive", "Adaptive (recommended) — answer, explain, personalise, engage; usually 20–60 words in 1–3 messages", p.reply_style || "standard")}${opt("standard", "Standard — up to 3 messages, short paragraphs (about 20–60 words each)", p.reply_style || "standard")}${opt("short", "Short chat — up to 3 one-line messages (about 7–10 words each): answer first, then explain", p.reply_style || "standard")}</select>
         <small>Short chat: message 1 answers the question, message 2 explains, message 3 adds a detail or asks one question. The AI introduction and price/loan notes may add a few words.</small></label>
       <label class="full">Tone guidance<textarea name="tone" class="persona-tone" rows="20" spellcheck="false"${dis}>${esc(p.tone)}</textarea></label>
       <label class="full">Greeting (English)<textarea name="greeting_en" rows="2"${dis}>${esc(p.greeting_en)}</textarea></label>

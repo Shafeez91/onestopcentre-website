@@ -1591,4 +1591,21 @@ do $$ begin assert (select count(*) from public.ai_financing_documents) = 0, 'vi
 reset role;
 rollback;
 
+\echo 'T67 smart salutation: new contact fields, valid values only, advisor-typed titles kept as confirmed, PDPA erase clears them'
+begin;
+do $$
+declare cid uuid;
+begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  cid := public.ai_upsert_contact('60111333444', 'David Tan', null);
+  update public.ai_contacts set salutation = 'Mr', gender = 'male', salutation_confidence = 'confirmed', salutation_source = 'customer' where id = cid;
+  assert (select gender from public.ai_contacts where id = cid) = 'male';
+  begin update public.ai_contacts set gender = 'guess' where id = cid; assert false, 'invalid gender'; exception when check_violation then null; end;
+  begin update public.ai_contacts set salutation_source = 'photo' where id = cid; assert false, 'invalid source'; exception when check_violation then null; end;
+  begin update public.ai_contacts set salutation_confidence = 'maybe' where id = cid; assert false, 'invalid confidence'; exception when check_violation then null; end;
+  perform public.ai_erase_contact(cid, 'test');
+  assert (select salutation is null and gender is null and salutation_source is null and salutation_confidence is null from public.ai_contacts where id = cid), 'erase clears the salutation fields';
+end $$;
+rollback;
+
 \echo 'ALL DB TESTS PASSED'
