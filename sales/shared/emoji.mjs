@@ -16,7 +16,12 @@ const tidy = (s) => s.replace(/[ \t]{2,}/g, " ").replace(/ +([.,!?;:])/g, "$1").
  */
 export function limitEmojis(messages, { max = 1 } = {}) {
   let kept = 0, removed = 0;
-  const out = (messages || []).map((m) => tidy(String(m ?? "").replace(EMOJI, (e) => (kept < max ? (kept++, e) : (removed++, "")))));
+  // an emoji that ended a sentence ("Faham, utk investment 👍 Sbg info …") leaves a full stop behind
+  const out = (messages || []).map((m) => tidy(String(m ?? "").replace(EMOJI, (e, off, all) => {
+    if (kept < max) { kept++; return e; }
+    removed++;
+    return /^\s+\p{Lu}/u.test(all.slice(off + e.length)) && /[\p{L}\p{N})]\s*$/u.test(all.slice(0, off)) ? "." : "";
+  })));
   return { messages: out, removed };
 }
 

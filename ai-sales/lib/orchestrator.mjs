@@ -80,6 +80,9 @@ export const MONTHLY_Q = /(bulanan|sebulan|\bbulan\b|ansuran|monthly|per\s+month
 // a monthly instalment figure in the reply
 const MONTHLY_FIGURE = /(ansuran|instal+ment|RM\s?[\d,.]+\s*(?:k\b)?\s*(?:\/\s*(?:month|mth|mo|bulan|bln)\b|sebulan|a\s+month|per\s+month|monthly|bulanan))/i;
 
+// WhatsApp short forms a buyer may write (BM and English); colloquial full words (nak, tak, je) do not count
+export const SHORT_FORMS = /(?<![\p{L}\p{N}])(yg|dgn|utk|sbb|blh|bleh|tgk|kt|dlm|lps|sy|nk|mcm|dpt|jgn|skrg|org|brp|xde|x|tq|tqvm|thx|pls|plz|btw|fyi|lg|lgi|bkn|blm|sgt|dh|knp|cmne|cmna|camne|mne|bape|dm|pm)(?![\p{L}\p{N}])/iu;
+
 // a monthly instalment in the reply; a rent figure from the rental estimate ("~RM2,290 sebulan") is not one
 function monthlyInstalment(text, rentalAmounts = []) {
   if (/(ansuran|instal+ment)/i.test(text)) return true;
@@ -151,7 +154,14 @@ function researchTrace(ctx, routes) {
 export function financingReply(intent, messages, engineOn = true) {
   if (!engineOn) return false;
   if (/financ|instal|loan|lppsa|affordab/i.test(String(intent || ""))) return true;
-  return /RM\s?[\d,.]+\s?(k|ribu)?[^.\n]{0,40}(sebulan|bulanan|per month|\/month|a month|monthly|ansuran|instal)/i.test((messages || []).join(" "));
+  // a maintenance fee or a rent a month is not a financing figure
+  const re = /RM\s?[\d,.]+\s?(k|ribu)?[^.\n]{0,40}(sebulan|bulanan|per month|\/month|a month|monthly|ansuran|instal)/gi;
+  const text = (messages || []).join(" ");
+  for (const m of text.matchAll(re)) {
+    const around = text.slice(Math.max(0, m.index - 60), m.index + m[0].length + 30);
+    if (!/(maintenance|penyelenggaraan|sinking|caj|sewa|rent|rental|yield)/i.test(around)) return true;
+  }
+  return false;
 }
 
 export function finalTouches(messages, { decision = "reply", data = {}, ctx = {}, financing = false } = {}) {
@@ -226,6 +236,11 @@ export async function respond(p) {
   // so this reply already uses it and the question is never asked again
   const lastAiText = [...(history || [])].reverse().find((h) => h.role === "assistant")?.text || "";
   const profileAnswers = ctx.buyer ? readDiscoveryAnswer({ message, lastAiText, buyerName: ctx.buyer.name, known: ctx.clientProfile?.known }) : [];
+  // "saya Mr Zan" / "call me Puan Aina" gives the name too: it is the buyer's, so the name question is not asked again
+  const knownName = ctx.clientProfile?.known?.preferred_name?.value ?? ctx.clientProfile?.known?.preferred_name;
+  if (ctx.buyer && titlePref?.name && !knownName && !profileAnswers.some((a) => a.field === "preferred_name")) {
+    profileAnswers.push({ field: "preferred_name", value: titlePref.name, status: "confirmed" });
+  }
   if (profileAnswers.length) {
     ctx.clientProfile = ctx.clientProfile || { known: {} };
     ctx.clientProfile.known = { ...(ctx.clientProfile.known || {}) };
@@ -275,6 +290,8 @@ export async function respond(p) {
   }) : [];
   ctx.rental = rentalAsk && focusProjects.length ? (renderRental(rentalItems) || { status: "NO SOURCE", note: "No rent rate for this project in our knowledge base or web research: give no rent or yield figure." }) : null;
   ctx.rules.rentalAsk = rentalAsk;
+  // mirror the buyer's writing: WhatsApp short forms only once the buyer uses them ("blh", "yg", "tq", "btw" …)
+  ctx.buyerWriting = { uses_short_forms: SHORT_FORMS.test([message, ...history.filter((h) => h.role !== "assistant").map((h) => h.text)].join("\n")) };
   ctx.rules.rentalAmounts = rentalItems.flatMap((x) => x.estimate?.amounts || []);
   ctx.rules.allowedAmounts.push(...ctx.rules.rentalAmounts);
   const system = buildSystemPrompt(settings, ctx.objections, { calendar: !!p.calendar, financing: finOn });
