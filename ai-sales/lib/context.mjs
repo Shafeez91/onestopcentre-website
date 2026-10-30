@@ -140,6 +140,9 @@ export async function loadContext(db, { leadId = null, message = "", history = [
     if (!inScope(k) || used + String(k.content || "").length > KB_BUDGET) continue;
     knowledge.push(k); used += String(k.content || "").length;
   }
+  // entries that mention rents, for the rental estimate (worked out in code): all of them, whatever the size budget
+  const rentalKnowledge = (chunks || []).filter((k) => inScope(k) && /(sewa|rent|rental)/i.test(`${k.title} ${k.content}`) && /RM\s?\d/.test(k.content || ""))
+    .map((k) => ({ kind: "chunk", ...k }));
   const q = searchQuery([...(history || []).filter((h) => h.role !== "assistant").slice(-1).map((h) => h.text), message].join(" "));
   const found = q ? ((await db.rpc("ai_search_knowledge", { q, p_project: null, only_approved: true, max_rows: 6 }).catch(() => [])) || []) : [];
   for (const k of found) if (!knowledge.some((x) => x.id === k.id)) knowledge.push(k);
@@ -176,7 +179,7 @@ export async function loadContext(db, { leadId = null, message = "", history = [
   return {
     settings, objections: objections || [], lead, buyer, contact, aiPaused, isFirstReply, websiteLoan, workflows, workflowOffers, clientProfile, profileMeta, businessWa: wa ? "https://wa.me/" + wa : null,
     today: now.toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" }),
-    projects, focus, promotions: promotions || [], knowledge, files,
+    projects, focus, promotions: promotions || [], knowledge, rentalKnowledge, files,
     rules: {
       allowedAmounts: [...allowed], indicativeAmounts: [...indicative],
       hasFreshAvailability: projects.some((p) => p.freshAvailable > 0),

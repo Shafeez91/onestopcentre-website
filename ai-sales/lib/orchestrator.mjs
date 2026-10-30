@@ -270,7 +270,7 @@ export async function respond(p) {
   const rentalAsk = RENTAL_Q.test(recentBuyer);
   const focusProjects = (ctx.projects || []).filter((x) => x.inFocus);
   const rentalItems = rentalAsk ? focusProjects.map((x) => {
-    const rates = findRentRates({ knowledge: ctx.knowledge, project: { id: x.id, name: x.name, area: x.area }, web: found.web });
+    const rates = findRentRates({ knowledge: [...(ctx.rentalKnowledge || []), ...(ctx.knowledge || []).filter((k) => !(ctx.rentalKnowledge || []).some((r) => r.id === k.id))], project: { id: x.id, name: x.name, area: x.area }, web: found.web });
     return { rates, estimate: rates ? rentalEstimate({ name: x.name, layouts: x.layouts, maintPsf: x.maintPsfWebsite }, rates) : null };
   }) : [];
   ctx.rental = rentalAsk && focusProjects.length ? (renderRental(rentalItems) || { status: "NO SOURCE", note: "No rent rate for this project in our knowledge base or web research: give no rent or yield figure." }) : null;
