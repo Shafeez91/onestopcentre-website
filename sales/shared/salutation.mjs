@@ -82,8 +82,34 @@ export function nameGender(fullName) {
  * preferredName: the client profile's preferred name. Returns
  * { name, en, ms, title_en, title_ms, gender, certainty: "confirmed" | "high" | "uncertain", source, allowed_titles }
  */
+// a WhatsApp profile name is only a guess: emojis, usernames, stylised letters and business names are not a name to
+// address someone by
+const BUSINESS = /\b(sdn|bhd|enterprise|trading|realty|properties|property|agency|services|official|store|shop|resources|ventures|solutions|group|team|admin|sewa|rent|hartanah)\b/i;
+export const NOT_DISCLOSED = "not_disclosed";
+
+/**
+ * How sure we are of the buyer's name. preferredName is client_profile.preferred_name (the buyer or an advisor gave it).
+ * Returns { status, name }: "confirmed" (use it), "declined" (the buyer prefers not to say: no name),
+ * "to_confirm" (a clean-looking WhatsApp / form name: check it once, e.g. "Blh sy panggil Aina ya?"),
+ * "unknown" (no usable name: ask for it).
+ */
+export function nameStatus(fullName, preferredName = null) {
+  const pref = String(preferredName ?? "").trim();
+  if (pref.toLowerCase() === NOT_DISCLOSED) return { status: "declined", name: null };
+  if (pref && words(pref).length) return { status: "confirmed", name: callName(null, pref) };
+  const raw = String(fullName || "").trim();
+  // "(FH)", "(RK KLANG)" are nicknames or places, not the name; "AMIRA" is written "Amira"
+  let name = callName(raw.replace(/\([^)]*\)?|\[[^\]]*\]?/g, " "));
+  if (name && name === name.toUpperCase()) name = name.toLowerCase().split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  if (name && name.split(" ")[0].replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g, "").length < 3) name = null; // initials ("QX", "aa") are not a name
+  // only plain Latin letters (with Malay / European accents), at least two of them, and no business words
+  const clean = !!name && /^[A-Za-zÀ-ÖØ-öø-ÿ'’\-. ]{2,40}$/.test(name) && /[A-Za-zÀ-ÖØ-öø-ÿ]{2}/.test(name) && !BUSINESS.test(raw) && !NOT_A_NAME.test(name);
+  return clean ? { status: "to_confirm", name } : { status: "unknown", name: null };
+}
+
 export function addressFor(contact = {}, { preferredName = null } = {}) {
-  const name = callName(contact.full_name, preferredName);
+  const ns = nameStatus(contact.full_name, preferredName);
+  const name = ns.name;
   const src = contact.salutation_source || (contact.salutation ? "advisor" : null); // a salutation typed before 30 Oct counts as the advisor's
   const confirmedBy = src === "customer" || src === "advisor";
   const pref = String(contact.salutation || "").trim();
@@ -96,7 +122,8 @@ export function addressFor(contact = {}, { preferredName = null } = {}) {
   } else if (confirmedBy && ["unknown", "not_provided"].includes(contact.gender)) {
     certainty = "confirmed"; source = src; // a person said: no title
   } else {
-    const g = nameGender(contact.full_name);
+    // the name the buyer gave counts first ("Ahmad" from a buyer whose WhatsApp name is an emoji)
+    const g = nameGender(ns.status === "confirmed" ? preferredName : contact.full_name);
     if (g.confidence === "high") { gender = g.gender; certainty = "high"; source = "name_recognition"; }
   }
   if (gender && !title_en && !(pref && confirmedBy)) { title_en = TITLES.en[gender]; title_ms = TITLES.ms[gender]; }
@@ -105,7 +132,7 @@ export function addressFor(contact = {}, { preferredName = null } = {}) {
   if (gender === "male") ["mr", "encik", "tuan"].forEach((t) => allowed.add(t));
   if (gender === "female" && title_en && ["ms", "puan"].includes(title_en.toLowerCase())) ["ms", "puan"].forEach((t) => allowed.add(t));
   return {
-    name, gender, certainty, source,
+    name, name_status: ns.status, gender, certainty, source,
     title_en, title_ms,
     en: join(title_en), ms: name ? join(title_ms) : title_ms || "Tuan/Puan",
     allowed_titles: [...allowed],

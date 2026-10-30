@@ -218,3 +218,12 @@
 **Unchanged:** LPPSA and bank calculation engines, human takeover, follow-ups, reminders, Telegram rules.
 
 **Manual steps after merge:** run `APPLY-SMART-SALUTATION-IN-SQL-EDITOR.sql`; set Reply style to Adaptive; reword saved greetings that say "I'm Hafizan".
+
+## Implemented: discovery steps 1–2 — name and area familiarity
+
+Live audit (14 days, 251 AI messages): the name was asked 0 times and area familiarity 9 times; familiarity was saved for 3 of 125 leads. Cause: any WhatsApp profile name (emojis, usernames, stylised letters, business names) counted as a known name.
+
+- `nameStatus()` (`sales/shared/salutation.mjs`): `confirmed` (the buyer or an advisor gave it) / `declined` / `to_confirm` (a clean WhatsApp or form name: the AI checks it once, "Blh sy panggil Aina ya?") / `unknown` (emoji, initials, stylised letters, business name: the AI asks, and never addresses them by it). Text in brackets is dropped and ALL CAPS is written normally.
+- `nextDiscovery()` sets `ask_now` for the name from the AI's second reply, and for area familiarity once a project is being discussed. A showroom question, an upset buyer or a buyer ready to book still comes first.
+- `readDiscoveryAnswer()` reads the buyer's reply to the question the AI just asked (a name, a confirmation, another name, "tak nak bagi"; familiarity in BM, English and Manglish). It is saved at once through `ai_lead_profile_set` (source ai, so an advisor's entry is never overwritten) and used in the same reply.
+- No database change. Test data uses made-up names only (the repository is public).
