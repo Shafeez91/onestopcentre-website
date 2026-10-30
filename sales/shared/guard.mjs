@@ -1,5 +1,6 @@
 // Deterministic checks that run BEFORE the AI sees a message. They never depend on the model:
 // an opt-out or a request for a human is always honoured, whatever the AI would have said.
+import { parseTitlePreference } from "./salutation.mjs";
 
 const OPT_OUT = [
   /^\s*(stop|unsubscribe|berhenti|henti|stop all|stopall|cancel)\s*[.!]*\s*$/i,
@@ -9,11 +10,13 @@ const OPT_OUT = [
   /\bopt[\s-]?out\b/i,
 ];
 
+// "call me" asks for a phone call, except "call me Mr Tan" / "just call me David" (how to address the buyer)
+const CALL_ME = /\b(call|telefon|hubungi)\s+(me|saya)\b/i;
 const HUMAN = [
   /\b(nak|mahu|hendak|want to|wanna|can i|boleh)\s+(cakap|bercakap|bual|talk|speak|chat)\s+(dengan|with|to)\s+(a\s+|an\s+|the\s+|your\s+)?(orang|manusia|agent|ejen|staff|staf|human|person|someone|sales|advisor|penasihat|real)/i,
   /\b(real|actual)\s+(person|human|agent)\b/i,
   /\b(orang|manusia)\s+(betul|sebenar)\b/i,
-  /\b(call|telefon|hubungi)\s+(me|saya)\b/i,
+  CALL_ME,
   /\b(human|agent|ejen)\s+(please|pls|tolong)\b/i,
   /^\s*(agent|human|ejen|manusia)\s*[?.!]*\s*$/i,
 ];
@@ -44,7 +47,7 @@ export function languagePreference(message, history = []) {
 }
 
 export const isOptOut = (text) => OPT_OUT.some((r) => r.test(String(text || "")));
-export const wantsHuman = (text) => HUMAN.some((r) => r.test(String(text || "")));
+export const wantsHuman = (text) => HUMAN.some((r) => r.test(String(text || "")) && !(r === CALL_ME && parseTitlePreference(text)));
 
 /**
  * The language to write to a buyer in: their saved choice when it is "en" or "ms"; otherwise what their own

@@ -12,6 +12,7 @@ import { loadFinancing, financingSection, bindFinancing } from "./financing.js";
 import { leadWorkflowsCard, bindLeadWorkflowsCard } from "./workflows.js";
 import { PROFILE_GROUPS, PROFILE_FIELDS, QUAL_FIELDS, FIELD, FIELD_STATUS, fieldLabel, statusOf, showValue } from "../shared/profile.mjs";
 import { icon } from "./icons.js";
+import { addressFor, nameGender } from "../shared/salutation.mjs";
 
 const TABS = [["summary", "Summary"], ["conversation", "Conversation"], ["profile", "Profile"], ["sales", "Sales"], ["activity", "Activity"]];
 const PRIORITY = { primary: "Primary interest", alternative: "Alternative option", comparison: "Comparison only", no_longer: "No longer interested" };
@@ -100,7 +101,11 @@ export async function leadWorkspace(el, params, id) {
   const profileHtml = `
     <section class="card"><h2>Contact</h2><form id="fc" class="form two">
       <label>Name<input name="full_name" value="${attr(c.full_name)}" maxlength="120"${ro("advisor")}></label>
-      <label>Salutation<input name="salutation" value="${attr(c.salutation)}" placeholder="Encik / Puan / Mr / Ms"${ro("advisor")}></label>
+      <label>Preferred salutation<input name="salutation" value="${attr(c.salutation)}" list="sal-list" placeholder="Mr / Ms / Encik / Puan / none"${ro("advisor")}>
+        <datalist id="sal-list">${["Mr", "Ms", "Encik", "Puan", "Cik", "Tuan", "Dr", "Dato'", "Datin", "Mrs", "Miss", "none"].map((t) => `<option value="${t}">`).join("")}</datalist></label>
+      ${"gender" in c ? `<label>Gender<select name="gender"${ro("advisor")}>${opt("", "Not set", c.gender)}${opt("male", "Male", c.gender)}${opt("female", "Female", c.gender)}${opt("unknown", "Unknown — use no title", c.gender)}${opt("not_provided", "Not provided — use no title", c.gender)}</select></label>
+      <p class="note full">${(() => { const a = addressFor(c, { preferredName: pf.preferred_name?.value ?? pf.preferred_name }), g = nameGender(c.full_name);
+        return `The AI addresses this client as <b>${esc(a.en || "—")}</b> in English and <b>${esc(a.ms || "—")}</b> in Malay (${esc({ confirmed: "confirmed", high: "from a clear name", uncertain: "no title: uncertain" }[a.certainty])}${a.source && a.source !== "not_set" ? ", source: " + esc({ customer: "the client", advisor: "an advisor", name_recognition: "name recognition" }[a.source]) : ""}). ${g.confidence === "high" ? `Name suggestion: ${esc(g.reason)}.` : ""} Setting a salutation or gender here overrides the name. "none" = name only.`; })()}</p>` : ""}
       <label>Phone<input name="phone" value="${attr(c.phone_e164 ? formatPhone(c.phone_e164) : "")}" inputmode="tel"${ro("advisor")}></label>
       <label>Email<input name="email" type="email" value="${attr(c.email)}"${ro("advisor")}></label>
       <label>Language<select name="preferred_language"${ro("advisor")}>${opt("", "Unknown", c.preferred_language)}${opt("ms", "Bahasa Malaysia", c.preferred_language)}${opt("en", "English", c.preferred_language)}${opt("mixed", "Mixed / Manglish", c.preferred_language)}</select></label>
@@ -235,7 +240,11 @@ export async function leadWorkspace(el, params, id) {
     const ph = d.phone ? normalizePhone(d.phone) : null;
     if (d.phone && !ph) return toast("That phone number does not look valid.", "err");
     act(fc.querySelector("button"), async () => {
-      await q(SB.from("ai_contacts").update({ full_name: d.full_name, salutation: d.salutation, phone_e164: ph, email: d.email, preferred_language: d.preferred_language, notes: d.notes }).eq("id", c.id).select("id"), { expectRows: true });
+      // Smart Salutation: a title or gender set here is the advisor's and overrides name recognition
+      const sal = (d.salutation || "").trim() || null, gen = "gender" in c ? d.gender || null : undefined;
+      const salChanged = sal !== (c.salutation || null) || (gen !== undefined && gen !== (c.gender || null));
+      const salFields = gen === undefined ? {} : { gender: gen, ...(salChanged ? (sal || gen ? { salutation_source: "advisor", salutation_confidence: "confirmed" } : { salutation_source: null, salutation_confidence: null }) : {}) };
+      await q(SB.from("ai_contacts").update({ full_name: d.full_name, salutation: sal, phone_e164: ph, email: d.email, preferred_language: d.preferred_language, notes: d.notes, ...salFields }).eq("id", c.id).select("id"), { expectRows: true });
       clearDraft(fc); reload();
     }, "Contact saved"); };
 

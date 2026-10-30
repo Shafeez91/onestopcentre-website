@@ -202,3 +202,19 @@
 3. **Reply style:** switch live replies from "short" (7–10 words) to the new "adaptive" (20–60 words)?
 4. **Learning sources:** may the 946 existing staff messages (mostly from your phone) be used for learning, after anonymisation? Are other advisors' messages in scope?
 5. **Order:** proceed with Stages 0–2 first (salutation, reply style, emojis), then 3–5?
+
+## Implemented: Stages 0–2 (this PR)
+
+**Stage 0 – backup.** Live persona and settings snapshotted to the audit log (#5347) before any change.
+
+**Stage 1 – identity, salutation, emojis**
+- Identity: "Hafiz_Ai, the AI assistant of Hafizan Hanis". The advisor's name and credentials (12 years, Klang Valley, 500+ purchasers) are Settings → AI persona fields, stated as the advisor's credentials, never the AI's.
+- Smart Salutation (`sales/shared/salutation.mjs`). Order of authority: customer-stated preference → advisor-confirmed title/gender → high-confidence name recognition (bin/binti, a/l, a/p, known names) → neutral (name only, or "Tuan/Puan"). A wrong gendered title in a draft is corrected before sending. "Call me Ms David" / "panggil saya Encik Ali" is saved as the customer's confirmed preference (and is no longer mistaken for a human-callback request).
+- Migration 20 adds `gender`, `salutation_source`, `salutation_confidence` to `ai_contacts` (additive, nullable; PDPA erase clears them). Rollback: `ROLLBACK-SMART-SALUTATION.sql`. Code runs with or without it.
+- Emojis (`sales/shared/emoji.mjs`): at most 1 per turn; none for complaints, legal, negotiation, objections, opt-outs, hand-overs and financing figures.
+
+**Stage 2 – adaptive reply style.** New "Adaptive (recommended)" reply style: answer → explain → personalise → engage, 20–60 words, max 60 per message and ~100 per turn. Existing styles unchanged; live style is switched only in Settings.
+
+**Unchanged:** LPPSA and bank calculation engines, human takeover, follow-ups, reminders, Telegram rules.
+
+**Manual steps after merge:** run `APPLY-SMART-SALUTATION-IN-SQL-EDITOR.sql`; set Reply style to Adaptive; reword saved greetings that say "I'm Hafizan".

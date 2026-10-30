@@ -113,6 +113,56 @@ test("leads list: picking a won or lost stage shows the closed leads (status fol
   } finally { await ctx.close(); }
 });
 
+test("smart salutation: the Profile tab shows how the AI addresses the client; an advisor's change is saved as confirmed", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.desktop, { mutate: (db) => { const c = db.ai_leads[0].contact; Object.assign(c, { full_name: "Alex Wong", gender: null, salutation: null, salutation_source: null, salutation_confidence: null }); } });
+  try {
+    await page.goto(base + "/sales/#/lead/L1?tab=profile");
+    await page.waitForSelector("#fc select[name=gender]");
+    assert.match(await page.textContent("#fc"), /addresses this client as Alex Wong in English and Alex Wong in Malay \(no title: uncertain\)/);
+    await page.selectOption("#fc select[name=gender]", "female");
+    await page.fill("#fc input[name=salutation]", "Ms");
+    await page.click("#fc button.pri");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Contact saved/.test(t.textContent)));
+    const w = writes.find((x) => x.table === "ai_contacts" && x.method === "PATCH");
+    assert.equal(w.body.gender, "female");
+    assert.equal(w.body.salutation, "Ms");
+    assert.equal(w.body.salutation_source, "advisor");
+    assert.equal(w.body.salutation_confidence, "confirmed");
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+  // before migration 20 (no gender column): no new fields, and the save sends only the old columns
+  const old = await newPage(VIEWPORTS.desktop);
+  try {
+    await old.page.goto(base + "/sales/#/lead/L1?tab=profile");
+    await old.page.waitForSelector("#fc input[name=salutation]");
+    assert.equal(await old.page.$("#fc select[name=gender]"), null);
+    await old.page.fill("#fc input[name=salutation]", "Encik");
+    await old.page.click("#fc button.pri");
+    await old.page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Contact saved/.test(t.textContent)));
+    const w = old.writes.find((x) => x.table === "ai_contacts" && x.method === "PATCH");
+    assert.equal(w.body.salutation, "Encik");
+    assert.ok(!("gender" in w.body) && !("salutation_source" in w.body));
+  } finally { await old.ctx.close(); }
+});
+
+test("settings: AI persona has the adaptive reply style and the advisor's name and credentials", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage(VIEWPORTS.desktop);
+  try {
+    await page.goto(base + "/sales/#/settings?tab=persona");
+    await page.waitForSelector("#sf select[name=reply_style]");
+    assert.equal(await page.inputValue("#sf input[name=advisor_name]"), "Hafizan Hanis");
+    assert.match(await page.inputValue("#sf input[name=advisor_credentials]"), /12 years.*more than 500 purchasers/);
+    await page.selectOption("#sf select[name=reply_style]", "adaptive");
+    await page.click("#sf button.pri");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Persona saved/.test(t.textContent)));
+    const w = writes.find((x) => x.table === "ai_settings" && x.body?.persona);
+    assert.equal(w.body.persona.reply_style, "adaptive");
+    assert.equal(w.body.persona.advisor_name, "Hafizan Hanis");
+    assert.equal(w.body.persona.discloses_ai, true);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("new lead: validates phone, uses the de-duplicating database functions, shows success", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes } = await newPage(VIEWPORTS.ipad);
   try {

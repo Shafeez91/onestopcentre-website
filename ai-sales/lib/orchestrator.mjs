@@ -13,6 +13,8 @@ import { routeLookups, webResearch, shouldResearch, renderLookup } from "./resea
 import { nextDiscovery } from "./discovery.mjs";
 import { extractDistances, extractMinutes } from "../../sales/shared/validator.mjs";
 import { mergeFinancing, attachFinancing, renderFinancing, cleanInputs, isNewAssessment, advisorSummary } from "./financing.mjs";
+import { addressFor, parseTitlePreference, fixSalutation } from "../../sales/shared/salutation.mjs";
+import { limitEmojis, emojiAllowance } from "../../sales/shared/emoji.mjs";
 
 const QUAL_FIELDS = ["purpose", "first_home", "bedrooms", "size_sqft", "budget_min", "budget_max", "employment", "financing", "timeline_months", "readiness", "concerns"];
 
@@ -61,7 +63,9 @@ export const STYLE = { maxParagraphs: 3, maxParagraphWords: 40, maxBullets: 5, m
 // introduction on the first reply and a required note (indicative price, loan illustration) may add a few words.
 // (one line per message, so only the message's length is checked, not its paragraphs')
 export const STYLE_SHORT = { maxParagraphs: 2, maxParagraphWords: Infinity, maxBullets: 3, maxMessageWords: 15, maxTurnWords: 45, targetWords: "7–10", introWords: 8, noteWords: 6, short: true };
-export const styleFor = (persona) => (persona?.reply_style === "short" ? STYLE_SHORT : STYLE);
+// "Adaptive" (master prompt v2): usually 20–60 words a reply, up to about 100 for a detailed answer, 1–3 messages
+export const STYLE_ADAPTIVE = { maxParagraphs: 3, maxParagraphWords: 45, maxBullets: 5, maxMessageWords: 60, maxTurnWords: 100, targetWords: "20–60", adaptive: true };
+export const styleFor = (persona) => (persona?.reply_style === "short" ? STYLE_SHORT : persona?.reply_style === "adaptive" ? STYLE_ADAPTIVE : STYLE);
 // required wording that may make a short message longer: the AI introduction and the price / loan notes
 const INTRO = /\b(pembantu AI|AI assistant|asisten AI)\b/i;
 const extraWords = (style, text) => (style.short ? (INTRO.test(text) ? style.introWords : 0) + (NOTE.test(text) ? style.noteWords : 0) : 0);
@@ -126,6 +130,26 @@ function researchTrace(ctx, routes) {
   return Object.keys(t).length ? t : null;
 }
 
+/**
+ * The last checks on an AI reply's text before it is sent, in code (no AI call): a wrong title before the buyer's name
+ * is replaced by the right address (Smart Salutation), and emojis are kept to one per turn, none in serious replies.
+ */
+export function finalTouches(messages, { decision = "reply", data = {}, ctx = {}, financing = false } = {}) {
+  const adjustments = [];
+  const addr = ctx.buyer?.address;
+  let out = (messages || []).map((m) => {
+    if (!addr) return m;
+    const f = fixSalutation(m, addr, data.language === "en" ? "en" : "ms");
+    adjustments.push(...f.fixed.map((x) => `salutation: ${x}`));
+    return f.text;
+  });
+  const max = emojiAllowance({ decision, intent: data.intent, objectionKey: data.objection_key, financing });
+  const e = limitEmojis(out, { max });
+  if (e.removed) adjustments.push(`emojis: ${e.removed} removed (at most ${max} in this reply)`);
+  out = e.messages.filter((m) => m && /\p{L}/u.test(m));
+  return { messages: out.length ? out : messages, adjustments };
+}
+
 const summariseViolations = (vs) => vs.map((v) => `- ${v.code}: ${v.detail}`).join("\n");
 
 /**
@@ -175,6 +199,9 @@ export async function respond(p) {
   // 2) verified context
   const ctx = await clock("context_ms", () => loadContext(p.db, { leadId: p.leadId, message, history, now }));
   if (askedLang) ctx.buyer = { ...(ctx.buyer || {}), language_requested: askedLang };
+  // the buyer says how to be addressed in this message ("call me Mr Tan", "panggil saya Puan"): used from this reply on
+  const titlePref = parseTitlePreference(message);
+  if (titlePref && ctx.buyer) ctx.buyer.address = addressFor({ full_name: titlePref.name || ctx.buyer.name, salutation: titlePref.salutation, gender: titlePref.gender, salutation_source: "customer" });
   // the owner's discovery order: the next question worth asking, from what the CRM already knows
   ctx.discovery = nextDiscovery({ known: ctx.clientProfile?.known, buyerName: ctx.buyer?.name, appointments: (ctx.lead?.open_appointments || []).length,
     message, readiness: ctx.lead?.qualification_known?.readiness });
@@ -346,12 +373,14 @@ export async function respond(p) {
     const f = (ctx.files || []).find((x) => x.id === id);
     if (f && !actions.some((a) => a.type === "send_file" && a.document_id === id)) actions.push({ type: "send_file", document_id: f.id, title: f.title, kind: f.kind, project_id: f.project_id });
   }
+  if (titlePref && p.leadId) actions.push({ type: "set_salutation", salutation: titlePref.salutation, gender: titlePref.gender });
   // remember a language the buyer asked for in this message, so later replies and follow-ups use it
   const askedNow = requestedLanguage(message);
   if (askedNow && askedNow !== ctx.buyer?.preferred_language) actions.push({ type: "set_language", language: askedNow });
 
   // separate WhatsApp messages only for a normal AI reply; a safe reply or a hand-over is one message
-  const messages = decision === "reply" ? data.messages : [reply];
+  const raw = decision === "reply" ? data.messages : [reply];
+  const { messages, adjustments } = finalTouches(raw, { decision, data, ctx, financing: !!fin && /instal|ansuran|financ|pembiayaan|loan|lppsa/i.test(String(data.intent) + raw.join(" ")) });
   // the draft hands a factual question to an advisor because our data lacks it: research it once on the web and,
   // if something was found, write the reply again with the findings (no second daily-limit charge)
   const handoverReason = actions.find((a) => a.type === "handover")?.reason;
@@ -375,6 +404,7 @@ export async function respond(p) {
   return finish({
     decision, reply: messages.join("\n\n"), messages, draft: data.reply, draft_messages: data.messages, language: data.language, intent: data.intent, agent: data.agent, confidence: Number(data.confidence),
     facts_used: data.facts_used || [], objection_key: data.objection_key || null, violations: check.violations, style_notes: check.styleNotes, actions,
+    ...(adjustments.length ? { adjustments } : {}),
     qualification, score: scored.score, temperature: scored.temperature,
     ...(fin ? { financing: { inputs: fin.inputs, result: fin.result, recalculated } } : {}),
     // which project the reply was about and what its information lacked, so a hand-over can be traced to a data gap
@@ -393,6 +423,14 @@ export async function applyActions(db, { leadId, contactId, result, conversation
   for (const a of result.actions || []) {
     if (a.type === "record_consent") {
       await db.post("ai_consent_records", { contact_id: contactId, channel: a.channel, purpose: a.purpose, status: a.status, source: "whatsapp_stop", evidence: a.evidence });
+    } else if (a.type === "set_salutation") {
+      // the buyer's own words: their title and (if it implies one) gender, marked as customer-confirmed. Before migration 20
+      // the new columns do not exist: the title alone is saved then.
+      if (contactId) {
+        const path = `ai_contacts?id=eq.${encodeURIComponent(contactId)}`;
+        try { await db.patch(path, { salutation: a.salutation, ...(a.gender ? { gender: a.gender } : {}), salutation_source: "customer", salutation_confidence: "confirmed" }); }
+        catch { await db.patch(path, { salutation: a.salutation }); }
+      }
     } else if (a.type === "set_language") {
       if (contactId) await db.patch(`ai_contacts?id=eq.${encodeURIComponent(contactId)}`, { preferred_language: a.language });
     } else if (a.type === "pause_ai") {
@@ -485,7 +523,7 @@ export async function composeFollowUp(p) {
     usage.input_tokens += r.usage?.input_tokens || 0; usage.output_tokens += r.usage?.output_tokens || 0;
     if (data.handover?.needed) return { skipped: "the AI judged that a person should follow up", usage, model: served };
     check = checkTurn(data, ctx.rules);
-    if (check.ok || (attempt === 2 && check.hardOk)) return { reply: data.reply, language: data.language, usage, model: served };
+    if (check.ok || (attempt === 2 && check.hardOk)) return { reply: finalTouches([data.reply], { data, ctx }).messages.join("\n\n"), language: data.language, usage, model: served };
     feedback = summariseViolations(check.violations);
   }
   return { skipped: "the follow-up draft failed the business-rule check", violations: check?.violations || [], usage, model: served };
