@@ -1,5 +1,6 @@
 // AI Sales — financing documents on the lead page (advisors and above): upload a payslip, CCRIS report or bank
-// statement, have the AI read its figures, view the file, confirm the figures, or delete it. The files live in a
+// statement, have the AI read its figures, view the file, confirm the figures, or delete it. "extract" (the Financing
+// tools calculators) reads a file sent with the request and returns the figures without storing the file or them. The files live in a
 // private bucket only this function can reach and are deleted after the retention period (30 days by default).
 // Nothing here is sent to the buyer, and nothing is calculated until a staff member saves the calculator.
 import { randomUUID } from "node:crypto";
@@ -36,6 +37,28 @@ export default async (req, context, deps = {}) => {
   };
 
   try {
+    if (action === "extract") {
+      const kind = DOC_KINDS[body?.kind] ? body.kind : null, mime = DOC_MIME.includes(body?.mime) ? body.mime : null;
+      if (!kind) return json({ error: "Choose the document type." }, 400);
+      if (!mime) return json({ error: "Only PDF, JPG, PNG or WEBP files." }, 400);
+      const bytes = Buffer.from(String(body?.data || ""), "base64");
+      if (!bytes.length) return json({ error: "The file is empty." }, 400);
+      if (bytes.length > DOC_MAX_BYTES) return json({ error: "The file is larger than 4 MB. Upload a smaller scan or a photo." }, 413);
+      const cap = await udb.rpc("ai_reserve_ai_call", {});
+      if (cap && cap.allowed === false) return json({ error: `The AI daily limit (${cap.cap}) is reached. Try again tomorrow or raise it in Settings.` }, 429);
+      let out;
+      try { out = await readDocument({ llm, file: { bytes, mime, kind }, deadline: t0 + READ_MS }); }
+      catch (e) {
+        const k = e instanceof LlmError ? e.kind : "error";
+        logLine({ action, kind, error_kind: k, ms: Date.now() - t0 });
+        if (k === "config") return json({ error: e.message, setup_needed: "ANTHROPIC_API_KEY" }, 501);
+        return json({ error: k === "timeout" ? "The AI took too long to read this file. Try again, or upload a clearer photo of one page." : "The AI could not read this file: " + (e?.message || e) }, 502);
+      }
+      await audit(caller, "financing_doc_extract", { kind, read_as: out.extraction.document_kind });
+      logLine({ action, kind, read_as: out.extraction.document_kind, confidence: out.extraction.confidence, ms: Date.now() - t0 });
+      return json({ extraction: out.extraction, stored: false });
+    }
+
     if (action === "upload") {
       const leadId = UUID.test(body?.lead_id || "") ? body.lead_id : null;
       const kind = DOC_KINDS[body?.kind] ? body.kind : null;
