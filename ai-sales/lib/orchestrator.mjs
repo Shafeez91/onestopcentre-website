@@ -151,7 +151,14 @@ function researchTrace(ctx, routes) {
 export function financingReply(intent, messages, engineOn = true) {
   if (!engineOn) return false;
   if (/financ|instal|loan|lppsa|affordab/i.test(String(intent || ""))) return true;
-  return /RM\s?[\d,.]+\s?(k|ribu)?[^.\n]{0,40}(sebulan|bulanan|per month|\/month|a month|monthly|ansuran|instal)/i.test((messages || []).join(" "));
+  // a maintenance fee or a rent a month is not a financing figure
+  const re = /RM\s?[\d,.]+\s?(k|ribu)?[^.\n]{0,40}(sebulan|bulanan|per month|\/month|a month|monthly|ansuran|instal)/gi;
+  const text = (messages || []).join(" ");
+  for (const m of text.matchAll(re)) {
+    const around = text.slice(Math.max(0, m.index - 60), m.index + m[0].length + 30);
+    if (!/(maintenance|penyelenggaraan|sinking|caj|sewa|rent|rental|yield)/i.test(around)) return true;
+  }
+  return false;
 }
 
 export function finalTouches(messages, { decision = "reply", data = {}, ctx = {}, financing = false } = {}) {

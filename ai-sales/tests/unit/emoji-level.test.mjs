@@ -50,3 +50,13 @@ test("respond(): friendly keeps one emoji on a plain price answer; none removes 
   const c = await respond({ db: db("friendly"), llm: llmOf(["Maaf atas kesulitan 😔 advisor akan hubungi."], "complaint"), leadId: "L1", message: "Sy tak puas hati", history, now: NOW, mode: "simulate" });
   assert.doesNotMatch(c.messages.join(" "), /😔/, "a complaint gets none, even on friendly");
 });
+
+test("a maintenance fee or a rent a month is not a financing figure; a removed emoji that ended a sentence leaves a full stop", async () => {
+  const { financingReply } = await import("../../lib/orchestrator.mjs");
+  const { limitEmojis } = await import("../../../sales/shared/emoji.mjs");
+  assert.equal(financingReply("qualification", ["Holding cost: maintenance anggaran RM0.33 psf, contohnya Type A sekitar RM183 sebulan."]), false);
+  assert.equal(financingReply("comparison", ["Type E: RM3,500 sebulan sewa bilik, gross yield 7.2%"]), false);
+  assert.equal(financingReply("project_info", ["Anggaran ansuran RM2,100 sebulan."]), true);
+  assert.deepEqual(limitEmojis(["Faham, utk investment 👍 Sbg info, M AURORA freehold."], { max: 0 }).messages, ["Faham, utk investment. Sbg info, M AURORA freehold."]);
+  assert.deepEqual(limitEmojis(["Terima kasih 🙏"], { max: 0 }).messages, ["Terima kasih"]);
+});
