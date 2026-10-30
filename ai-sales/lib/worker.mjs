@@ -194,9 +194,11 @@ export async function processReplyJob(deps, job, settings) {
     try { await db.rpc("ai_follow_up_start", { p_lead: lead.id, p_lead_type: pendingAppt ? "appointment_pending" : "new_enquiry" }); } catch { /* no sequence configured */ }
   }
   // client insights (profile, summary, next action) from the buyer's message: a separate, smaller AI call in its own
-  // job, so it never delays or blocks the reply; one per buyer message (dedupe key)
+  // job, so it never delays or blocks the reply; one per buyer message (dedupe key). It is due 90 s later: jobs run
+  // oldest first, and a buyer's next reply must not wait behind it (30 Oct: replies took 60–80 s instead of ~15)
   if (lead?.id && readable && !guard && settings.ai?.auto_insights !== false && ["reply", "handover", "blocked"].includes(result.decision)) {
-    await db.post("ai_jobs?on_conflict=dedupe_key", { kind: "lead_insights", status: "queued", payload: { lead_id: lead.id, message_id: msgId }, dedupe_key: `insights:${msgId}` },
+    await db.post("ai_jobs?on_conflict=dedupe_key", { kind: "lead_insights", status: "queued", payload: { lead_id: lead.id, message_id: msgId }, dedupe_key: `insights:${msgId}`,
+      run_at: new Date(deps.now().getTime() + INSIGHTS_DELAY_MS).toISOString() },
       { prefer: "return=minimal,resolution=ignore-duplicates" }).catch(() => null);
   }
   // retried: the recorded rows (one per message) prevent a double send; only what is still queued or failed goes out
@@ -287,6 +289,8 @@ export async function processFollowUp(deps, fj, settings) {
 /* ---------------------------------------------------------------- runner */
 // an AI reply takes 15–20 s: a job is only claimed when it can finish before the function is stopped
 export const MIN_JOB_MS = 18000;
+// profile updates wait this long, so replies to buyers always go first
+export const INSIGHTS_DELAY_MS = 90e3;
 
 /**
  * budgetMs: how long this run may take (Netlify stops functions at 30 s). With a budget, jobs are claimed one at a
