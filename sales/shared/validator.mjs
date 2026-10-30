@@ -58,8 +58,10 @@ const sentenceAt = (text, index) => { const s = text.lastIndexOf(".", index) + 1
 const LINK = /\bhttps?:\/\/[^\s)>\]]+|\bwa\.me\/\d+[^\s)]*/gi;
 
 // distances ("650m", "2.4 km", "~1.2km") and travel times ("7 min", "10 minit") in a text
-const DIST = /(\d+(?:[.,]\d+)?)\s?(km|kilometers?|kilometres?|m|meters?|metres?|meter)\b/gi;
-const MINS = /(\d+(?:[.,]\d+)?)\s?(min|mins|minit|minutes?|jam|hours?|hrs?)\b/gi;
+// the unit on the same line as the number (30 Oct: "RM467,000" at the end of one line and "M ARIA" on the next was
+// read as 467,000 m and blocked a correct price list), and never an amount in ringgit ("RM1.2m")
+const DIST = /(?<![\d.,]|RM\s?)(\d+(?:[.,]\d+)?)[ \t]?(km|kilometers?|kilometres?|m|meters?|metres?|meter)\b/gi;
+const MINS = /(?<![\d.,]|RM\s?)(\d+(?:[.,]\d+)?)[ \t]?(min|mins|minit|minutes?|jam|hours?|hrs?)\b/gi;
 const numIn = (s) => parseFloat(/,\d{3}$/.test(s) ? s.replace(",", "") : s.replace(",", ".")); // "1,500" = 1500, "1,2" = 1.2
 /** Distances in metres found in a text. */
 export function extractDistances(text) {

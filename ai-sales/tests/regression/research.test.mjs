@@ -322,3 +322,13 @@ test("a Google Maps measurement settles the dispute: the measured distance may b
   assert.ok(!r.attempts[0].violations.some((x) => x.code === "disputed_distance"));
   assert.equal(r.decision, "reply");
 });
+
+test("30 Oct (Jing Chooi): a price list is not read as distances — 'RM467,000' at a line end and 'M ARIA' on the next line, 'RM1.2m'", () => {
+  const reply = "Within RM500k, 2–3 rooms in KL:\n• M AURORA Type B from RM467,000\nM ARIA Type B from RM480,000\nAll indicative, final at booking.";
+  assert.deepEqual(extractDistances(reply), []);
+  assert.deepEqual(validateReply(reply, { allowedDistances: [650], allowedMinutes: [] }).violations.filter((v) => v.code === "unverified_distance"), []);
+  assert.deepEqual(extractDistances("Budget RM1.2m, RM 900m").map((d) => d.raw), []);
+  // real distances are still read and still checked
+  assert.deepEqual(extractDistances("LRT Sri Rampai 650m, KTM 1.2 km, mall 2km\n5 km to KLCC").map((d) => d.value), [650, 1200, 2000, 5000]);
+  assert.ok(validateReply("LRT is 300m away.", { allowedDistances: [2400], allowedMinutes: [] }).violations.some((v) => v.code === "unverified_distance"));
+});

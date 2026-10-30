@@ -380,6 +380,15 @@ test("30 Oct (Eugene): a second message arriving while the first reply is being 
   assert.match(d2.llm.calls[0].messages.at(-1).content, /Can send me details\?/);
 });
 
+test("30 Oct: a profile update is queued 90 s later, so the next buyer's reply never waits behind it", async () => {
+  const w = world(); delete w.ai_settings[0].ai.auto_insights; // on, as in production
+  const db = memdb(w), d = deps(db);
+  await runWorker(d, { followUps: false, reminders: false });
+  const ins = db.t.ai_jobs.find((j) => j.kind === "lead_insights");
+  assert.ok(ins, "insights job queued");
+  assert.equal(ins.run_at, new Date(NOW.getTime() + 90e3).toISOString());
+});
+
 test("WhatsApp sending switched off: the AI drafts, nothing goes to the buyer, no Telegram alert", async () => {
   const db = memdb(world()); flags(db, { whatsapp_outbound: false });
   const d = deps(db);
