@@ -355,6 +355,31 @@ test("a live reply that runs out of time is retried once on the next run; the se
   assert.equal(db.t.ai_handover_events.length, 1);
 });
 
+test("30 Oct (Eugene): a second message arriving while the first reply is being queued still gets answered — no job leaves it to the other", async () => {
+  // "Hi" at -3 min; "Can send me details?" at -2 min; the reply to "Hi" (drafted without the second message) queued at -1 min
+  const w = world({
+    ai_messages: [
+      { id: "M1", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Hi", created_at: ago(3), status: "received" },
+      { id: "M2", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Can send me details?", created_at: ago(2), status: "received" },
+      { id: "O1", conversation_id: "V1", direction: "outbound", sender_type: "ai", body: "Hi Eugene! I'm the AI assistant 😊", created_at: ago(1), status: "queued", source_job_id: "J0" },
+      { id: "O2", conversation_id: "V1", direction: "outbound", sender_type: "ai", body: "Any project you're interested in?", created_at: ago(1), status: "queued", source_job_id: "J0b" },
+    ],
+    ai_jobs: [{ id: "J2", kind: "wa_reply", payload: { conversation_id: "V1", message_id: "M2" }, status: "queued", attempts: 0, max_attempts: 5 }],
+  });
+  const db = memdb(w), d = deps(db);
+  await runWorker(d);
+  assert.equal(d.llm.calls.length, 1, "the newest message's job writes a reply");
+  assert.match(d.llm.calls[0].messages.at(-1).content, /Hi[\s\S]*Can send me details\?/, "it answers both messages together");
+  assert.equal(d.wa.sent.length, 1);
+  // a message the earlier reply did send is kept in the history, so the AI does not introduce itself twice
+  const w2 = structuredClone(w); w2.ai_messages[2].status = "sent";
+  const db2 = memdb(w2), d2 = deps(db2);
+  await runWorker(d2);
+  assert.equal(d2.llm.calls.length, 1);
+  assert.ok(d2.llm.calls[0].messages.some((m) => /Hi Eugene! I'm the AI assistant/.test(typeof m.content === "string" ? m.content : JSON.stringify(m.content))), "the sent message is in the history");
+  assert.match(d2.llm.calls[0].messages.at(-1).content, /Can send me details\?/);
+});
+
 test("WhatsApp sending switched off: the AI drafts, nothing goes to the buyer, no Telegram alert", async () => {
   const db = memdb(world()); flags(db, { whatsapp_outbound: false });
   const d = deps(db);

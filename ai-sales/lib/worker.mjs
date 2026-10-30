@@ -111,11 +111,17 @@ export async function processReplyJob(deps, job, settings) {
   const newestIn = msgs.find((m) => m.direction === "inbound");
   if (!newestIn || newestIn.id !== msgId) return { status: "done", note: "superseded by a newer message" }; // the newer job answers both
 
-  // everything the buyer sent since our last delivered message is answered together
-  let cut = msgs.findIndex((m) => m.direction === "outbound" && delivered(m));
+  // everything the buyer sent since our last delivered message is answered together. Only a message sent BEFORE the
+  // buyer's newest one can have answered it: one written after it was drafted without it (an earlier reply job still
+  // queuing its messages), so it does not count — otherwise each job leaves the answer to the other (30 Oct: "Hi",
+  // then "Can send me details?" 19 s later, and no reply at all)
+  const newestAt = Date.parse(newestIn.created_at);
+  let cut = msgs.findIndex((m) => m.direction === "outbound" && delivered(m) && Date.parse(m.created_at) < newestAt);
   if (cut < 0) cut = msgs.length;
   const all = msgs.slice(0, cut).filter((m) => m.direction === "inbound").reverse();
-  const earlier = msgs.slice(cut).reverse();
+  // messages an earlier reply did send meanwhile are part of what the buyer saw: kept in the history
+  const sentSince = msgs.slice(0, cut).filter((m) => m.direction === "outbound" && ["sent", "delivered", "read"].includes(m.status)).reverse();
+  const earlier = [...msgs.slice(cut).reverse(), ...sentSince];
   // reactions, stickers and deleted messages need no answer: never an "our advisor will contact you" for a 👍
   const pending = all.filter((m) => !silentOnly(m));
   if (!pending.length) return { status: "done", note: "nothing to answer (" + [...new Set(all.flatMap(kindsOf))].join(", ") + ")" };
