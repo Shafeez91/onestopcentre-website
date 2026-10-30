@@ -132,3 +132,19 @@ test("prompt: the name statuses and ask_now are explained to the AI", () => {
   assert.match(sys, /never address them by the WhatsApp name/);
   assert.match(sys, /discovery\.next\.ask_now/);
 });
+
+test("\"tak ada nama\" after the name question is a polite decline: never asked again", () => {
+  for (const m of ["Saya tak ada nama", "takde nama", "no name pls"]) assert.equal(val(read(m, "Btw, blh sy tahu nama?", "😁"), "preferred_name"), "not_disclosed", m);
+});
+
+test("emojis: a greeting that only names the topics (\"harga, lokasi dan pembiayaan\") keeps its smiley; real financing figures get none", async () => {
+  const { financingReply } = await import("../../lib/orchestrator.mjs");
+  assert.equal(financingReply("greeting", ["Sy blh bantu dgn harga, lokasi dan pembiayaan."]), false);
+  assert.equal(financingReply("project_info", ["Harga dari RM476,000."]), false);
+  assert.equal(financingReply("project_info", ["Anggaran ansuran RM2,100 sebulan."]), true);
+  assert.equal(financingReply("financing", ["Boleh, sy kira."]), true);
+  const llm = llmOf(draft(["Waalaikumussalam. Saya Hafiz_Ai, pembantu AI Hafizan Hanis 😊\n\nSy blh bantu dgn harga, lokasi dan pembiayaan."], { intent: "greeting" }));
+  const r = await respond({ db: db({ full_name: "😁" }), llm, leadId: "L1", message: "Assalamualaikum..", now: NOW, mode: "simulate" });
+  assert.match(r.messages[0], /😊/);
+  assert.match(buildSystemPrompt({ persona: { name: "Hafiz_Ai" } }), /In warm moments .* add one that fits/);
+});

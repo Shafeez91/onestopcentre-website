@@ -172,7 +172,7 @@ test("identity: Hafizan Hanis's AI assistant with his credentials (12 years, 500
   assert.match(sys, /more than 500 purchasers/);
   assert.match(sys, /never claim to be human or to be Hafizan Hanis himself/);
   assert.match(sys, /These are Hafizan Hanis's credentials, not yours/);
-  assert.match(sys, /at most one in a whole reply, often none/);
+  assert.match(sys, /at most one in a whole reply\. In warm moments/);
   assert.match(sys, /Urgency only when it is verified/);
   assert.match(sys, /Avoid stock phrases such as "Are you interested\?"/);
   assert.match(sys, /OWNER PERSONA TEXT/, "the owner's persona text is still included");

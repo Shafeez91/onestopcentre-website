@@ -76,8 +76,11 @@ export async function aitest(el, params) {
   // one bubble per WhatsApp message the AI would send in this turn (older saved turns have one text)
   const bubbles = (t) => {
     const list = t.r?.messages?.length ? t.r.messages : [t.text || "(no reply)"];
-    if (list.length === 1) return `<div class="bubble">${esc(list[0])}</div>`;
-    return `<div class="turn" role="group" aria-label="${list.length} WhatsApp messages from one AI turn">${list.map((m, i) => `<div class="bubble"><span class="part">${i + 1}/${list.length}</span>${esc(m)}</div>`).join("")}</div>`;
+    // files the AI would attach on WhatsApp (sent after the messages; never sent from this console)
+    const files = (t.r?.actions || []).filter((a) => a.type === "send_file")
+      .map((a) => `<div class="bubble attach">📄 <b>${esc(a.title)}</b><br><small>On WhatsApp this file is sent after the reply. Not sent in this test.</small></div>`).join("");
+    if (list.length === 1) return `<div class="bubble">${esc(list[0])}</div>${files}`;
+    return `<div class="turn" role="group" aria-label="${list.length} WhatsApp messages from one AI turn">${list.map((m, i) => `<div class="bubble"><span class="part">${i + 1}/${list.length}</span>${esc(m)}</div>`).join("")}${files}</div>`;
   };
   const detail = (r) => {
     const [label, kind] = outcome(r);

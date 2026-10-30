@@ -304,6 +304,7 @@ dialog::backdrop{background:rgba(6,15,38,.5)}
 .turn{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
 .turn .bubble{position:relative}.turn .bubble + .bubble{border-top-right-radius:6px}
 .bubble .part{display:inline-block;margin-right:6px;padding:0 6px;border-radius:999px;background:rgba(0,0,0,.07);font-size:.72rem;font-weight:700;color:var(--mute);vertical-align:1px}
+.ai .bubble.attach{margin-top:6px;background:var(--card);border:1px dashed var(--line);white-space:normal}.bubble.attach small{color:var(--mute)}
 .msg .why{margin-top:6px;text-align:left;max-width:100%}
 .msg .why small{display:inline}
 .msg .why details{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 10px;margin-top:6px}

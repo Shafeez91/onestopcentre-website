@@ -491,6 +491,23 @@ test("AI test console: shows the Google Maps lookup (route type, distance, locat
   } finally { await ctx.close(); }
 });
 
+test("AI test console: a brochure the AI would attach is shown under its reply, marked as not sent in the test", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage(VIEWPORTS.ipad);
+  try {
+    const result = { decision: "reply", reply: "Blh, sy send e-pamphlet M AZURA skrg.", messages: ["Blh, sy send e-pamphlet M AZURA skrg."], intent: "project_info", agent: "knowledge", language: "ms", confidence: 0.9, model: "claude-opus-5-5", latency_ms: 9000, attempts: [],
+      actions: [{ type: "send_file", document_id: "d1", title: "M_AZURA_ePamphlet.pdf", kind: "brochure", project_id: null }] };
+    await page.route("**/api/sales/ai/simulate", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...result, simulated: true }) }));
+    await page.goto(base + "/sales/#/ai-test");
+    await page.waitForSelector("#msg");
+    await page.evaluate(() => sessionStorage.clear());
+    await page.fill("#msg", "Boleh send brochure?");
+    await page.click("#say button");
+    await page.waitForSelector(".msg.ai .bubble.attach");
+    assert.match(await page.textContent(".msg.ai .bubble.attach"), /M_AZURA_ePamphlet\.pdf.*On WhatsApp this file is sent after the reply\. Not sent in this test\./s);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("AI persona: the Tone guidance editor is ~7× the old height on desktop and iPad, roomy on phones, scrolls, and saves the whole prompt", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   // a master prompt the size of the real one (1,405 lines, 63,129 characters on 30 Oct): headings, numbering, blank lines
   const PROMPT = "CLAUDE MASTER PROMPT\n\n" + Array.from({ length: 1400 }, (_, i) => (i % 50 === 0 ? `\nSECTION ${i / 50 + 1}\n` : `${i % 50}. Rule ${i}: reply in short WhatsApp messages — keep the buyer's language.`)).join("\n") + "\n\nEND OF PROMPT";
@@ -811,7 +828,9 @@ test("inbox: three panels on a wide screen — conversations with last message a
 });
 
 test("calendar: month grid with visits and follow-up tasks; an agenda on phones; tasks list across leads", { skip: skip || (!chromium && "playwright not installed") }, async () => {
-  const soon = new Date(Date.now() + 2 * 3600e3).toISOString(), NOW = new Date().toISOString();
+  // later today in Malaysia (the calendar's day), even late in the evening
+  const toMidnightMyt = 864e5 - ((Date.now() + 8 * 3600e3) % 864e5);
+  const soon = new Date(Date.now() + Math.max(60e3, Math.min(2 * 3600e3, toMidnightMyt - 5 * 60e3))).toISOString(), NOW = new Date().toISOString();
   const mutate = (db) => {
     db.ai_appointments.push({ id: "A5", lead_id: "L1", kind: "showroom_visit", status: "confirmed", start_at: soon, project_id: "t1", reminders: [], created_at: NOW, lead: db.ai_appointments[0].lead });
     db.ai_tasks.push({ id: "T1", lead_id: "L1", title: "Call about Type A", due_at: soon, status: "open", assignee_email: "owner@test.local", lead: db.ai_appointments[0].lead },
