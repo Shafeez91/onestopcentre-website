@@ -1513,4 +1513,30 @@ do $$ begin
 end $$;
 rollback;
 
+\echo 'T65 WhatsApp username buyers: a user id (no phone) gets a contact, lead, chat and reply job; never stored as a phone; a phone id still is'
+begin;
+do $$
+declare r jsonb; r2 jsonb; c public.ai_contacts;
+begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  r := public.ai_wa_inbound('MY.1349120865530274', 'Buyer With Username', 'wamid.U1', 'text', 'Hi, info M Mira?');
+  assert (r ->> 'job_id') is not null, 'a reply job is queued';
+  select * into c from public.ai_contacts where id = (r ->> 'contact_id')::uuid;
+  assert c.wa_id = 'MY.1349120865530274' and c.phone_e164 is null, 'the user id is the WhatsApp id, not a phone';
+  -- a short user id whose digits look like a phone number is still not a phone
+  r2 := public.ai_wa_inbound('MY.60123456789', 'Other', 'wamid.U2', 'text', 'Hello');
+  assert (select phone_e164 from public.ai_contacts where id = (r2 ->> 'contact_id')::uuid) is null;
+  assert (r2 ->> 'contact_id') <> (r ->> 'contact_id');
+  -- the same buyer again: same contact and chat
+  r2 := public.ai_wa_inbound('MY.1349120865530274', 'Buyer With Username', 'wamid.U3', 'text', 'Hello again');
+  assert (r2 ->> 'contact_id') = (r ->> 'contact_id') and (r2 ->> 'conversation_id') = (r ->> 'conversation_id');
+  -- a reply from the phone app to that buyer: recorded in the same chat, AI steps back
+  r2 := public.ai_wa_echo('MY.1349120865530274', 'wamid.U4', 'text', 'Hi, saya Hafizan');
+  assert (r2 ->> 'conversation_id') = (r ->> 'conversation_id');
+  -- a normal phone number still becomes the phone
+  r2 := public.ai_wa_inbound('60198765432', 'Phone Buyer', 'wamid.U5', 'text', 'Hi');
+  assert (select phone_e164 from public.ai_contacts where id = (r2 ->> 'contact_id')::uuid) = '60198765432';
+end $$;
+rollback;
+
 \echo 'ALL DB TESTS PASSED'

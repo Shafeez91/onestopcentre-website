@@ -67,6 +67,35 @@ test("24-hour window: open just inside, closed after (with a safety margin)", ()
   assert.equal(inWindow(null, NOW), false);
 });
 
+test("30 Oct: a buyer with a WhatsApp username and a hidden number is read by their user id, and answered with 'recipient'", async () => {
+  const wrap = (value) => ({ object: "whatsapp_business_account", entry: [{ changes: [{ field: "messages", value: { metadata: { phone_number_id: "PN1" }, ...value } }] }] });
+  // no phone number: the user id from the message (or the only contact) is the sender
+  let r = parseWebhook(wrap({ contacts: [{ user_id: "MY.1349120865530274", profile: { name: "Aina", username: "aina.home" } }],
+    messages: [{ id: "wamid.U1", from_user_id: "MY.1349120865530274", timestamp: "1793325000", type: "text", text: { body: "Hi, info M Mira?" } }] }), "PN1");
+  assert.equal(r.messages.length, 1, "the message is no longer dropped");
+  assert.deepEqual([r.messages[0].wa_id, r.messages[0].name, r.messages[0].text], ["MY.1349120865530274", "Aina", "Hi, info M Mira?"]);
+  r = parseWebhook(wrap({ contacts: [{ user_id: "MY.99" }], messages: [{ id: "wamid.U2", type: "text", text: { body: "Hello" } }] }), "PN1");
+  assert.equal(r.messages[0].wa_id, "MY.99", "only the contact block names the sender");
+  // phone number given as well: the phone stays the id, as before
+  r = parseWebhook(wrap({ contacts: [{ wa_id: "60123456789", user_id: "MY.1", profile: { name: "Ali" } }],
+    messages: [{ id: "wamid.U3", from: "60123456789", from_user_id: "MY.1", type: "text", text: { body: "Hi" } }] }), "PN1");
+  assert.deepEqual([r.messages[0].wa_id, r.messages[0].name], ["60123456789", "Ali"]);
+  // neither: counted, not stored
+  r = parseWebhook(wrap({ messages: [{ id: "wamid.U4", type: "text", text: { body: "?" } }] }), "PN1");
+  assert.deepEqual([r.messages.length, r.unidentified], [0, 1]);
+  // a reply from the phone app to such a buyer
+  r = parseWebhook({ object: "whatsapp_business_account", entry: [{ changes: [{ field: "smb_message_echoes", value: { metadata: { phone_number_id: "PN1" }, message_echoes: [{ id: "wamid.E9", to_user_id: "MY.1349120865530274", type: "text", text: { body: "Hai" } }] } }] }] }, "PN1");
+  assert.equal(r.echoes[0].wa_id, "MY.1349120865530274");
+  // sending to a user id: "recipient", digits not stripped; a phone number still uses "to"
+  const cfg = { token: "T", phoneNumberId: "PN1", version: "v23.0" }, sent = [];
+  const ok = async (u, i) => { sent.push(JSON.parse(i.body)); return Response.json({ messages: [{ id: "wamid.X" }] }); };
+  await sendWhatsApp(cfg, "MY.1349120865530274", { text: "Hai" }, { fetchImpl: ok });
+  assert.equal(sent[0].recipient, "MY.1349120865530274");
+  assert.equal(sent[0].to, undefined);
+  await sendWhatsApp(cfg, "60123456789", { text: "Hai" }, { fetchImpl: ok });
+  assert.deepEqual([sent[1].to, sent[1].recipient], ["60123456789", undefined]);
+});
+
 test("sending: documented Cloud API shapes for text and template; errors classified", async () => {
   const cfg = { token: "T", phoneNumberId: "PN1", version: "v23.0" }, sent = [];
   const ok = async (u, i) => { sent.push({ u, i, b: JSON.parse(i.body) }); return Response.json({ messages: [{ id: "wamid.X" }] }); };

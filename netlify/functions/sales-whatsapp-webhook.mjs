@@ -26,7 +26,9 @@ export default async (req, context) => {
 
   const deps = liveDeps();
   if (!deps.db) return json({ error: "SUPABASE_SERVICE_ROLE_KEY is not set" }, 500);
-  const { messages, statuses, echoes } = parseWebhook(payload, env("WHATSAPP_PHONE_NUMBER_ID"));
+  const { messages, statuses, echoes, unidentified } = parseWebhook(payload, env("WHATSAPP_PHONE_NUMBER_ID"));
+  // a message with neither a phone number nor a user id cannot be answered: say so in the log (no content)
+  if (unidentified) console.error(JSON.stringify({ evt: "wa_unidentified_message", count: unidentified, keys: Object.keys(payload?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || {}) }));
   let queued = 0;
   try {
     for (const m of messages) {
