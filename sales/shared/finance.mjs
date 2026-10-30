@@ -15,6 +15,11 @@
 //   confirmed_service     LPPSA: "yes" if permanent and confirmed in service, "no" otherwise
 //   service_years         LPPSA: years in service
 //   second_financing      LPPSA: true if this is the applicant's second LPPSA financing
+//   mrtt_premium          LPPSA: MRTT / MRTA (mortgage takaful / insurance) premium financed into the loan, RM, from the
+//                         insurer's quote or LPPSA SmartKira; 0 = none or paid in cash. Never estimated here.
+//   finance_legal_fees    LPPSA: "no" if the buyer pays the financing agreement's legal fee in cash; otherwise it is
+//                         financed (LPPSA Garis Panduan Bil. 1/2024: the approved amount includes the property price,
+//                         the MRTA/MRTT premium and the financing legal fees)
 //   property_price, valuation, requested_amount, down_payment
 //   property_count        bank: how many housing loans including this one (1, 2, 3+)
 //   co_age, co_income, co_mandatory_deductions, co_commitments_monthly   bank joint applicant (fixed monthly income)
@@ -132,28 +137,30 @@ export function principalFor(payment, ratePct, months) {
   return (A * (f - 1)) / (r * f);
 }
 
-/** Tiered rates (e.g. LPPSA 4% up to RM750k, 4.5% on the rest): each band is repaid as its own reducing balance over the same term. */
-export function tieredInstalment(principal, tiers, months) {
-  let left = Number(principal), prev = 0, total = 0;
+/**
+ * Tiered rates (LPPSA: 4% on the first RM750,000, 4.5% on the part above) as LPPSA applies them: one weighted-average
+ * rate on the whole amount, {(A1 × R1) + (A2 × R2)} / A (Smart Kira; e.g. RM1,000,000 → 4.125%).
+ */
+export function weightedRatePct(principal, tiers) {
+  const P = Number(principal);
+  if (!(P > 0)) return Number(tiers[0].rate_pct);
+  let left = P, prev = 0, sum = 0;
   for (const t of tiers) {
     if (left <= 0) break;
     const cap = t.up_to === null || t.up_to === undefined ? Infinity : t.up_to - prev;
     const part = Math.min(left, cap);
-    total += instalment(part, t.rate_pct, months);
-    left -= part; prev = t.up_to ?? prev;
+    sum += part * t.rate_pct; left -= part; prev += part;
   }
-  return total;
+  return sum / P;
+}
+export function tieredInstalment(principal, tiers, months) {
+  return instalment(principal, weightedRatePct(principal, tiers), months);
 }
 export function tieredPrincipalFor(payment, tiers, months) {
-  let left = Number(payment), prev = 0, total = 0;
-  for (const t of tiers) {
-    if (!(left > 0)) break;
-    const cap = t.up_to === null || t.up_to === undefined ? Infinity : t.up_to - prev;
-    const full = cap === Infinity ? Infinity : instalment(cap, t.rate_pct, months);
-    if (left >= full) { total += cap; left -= full; } else { total += principalFor(left, t.rate_pct, months); left = 0; }
-    prev = t.up_to ?? prev;
-  }
-  return total;
+  if (!(Number(payment) > 0)) return 0;
+  let lo = 0, hi = principalFor(payment, Math.min(...tiers.map((t) => t.rate_pct)), months);
+  for (let i = 0; i < 80; i++) { const mid = (lo + hi) / 2; if (tieredInstalment(mid, tiers, months) <= payment) lo = mid; else hi = mid; }
+  return lo;
 }
 /** Single rate that gives the same instalment as the tiers for this amount (for display). */
 export function effectiveRate(principal, tiers, months) {
@@ -201,6 +208,27 @@ export function upfrontCosts(price, loan, costs = DEFAULT_FINANCING.costs) {
   };
 }
 
+const legalFee = (x, costs) => (x > 0 ? Math.max(costs.legal_min, banded(x, costs.legal_tiers)) * (1 + costs.legal_sst_pct / 100) : 0);
+
+/**
+ * What LPPSA would finance for a property amount: the property part, the MRTT premium and (unless paid in cash) the
+ * legal fee of the financing agreement, which is charged on the whole financing amount (so it is solved for).
+ */
+export function lppsaPackage(property, input = {}, costs = DEFAULT_FINANCING.costs) {
+  const mrtt = Math.max(0, n0(input.mrtt_premium)), withLegal = input.finance_legal_fees !== "no";
+  let legal = 0;
+  if (withLegal && property > 0) for (let i = 0; i < 20; i++) { const next = legalFee(property + mrtt + legal, costs); if (Math.abs(next - legal) < 0.5) { legal = next; break; } legal = next; }
+  return { property: round(property), mrtt: round(mrtt), legal: round(legal), total: round(property + mrtt + legal), legal_financed: withLegal };
+}
+
+/** The highest property amount whose whole package (property + MRTT + legal fee) fits within `limit`. */
+function propertyWithin(limit, input, costs) {
+  if (!(limit > 0)) return 0;
+  let lo = 0, hi = limit;
+  for (let i = 0; i < 60 && hi - lo > 1; i++) { const mid = (lo + hi) / 2; if (lppsaPackage(mid, input, costs).total <= limit) lo = mid; else hi = mid; }
+  return lo;
+}
+
 /* ---------- assessments ---------- */
 
 function outcomeFor({ missing, blocked, needed, maxLoan, bandPct }) {
@@ -242,15 +270,24 @@ export function assessLppsa(input = {}, rules = DEFAULT_FINANCING) {
   const binding = tests.reduce((a, b) => (b.limit < a.limit ? b : a)).key;
   const byIncome = months > 0 ? tieredPrincipalFor(maxInst, R.rate_tiers, months) : 0;
   const propertyLimit = price ? Math.min(price, valuation || price) * R.margin_pct / 100 : null;
-  const otherLimit = Math.min(R.max_financing, propertyLimit ?? Infinity);
+  // the property part is capped by the margin; the MRTT premium and legal fee are financed on top, within the LPPSA maximum
+  const otherLimit = Math.min(R.max_financing, propertyLimit ? lppsaPackage(propertyLimit, input, rules.costs).total : Infinity);
   const maxLoan = Math.min(byIncome, otherLimit);
   const limitedBy = byIncome <= otherLimit ? "income" : R.max_financing <= (propertyLimit ?? Infinity) ? "lppsa_cap" : "property_value";
-  const needed = pos(input.requested_amount) ?? (price ? Math.max(0, price - n0(input.down_payment)) : null);
-  const financeable = needed ? Math.min(needed, otherLimit) : null; // what LPPSA could finance at most, before income
-  const topUp = needed ? needed - financeable : 0;
+  // the financing covers the property part plus the MRTT premium and the financing legal fee (Garis Panduan 1/2024)
+  const propertyNeeded = pos(input.requested_amount) ?? (price ? Math.max(0, price - n0(input.down_payment)) : null);
+  const propertyFinanceable = propertyNeeded ? Math.min(propertyNeeded, propertyLimit ?? Infinity, propertyWithin(R.max_financing, input, rules.costs)) : null;
+  const pkg = propertyFinanceable !== null ? lppsaPackage(propertyFinanceable, input, rules.costs) : null;
+  const needed = propertyNeeded ? lppsaPackage(propertyNeeded, input, rules.costs).total : null;
+  const financeable = pkg ? pkg.total : null; // what LPPSA could finance at most, before income
+  const topUp = propertyNeeded ? propertyNeeded - propertyFinanceable : 0;
   if (months <= 0) { notes.push("No tenure is left before the maximum age."); escalate.push("no_tenure"); }
   if (topUp > 0) notes.push(`About RM${round(topUp).toLocaleString("en-MY")} is above the LPPSA limit (maximum RM${R.max_financing.toLocaleString("en-MY")}, ${R.margin_pct}% of price/value) and would be paid by the buyer.`);
   if (!known(input.confirmed_service)) notes.push("Assumes the applicant is permanent and confirmed in service.");
+  if (!known(input.mrtt_premium)) notes.push("MRTT / MRTA premium not included yet: enter the premium from the insurer's quote (LPPSA SmartKira shows it). It is financed in the same amount and lowers the property price you can afford.");
+  // the most the property itself can cost with no down payment, once the MRTT premium and legal fee are financed too
+  const maxTotal = floorTo(Math.min(byIncome, R.max_financing), 1000);
+  const maxPropertyByIncome = propertyWithin(maxTotal, input, rules.costs);
 
   const instNeeded = financeable && months > 0 ? tieredInstalment(financeable, R.rate_tiers, months) : null;
   const res = {
@@ -261,10 +298,14 @@ export function assessLppsa(input = {}, rules = DEFAULT_FINANCING) {
     tenure_years: years,
     rate: { tiers: R.rate_tiers, effective_pct: financeable && months > 0 ? effectiveRate(financeable, R.rate_tiers, months) : null },
     max_instalment: round(maxInst),
-    max_financing: floorTo(maxLoan, 1000),
+    max_financing: limitedBy === "income" ? floorTo(maxLoan, 1000) : round(maxLoan),
     max_by_income: floorTo(Math.min(byIncome, R.max_financing), 1000), // ignoring this property's price/value
     limited_by: limitedBy,
     financing_needed: needed ? round(needed) : null,
+    package: pkg ? { ...pkg, instalment: instNeeded ? round(instNeeded) : null,
+      mrtt_monthly: instNeeded && pkg.total ? round(instNeeded * pkg.mrtt / pkg.total) : null,
+      legal_monthly: instNeeded && pkg.total ? round(instNeeded * pkg.legal / pkg.total) : null } : null,
+    max_package: (() => { const p = lppsaPackage(maxPropertyByIncome, input, rules.costs); return { ...p, property: floorTo(maxPropertyByIncome, 100), total: p.total }; })(),
     financeable: financeable ? round(financeable) : null,
     instalment_for_needed: instNeeded ? round(instNeeded) : null,
     shortfall: financeable && financeable > byIncome ? round(financeable - byIncome) : 0,
@@ -351,7 +392,12 @@ function finalize(res, input, rules) {
   if (!price && res.route && !res.missing.includes("property_price")) res.missing.push("property_price");
   res.outcome_label = OUTCOMES[res.outcome];
   const loan = res.route === "lppsa" ? Math.min(res.financeable || 0, res.max_financing || 0) : res.financing_needed;
-  res.upfront = price && res.outcome !== "insufficient_information" ? upfrontCosts(price, loan, rules.costs) : null;
+  res.upfront = price && res.outcome !== "insufficient_information" ? upfrontCosts(price, res.route === "lppsa" && res.package ? Math.min(res.package.property, loan) : loan, rules.costs) : null;
+  if (res.upfront && res.route === "lppsa" && res.package?.legal_financed) {
+    // LPPSA finances the legal fee of the financing agreement: no cash for it
+    const item = res.upfront.items.find((i) => i.key === "legal_loan");
+    if (item) { item.en += " — financed by LPPSA"; item.ms += " — dibiayai LPPSA"; res.upfront.total -= item.amount; item.amount = 0; }
+  }
   res.assumptions = assumptions(res, rules);
   res.disclaimer = DISCLAIMER;
   res.next_questions = res.missing.filter((k) => FIELDS[k]).slice(0, 2).map((k) => ({ field: k, ...FIELDS[k] }));

@@ -143,3 +143,16 @@ Possible first-home exemptions are mentioned but not deducted.
   - refinancing
 - All figures are as the buyer stated them; nothing is checked against documents.
 - Not verified on a real iPad or iPhone, or with a real advisor account (tested with headless Chromium and a fake backend).
+
+## LPPSA: MRTT premium and legal fee inside the financing (30 Oct 2026)
+LPPSA Garis Panduan Pembiayaan Perumahan Bil. 1/2024: the approved financing amount includes the property price,
+the MRTA/MRTT premium and the financing legal fees. The engine now works the same way:
+- `mrtt_premium` (RM, from the insurer's quote or LPPSA SmartKira; never estimated) and the financing agreement's
+  legal fee (SRO scale on the whole financing amount + 8% SST, solved because the fee depends on the total) are
+  added to the property part. `finance_legal_fees: "no"` when the buyer pays that fee in cash.
+- The 100% margin applies to the property part; the RM1,000,000 maximum and the salary tests apply to the total.
+- `package`: property, MRTT, legal fee, total and each one's share of the monthly instalment.
+- `max_package`: the highest property price the buyer qualifies for with no down payment, once MRTT and the legal fee
+  are financed too.
+- The financed legal fee is no longer counted as an upfront cash cost.
+- Without a premium, the result says the MRTT is not included yet.

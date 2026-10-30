@@ -765,7 +765,7 @@ test("app shell: grouped menu, breadcrumb, collapsible rail remembered, global s
   try {
     await page.goto(base + "/sales/#/lead/L1");
     await page.waitForSelector("#view .page");
-    assert.deepEqual(await page.$$eval("#side .grp", (g) => g.map((x) => x.textContent)), ["Overview", "Sales & Clients", "AI & Knowledge", "Reporting", "Administration", "Website"]);
+    assert.deepEqual(await page.$$eval("#side .grp", (g) => g.map((x) => x.textContent)), ["Overview", "Sales & Clients", "Financing tools", "AI & Knowledge", "Reporting", "Administration", "Website"]);
     assert.match(await page.textContent("#crumbs"), /Sales & Clients\s*\/\s*Leads & CRM\s*\/\s*Lead/);
     assert.equal(await page.getAttribute("[data-nav=leads]", "aria-current"), "page");
     // collapse to icons; remembered after a reload
@@ -1060,6 +1060,25 @@ test("financing check: lead page shows the saved result; the calculator previews
   }
 });
 
+test("financing check: LPPSA breakdown shows the property, the MRTT premium and the legal fee inside the financing", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage({ width: 1280, height: 900 });
+  try {
+    await page.goto(base + "/sales/#/lead/L1?tab=sales");
+    await page.waitForSelector("#fin");
+    await page.click("#fin-calc summary");
+    await page.selectOption("#ffin select[name=route]", "lppsa");
+    for (const [k, v] of Object.entries({ age: "30", basic_salary: "4000", fixed_allowances: "1000", mandatory_deductions: "500", commitments_monthly: "800", property_price: "450000", mrtt_premium: "12000", down_payment: "" })) await page.fill(`#ffin input[name=${k}]`, v);
+    await page.selectOption("#ffin select[name=confirmed_service]", "yes");
+    await page.waitForFunction(() => /Financing breakdown/.test(document.querySelector("#fin-preview").textContent));
+    const prev = await page.textContent("#fin-preview");
+    for (const re of [/MRTT \/ MRTA premium \(financed\)RM12,000RM53/, /Legal fee, financing agreement \(incl\. SST\)RM6,322RM28/, /Total LPPSA financingRM468,322RM2,074/, /RM589,000/, /financed by LPPSA/]) assert.match(prev, re);
+    // paying the legal fee in cash takes it out of the financing
+    await page.selectOption("#ffin select[name=finance_legal_fees]", "no");
+    await page.waitForFunction(() => /Total LPPSA financingRM462,000/.test(document.querySelector("#fin-preview").textContent));
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("financing documents: upload and read a payslip, see what was read, use the checked figures in the calculator", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const blank = { payslip: { employer_sector: "unknown", fixed_allowances: [], variable_income: [], statutory_deductions: [], loan_deductions: [], other_deductions: [], service_status: "unknown" }, ccris: { facilities: [] }, bank_statement: { regular_loan_payments: [] } };
   const slip = { ...blank, readable: true, document_kind: "payslip", period: "2026-09", confidence: "high", warnings: ["Totals do not add up by RM10"],
@@ -1137,6 +1156,75 @@ test("knowledge: Read with AI renders a photo brochure, sends it to the AI and s
     assert.deepEqual(ins.body, [{ document_id: "kd1", project_id: "t1", lang: "ms", title: "Type A layout", content: "850 sq ft, 3 bedrooms. Source: Aurora floor plan.png, page 1", position: 0 }]);
     assert.ok(!("approved" in ins.body[0]), "saved as a draft");
     assert.ok(writes.some((w) => w.table === "ai_documents" && w.method === "PATCH" && w.body.extract_status === "extracted"));
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test("financing tools: sidebar group, live LPPSA and bank results, validation, copy, save to client, comparison, reset", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, writes, errors } = await newPage({ width: 1366, height: 1000 });
+  try {
+    await page.goto(base + "/sales/#/overview");
+    await page.waitForSelector("[data-nav=calc-lppsa]");
+    assert.match(await page.textContent("#side"), /Financing tools\s*LPPSA calculator\s*Bank loan calculator/i);
+    await page.click("[data-nav=calc-lppsa]");
+    await page.waitForSelector("#cres");
+    assert.equal(await page.getAttribute("[data-nav=calc-lppsa]", "aria-current"), "page");
+    assert.match(await page.textContent("#cres"), /More information required/);
+    const fill = async (k, v) => page.fill(`#cf [name="${k}"]`, v);
+    for (const [k, v] of Object.entries({ age: "30", basic_salary: "4000", "allowances.itka": "500", "allowances.cola": "500", "mandatory.tax": "100", "mandatory.kwsp": "400", financing_deductions: "800", property_price: "450000", mrtt_premium: "12000" })) await fill(k, v);
+    await page.waitForFunction(() => /Within indicative eligibility/.test(document.querySelector("#cres").textContent));
+    const res = await page.textContent("#cres");
+    for (const re of [/RM609,790/, /RM2,700\.00/, /RM468,322\.35/, /RM2,073\.61/, /RM1,626\.39/, /The three LPPSA tests/, /Rules, sources and audit/]) assert.match(res, re);
+    assert.equal(await page.$("#cres .badge.ok"), null, "no green status");
+    // a negative figure is flagged and left out
+    await fill("other_deductions", "-5");
+    await page.waitForFunction(() => /negative or not valid/.test(document.querySelector("#cres").textContent));
+    assert.equal(await page.getAttribute('#cf [name="other_deductions"]', "aria-invalid"), "true");
+    await fill("other_deductions", "");
+    // copy for WhatsApp
+    await ctx.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.click("#c-copy");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Summary copied/.test(t.textContent)));
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    assert.match(clip, /Anggaran Pembiayaan LPPSA/); assert.match(clip, /RM2,073\.61/); assert.match(clip, /bukan kelulusan/);
+    // save to a client: recorded in the financing history with its audit trail
+    await page.click("#c-save");
+    await page.fill("#sv [name=q]", "OSC");
+    await page.waitForSelector("#svlist [data-lead]");
+    await page.click("#svlist [data-lead]");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Saved to the client/.test(t.textContent)));
+    const saved = writes.find((w) => w.table === "ai_financing_assessments" && w.method === "POST");
+    assert.equal(saved.body.route, "lppsa");
+    assert.equal(saved.body.outcome, "potentially_affordable");
+    assert.equal(saved.body.source, "advisor");
+    assert.match(saved.body.rules_version, /^CALC-LPPSA-1/);
+    assert.equal(saved.body.result.audit.tenure_years, 35);
+    assert.equal(saved.body.result.audit.rate_pct, 4);
+    assert.ok(writes.some((w) => w.table === "ai_activities" && /LPPSA calculator/.test(w.body.body)));
+    // bank calculator
+    await page.click("[data-nav=calc-bank]");
+    await page.waitForSelector("#cf [name=statutory_deductions]");
+    for (const [k, v] of Object.entries({ age: "35", basic_salary: "6000", statutory_deductions: "900", "commitments.car.amount": "1000", "commitments.credit_card.amount": "250", property_price: "500000", rate_pct: "4.2" })) await fill(k, v);
+    await page.waitForFunction(() => /RM2,046\.83/.test(document.querySelector("#cres").textContent));
+    const bank = await page.textContent("#cres");
+    for (const re of [/RM510,057/, /RM2,320\.00/, /RM50,000\.00/, /DSR after 64\.64%/, /not any bank's eligibility assessment/]) assert.match(bank, re);
+    await page.selectOption("#cf [name=bank]", "maybank");
+    assert.match(await page.textContent("#banklink"), /Official calculator/);
+    // a commitment the bank does not count leaves the DSR
+    await page.uncheck('#cf [name="commitments.credit_card.counted"]');
+    await page.waitForFunction(() => /RM2,570\.00/.test(document.querySelector("#cres").textContent));
+    // comparison
+    await page.click("a[href='#/calc-compare']");
+    await page.waitForSelector(".tbl");
+    const cmp = await page.textContent("#view");
+    for (const re of [/LPPSA vs bank/, /RM468,322\.35/, /RM450,000\.00/, /Main differences/, /not like-for-like/]) assert.match(cmp, re);
+    // clear all
+    await page.click("[data-nav=calc-lppsa]");
+    await page.waitForSelector("#c-reset");
+    page.once("dialog", (d) => d.accept());
+    await page.click("#c-reset");
+    await page.waitForFunction(() => /More information required/.test(document.querySelector("#cres").textContent));
+    assert.equal(await page.inputValue('#cf [name="basic_salary"]'), "");
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
