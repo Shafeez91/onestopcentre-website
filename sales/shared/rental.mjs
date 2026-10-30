@@ -29,19 +29,52 @@ export function parseRentRates(text) {
   return { psf: range(psf), room: range(room) };
 }
 
+const SCENARIO = /RM\s?(\d{1,2}(?:\.\d{1,2})?)\s*psf[^.\n]*(conservative|konservatif|scenario|senario|andaian|baseline|default)/i;
+const RANGE = new RegExp(`RM\\s?${NUM}(?:${DASH}${NUM})?`, "i");
+const cited = (content) => (String(content).match(/^\s*Source(?: reference)?\s*:\s*(.+)$/im)?.[1] || "").trim().slice(0, 120) || null;
+const terms = (project) => [project?.name, ...String(project?.area || "").split(/[,/]/)].map((t) => String(t || "").toLowerCase().trim()).filter((t) => t.length >= 4);
+
+/** The rate a general knowledge entry gives for the project's own area (a table row or line naming it). */
+function areaRate(k, project) {
+  const content = String(k.content || ""), psfDoc = /psf/i.test(content), ts = terms(project);
+  if (!ts.length) return null;
+  for (const line of content.split("\n")) {
+    const low = line.toLowerCase();
+    const hit = ts.find((t) => low.includes(t));
+    if (!hit || /(maint|penyelenggaraan|sinking|caj|booking|harga|price)/i.test(line)) continue; // fees and prices are not rents
+    const r = parseRentRates(RENT_WORD.test(line) ? line : `rent ${line}`);
+    if (!r.psf && psfDoc) {
+      const m = line.match(RANGE);
+      if (m) { const a = n(m[1]), b = m[2] ? n(m[2]) : a; if (a >= 0.5 && b <= 15 && a <= b) r.psf = [a, b]; }
+    }
+    if (r.psf || r.room) return { ...r, place: line.replace(/\|/g, " ").replace(/RM[\s\S]*$/, "").replace(/\s+/g, " ").trim().slice(0, 80) || hit };
+  }
+  return null;
+}
+
 /**
- * Where the rent rate comes from: the first knowledge entry (for the projects in focus, then general ones) that states
- * one, otherwise the web research findings. Returns { psf, room, source: { kind, title?, urls?, date? } } or null.
+ * The rent rate for one project ({ id, name, area }), in this order: a knowledge entry for the project itself; a
+ * general entry's rate for the project's area (e.g. a market table row naming it); the general entry's conservative
+ * scenario rate ("Use RM2.50 psf as an initial conservative scenario"); web research findings.
+ * Returns { psf, room, source: { kind, basis, title?, place?, cited?, urls?, date? } } or null.
  */
-export function findRentRates({ knowledge = [], projectIds = [], web = null } = {}) {
-  const ordered = [...knowledge.filter((k) => k.project_id && projectIds.includes(k.project_id)), ...knowledge.filter((k) => !k.project_id)];
-  for (const k of ordered) {
+export function findRentRates({ knowledge = [], project = null, web = null } = {}) {
+  const own = knowledge.filter((k) => project?.id && k.project_id === project.id), general = knowledge.filter((k) => !k.project_id);
+  for (const k of own) {
     const r = parseRentRates(`${k.title || ""}\n${k.content || ""}`);
-    if (r.psf || r.room) return { ...r, source: { kind: "knowledge base", title: k.title || null, key: k.id ? `kb:${k.id}` : null } };
+    if (r.psf || r.room) return { ...r, source: { kind: "knowledge base", basis: "project", title: k.title || null, cited: cited(k.content) } };
+  }
+  for (const k of general) {
+    const r = areaRate(k, project);
+    if (r) return { psf: r.psf, room: r.room, source: { kind: "knowledge base", basis: "area", title: k.title || null, place: r.place, cited: cited(k.content) } };
+  }
+  for (const k of general) {
+    const m = String(k.content || "").match(SCENARIO);
+    if (m) { const v = n(m[1]); if (v >= 0.5 && v <= 15) return { psf: [v, v], room: null, source: { kind: "knowledge base", basis: "scenario", title: k.title || null } }; }
   }
   if (web?.found && web.findings) {
     const r = parseRentRates(web.findings);
-    if (r.psf || r.room) return { ...r, source: { kind: "web research", urls: (web.sources || []).map((s) => s.url).filter((u) => /^https?:\/\//.test(u || "")).slice(0, 3), date: String(web.at || "").slice(0, 10) || null } };
+    if (r.psf || r.room) return { ...r, source: { kind: "web research", basis: "market", urls: (web.sources || []).map((x) => x.url).filter((u) => /^https?:\/\//.test(u || "")).slice(0, 3), date: String(web.at || "").slice(0, 10) || null } };
   }
   return null;
 }
@@ -91,15 +124,29 @@ export function rentalEstimate(project, rates) {
   return { project: project.name, layouts, amounts };
 }
 
-/** What the AI sees: the figures, the rate, the source and the labels. */
-export function renderRental(estimates, rates) {
-  if (!estimates?.length) return null;
-  const s = rates.source || {};
+const BASIS = {
+  project: "a rent rate recorded for this project",
+  area: "the asking-rent range for this area in our market reference",
+  scenario: "a CONSERVATIVE SCENARIO rate from our rental reference, not actual rent data for this area",
+  market: "current rental listings found on the web",
+};
+const sourceText = (s = {}) => s.kind === "knowledge base"
+  ? `our knowledge base${s.title ? ` ("${s.title}")` : ""}${s.place ? `, row "${s.place}"` : ""}${s.cited ? `, citing ${s.cited}` : ""}`
+  : `web research${s.date ? ` (${s.date})` : ""}${s.urls?.length ? `: ${s.urls.join(", ")}` : ""}`;
+
+/** What the AI sees: per project the figures, the rate, what it is based on and the source. items: [{ estimate, rates }] */
+export function renderRental(items) {
+  const list = (items || []).filter((x) => x?.estimate);
+  if (!list.length) return null;
   return {
     label: "ESTIMATE (not a guarantee of rent or return)",
-    rate: [rates.psf ? `whole unit ${span(rates.psf[0], rates.psf[1], (x) => "RM" + x.toFixed(2))} psf a month` : "", rates.room ? `per room ${span(rates.room[0], rates.room[1], rm)} a month` : ""].filter(Boolean).join("; "),
-    source: s.kind === "knowledge base" ? `our knowledge base${s.title ? `: "${s.title}"` : ""}` : `web research${s.date ? ` (${s.date})` : ""}${s.urls?.length ? `: ${s.urls.join(", ")}` : ""}`,
-    projects: estimates.map((e) => ({ project: e.project, layouts: e.layouts })),
-    notes: "Gross yield = 12 months' rent ÷ the website price. Rent after maintenance leaves out sinking fund, tax, vacancy, furnishing and repairs.",
+    projects: list.map(({ estimate, rates }) => ({
+      project: estimate.project,
+      rate: [rates.psf ? `whole unit ${span(rates.psf[0], rates.psf[1], (x) => "RM" + x.toFixed(2))} psf a month` : "", rates.room ? `per room ${span(rates.room[0], rates.room[1], rm)} a month` : ""].filter(Boolean).join("; "),
+      based_on: BASIS[rates.source?.basis] || "",
+      source: sourceText(rates.source),
+      layouts: estimate.layouts,
+    })),
+    notes: "Gross yield = 12 months' rent ÷ the website price. Rent after maintenance leaves out sinking fund, tax, vacancy, furnishing and repairs. Asking rents are not achieved rents.",
   };
 }
