@@ -12,8 +12,13 @@ const contactName = (c) => (c && (c.full_name || (c.phone_e164 ? formatPhone(c.p
 
 /* ======================= Leads list ======================= */
 export async function leads(el, params) {
-  const f = { status: params.get("status") || "open", temp: params.get("temp") || "", stage: params.get("stage") || "", owner: params.get("owner") || "", since: params.get("since") || "", q: params.get("q") || "" };
+  const f = { status: params.get("status") || "", temp: params.get("temp") || "", stage: params.get("stage") || "", owner: params.get("owner") || "", since: params.get("since") || "", q: params.get("q") || "" };
   const queue = params.get("view") === "queue";
+  // a lead in a won or lost stage is always closed, and one in any other stage always open: the status follows the
+  // stage chosen, so "Open" + "LO, SPA & LA Signed" never shows an empty list by mistake
+  const stageOf = (id) => S.stages.find((x) => x.id === id);
+  const closingStage = (id) => !!(stageOf(id)?.is_won || stageOf(id)?.is_lost);
+  if (!f.status || (f.stage && f.status !== "all")) f.status = f.stage ? (closingStage(f.stage) ? "closed" : "open") : f.status || "open";
   let query = SB.from("ai_leads").select("id,lead_code,temperature,score,stage_id,owner_email,source_id,primary_project_id,handover_status,ai_paused,created_at,updated_at,last_contact_at,closed_at,ai_summary,contact:ai_contacts(id,full_name,phone_e164,email)").order("updated_at", { ascending: false }).limit(1000);
   if (f.status === "open") query = query.is("closed_at", null);
   if (f.status === "closed") query = query.not("closed_at", "is", null);
@@ -66,7 +71,9 @@ export async function leads(el, params) {
     <td data-label="Updated">${esc(ago(l.updated_at))}</td></tr>`).join("")}
   </tbody></table></div>` : empty(queue ? "Nothing needs action right now." : "No leads match these filters.")}`;
   const form = $("#flt", el);
-  const apply = () => { const d = formData(form); const p = new URLSearchParams(queue ? { view: "queue" } : {}); Object.entries(d).forEach(([k, v]) => v && p.set(k, v)); if (!d.status) p.set("status", "open"); location.hash = "#/leads?" + p.toString(); };
+  const apply = (e) => {
+    if (e?.target?.name === "stage" && form.stage.value && form.status.value !== "all") form.status.value = closingStage(form.stage.value) ? "closed" : "open";
+    const d = formData(form); const p = new URLSearchParams(queue ? { view: "queue" } : {}); Object.entries(d).forEach(([k, v]) => v && p.set(k, v)); if (!d.status) p.set("status", "open"); location.hash = "#/leads?" + p.toString(); };
   form.onchange = apply;
   form.onsubmit = (e) => { e.preventDefault(); apply(); };
   $$("tr[data-href]", el).forEach((tr) => { tr.onclick = (e) => { if (!e.target.closest("a")) location.hash = tr.dataset.href; }; tr.onkeydown = (e) => { if (e.key === "Enter") location.hash = tr.dataset.href; }; });
