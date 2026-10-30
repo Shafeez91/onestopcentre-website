@@ -14,6 +14,7 @@
 //   strictAmounts       true when the loan engine is on: instalment / loan figures must come from the engine
 //                       (they are in allowedAmounts), so the free-form "estimate with assumptions" allowance is off
 
+const RENT_SENTENCE = /(sewa|rent|rental|yield|pulangan|tenant|penyewa)/i;
 const HEDGE = /(anggaran|anggarkan|indicative|indikatif|dari\s+rm|from\s+rm|bermula|starting|sekitar|around|lebih kurang|approx|approximately|tertakluk|subject to|kira-kira|lebih\s+kurang|estimate|estimated|mungkin)/i;
 const ASSUMPTION = /(faedah|interest|kadar|rate|tempoh|tenure|tahun|years|margin|pinjaman|loan|financing|pembiayaan)/i;
 // whole words only, including WhatsApp short forms ("x dpt dijamin", "tk blh", "tdk", "bkn", "blm", "xde")
@@ -120,6 +121,9 @@ export function validateReply(reply, ctx = {}) {
   for (const a of extractAmounts(text)) {
     if (near(a.value, allowed)) continue;
     if (near(a.value, indicative) && hedged) continue;
+    // a rent figure needs the rental estimate (a sourced rate): the general "estimate with assumptions" allowance
+    // does not cover rents or yields
+    if (ctx.rentalAsk && RENT_SENTENCE.test(sentenceAt(text, a.index))) { add("unsourced_rent", `${a.raw} looks like a rent figure that is not in rental_estimates: quote only those figures, or say an advisor will confirm current rents.`); continue; }
     if (a.value < 20000 && hedged && assumptions && !ctx.strictAmounts) continue; // monthly instalment estimate with stated assumptions
     if (near(a.value, indicative)) add("unlabelled_indicative_price", `${a.raw} is a website (indicative) price but the reply does not say it is indicative.`);
     else if (ctx.strictAmounts && a.value < 20000 && assumptions) add("uncalculated_amount", `${a.raw} is not a figure from the loan engine; quote only financing_engine figures.`);

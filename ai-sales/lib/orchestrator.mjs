@@ -11,6 +11,7 @@ import { DEFAULT_MODEL, LlmError } from "./llm.mjs";
 import { applyInsights } from "./insights.mjs";
 import { routeLookups, webResearch, shouldResearch, renderLookup } from "./research.mjs";
 import { nextDiscovery, readDiscoveryAnswer } from "./discovery.mjs";
+import { RENTAL_Q, findRentRates, rentalEstimate, renderRental } from "../../sales/shared/rental.mjs";
 import { extractDistances, extractMinutes } from "../../sales/shared/validator.mjs";
 import { mergeFinancing, attachFinancing, renderFinancing, cleanInputs, isNewAssessment, advisorSummary } from "./financing.mjs";
 import { addressFor, parseTitlePreference, fixSalutation } from "../../sales/shared/salutation.mjs";
@@ -79,6 +80,17 @@ export const MONTHLY_Q = /(bulanan|sebulan|\bbulan\b|ansuran|monthly|per\s+month
 // a monthly instalment figure in the reply
 const MONTHLY_FIGURE = /(ansuran|instal+ment|RM\s?[\d,.]+\s*(?:k\b)?\s*(?:\/\s*(?:month|mth|mo|bulan|bln)\b|sebulan|a\s+month|per\s+month|monthly|bulanan))/i;
 
+// a monthly instalment in the reply; a rent figure from the rental estimate ("~RM2,290 sebulan") is not one
+function monthlyInstalment(text, rentalAmounts = []) {
+  if (/(ansuran|instal+ment)/i.test(text)) return true;
+  const re = new RegExp(MONTHLY_FIGURE.source, "gi");
+  for (const m of String(text).matchAll(re)) {
+    const v = Number((m[0].match(/RM\s?([\d,.]+)/i)?.[1] || "").replace(/,/g, "")) * (/\d\s*k\b/i.test(m[0]) ? 1000 : 1);
+    if (!(rentalAmounts || []).some((r) => Math.abs(r - v) <= Math.max(1, r * 0.002))) return true;
+  }
+  return false;
+}
+
 /** Style problems of one message: [{ code, detail }] */
 export function messageStyle(text, i = 1, style = STYLE) {
   const out = [], paras = String(text || "").split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean);
@@ -117,7 +129,7 @@ export function checkTurn(data, rules = {}) {
   const turnMax = style.maxTurnWords + extraWords(style, list.join(" "));
   if (total > turnMax) check.violations.push({ code: "long_turn", detail: `The whole reply is ${total} words${list.length > 1 ? ` across ${list.length} messages` : ""}; keep the whole turn to about ${turnMax} words: answer what was asked and leave out the rest.` });
   // rules.buyerAskedMonthly is set for replies to a buyer (false = they have not asked about monthly payments or loans)
-  if (rules.buyerAskedMonthly === false && MONTHLY_FIGURE.test(data.reply || list.join("\n\n"))) check.violations.push({ code: "unasked_instalment", detail: "The buyer did not ask about monthly payments or loans: leave out the monthly instalment (and its assumptions). You may offer it in a short question instead, e.g. \"Nak saya kira anggaran bulanan?\"" });
+  if (rules.buyerAskedMonthly === false && monthlyInstalment(data.reply || list.join("\n\n"), rules.rentalAmounts)) check.violations.push({ code: "unasked_instalment", detail: "The buyer did not ask about monthly payments or loans: leave out the monthly instalment (and its assumptions). You may offer it in a short question instead, e.g. \"Nak saya kira anggaran bulanan?\"" });
   const styleNotes = check.violations.filter((v) => STYLE_CODES.has(v.code));
   return { ok: check.violations.length === 0, hardOk: check.violations.length === styleNotes.length, violations: check.violations, styleNotes };
 }
@@ -252,6 +264,17 @@ export async function respond(p) {
   ctx.routeLookups = routes?.lookups || [];
   ctx.routeMissingPlace = routes?.missing_place || "";
   ctx.externalResearch = found.web?.found ? found.web : found.web ? { ...found.web, findings: "", sources: [] } : null;
+  // rent / yield questions: rental estimates worked out in code from a sourced rent rate (knowledge base first, then
+  // web research); with no source there are no figures and the web is searched after the first draft (below)
+  const recentBuyer = [message, ...history.filter((h) => h.role !== "assistant").slice(-4).map((h) => h.text)].join("\n");
+  const rentalAsk = RENTAL_Q.test(recentBuyer);
+  const focusProjects = (ctx.projects || []).filter((x) => x.inFocus);
+  const rentRates = rentalAsk && focusProjects.length ? findRentRates({ knowledge: ctx.knowledge, projectIds: focusProjects.map((x) => x.id), web: found.web }) : null;
+  const rentalEst = rentRates ? focusProjects.map((x) => rentalEstimate({ name: x.name, layouts: x.layouts, maintPsf: x.maintPsfWebsite }, rentRates)).filter(Boolean) : [];
+  ctx.rental = rentalAsk && focusProjects.length ? (renderRental(rentalEst, rentRates) || { status: "NO SOURCE", note: "No rent rate for this project in our knowledge base or web research: give no rent or yield figure." }) : null;
+  ctx.rules.rentalAsk = rentalAsk;
+  ctx.rules.rentalAmounts = rentalEst.flatMap((e) => e.amounts);
+  ctx.rules.allowedAmounts.push(...ctx.rules.rentalAmounts);
   const system = buildSystemPrompt(settings, ctx.objections, { calendar: !!p.calendar, financing: finOn });
   let contextText = renderContext(ctx);
   // distances and travel times the reply may state: those in the context (listing, lookups, research) or the buyer's
@@ -409,9 +432,12 @@ export async function respond(p) {
   const handoverReason = actions.find((a) => a.type === "handover")?.reason;
   const webOn = !!R?.research && R.web !== false && settings.ai?.web_research !== false;
   let pendingResearch = null;
-  if (webOn && !found.web && shouldResearch({ decision, handoverReason, intent: data.intent })) {
+  const rentalResearch = rentalAsk && ctx.rental?.status === "NO SOURCE";
+  if (webOn && !found.web && (rentalResearch || shouldResearch({ decision, handoverReason, intent: data.intent }))) {
     const focusNames = ctx.projects.filter((x) => x.inFocus).map((x) => x.name);
-    const question = [history.filter((h) => h.role !== "assistant").slice(-1)[0]?.text, message].filter(Boolean).join("\n");
+    const question = rentalResearch
+      ? `Current monthly rental rates for ${focusProjects.map((x) => `${x.name}${x.area ? ` (${x.area})` : ""}`).join(", ")}, Malaysia, or similar condominiums / serviced apartments in the same area: RM per sq ft a month for a whole unit, and RM per room a month for room rentals, from recent rental listings (e.g. iProperty, PropertyGuru, Mudah, EdgeProp) or rental reports. Give each rate as "RMx psf" or "RMx per room" with the listing or report date.`
+      : [history.filter((h) => h.role !== "assistant").slice(-1)[0]?.text, message].filter(Boolean).join("\n");
     const webMs = R.webTimeoutMs ?? 20000;
     // research and a second draft must both fit; otherwise the caller runs them as separate steps (test console), or
     // the hand-over stands (WhatsApp worker)
