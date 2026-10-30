@@ -1060,6 +1060,25 @@ test("financing check: lead page shows the saved result; the calculator previews
   }
 });
 
+test("financing check: LPPSA breakdown shows the property, the MRTT premium and the legal fee inside the financing", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage({ width: 1280, height: 900 });
+  try {
+    await page.goto(base + "/sales/#/lead/L1?tab=sales");
+    await page.waitForSelector("#fin");
+    await page.click("#fin-calc summary");
+    await page.selectOption("#ffin select[name=route]", "lppsa");
+    for (const [k, v] of Object.entries({ age: "30", basic_salary: "4000", fixed_allowances: "1000", mandatory_deductions: "500", commitments_monthly: "800", property_price: "450000", mrtt_premium: "12000", down_payment: "" })) await page.fill(`#ffin input[name=${k}]`, v);
+    await page.selectOption("#ffin select[name=confirmed_service]", "yes");
+    await page.waitForFunction(() => /Financing breakdown/.test(document.querySelector("#fin-preview").textContent));
+    const prev = await page.textContent("#fin-preview");
+    for (const re of [/MRTT \/ MRTA premium \(financed\)RM12,000RM53/, /Legal fee, financing agreement \(incl\. SST\)RM6,322RM28/, /Total LPPSA financingRM468,322RM2,074/, /RM589,000/, /financed by LPPSA/]) assert.match(prev, re);
+    // paying the legal fee in cash takes it out of the financing
+    await page.selectOption("#ffin select[name=finance_legal_fees]", "no");
+    await page.waitForFunction(() => /Total LPPSA financingRM462,000/.test(document.querySelector("#fin-preview").textContent));
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("financing documents: upload and read a payslip, see what was read, use the checked figures in the calculator", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const blank = { payslip: { employer_sector: "unknown", fixed_allowances: [], variable_income: [], statutory_deductions: [], loan_deductions: [], other_deductions: [], service_status: "unknown" }, ccris: { facilities: [] }, bank_statement: { regular_loan_payments: [] } };
   const slip = { ...blank, readable: true, document_kind: "payslip", period: "2026-09", confidence: "high", warnings: ["Totals do not add up by RM10"],

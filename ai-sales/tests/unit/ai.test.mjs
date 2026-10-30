@@ -330,17 +330,17 @@ const LPPSA_SAID = { ...FIN_EMPTY, route: "lppsa", age: 30, basic_salary: 4000, 
 
 test("loan engine: new figures → engine recalculates → the AI rewrites from the result; only engine figures pass", async () => {
   const first = draft({ reply: "Baik Tuan, saya kira sekejap.", intent: "instalment", financing_updates: LPPSA_SAID });
-  const second = draft({ reply: "Anggaran awal LPPSA: ansuran lebih kurang RM1,992 sebulan untuk RM450,000, tempoh 35 tahun. Ini anggaran awal, bukan kelulusan.", intent: "instalment", financing_updates: LPPSA_SAID });
+  const second = draft({ reply: "Anggaran awal LPPSA: pembiayaan RM456,158 (rumah RM450,000 + yuran guaman RM6,158), ansuran lebih kurang RM2,020 sebulan, tempoh 35 tahun. Ini anggaran awal, bukan kelulusan.", intent: "instalment", financing_updates: LPPSA_SAID });
   const llm = scripted(first, second);
   const r = await respond({ db: fakeDb(), llm, message: "Saya cikgu, gaji pokok 4000, elaun 1000, potongan wajib 500, hutang kereta 800, umur 30, dah sah jawatan. Rumah 450k", history: [{ role: "assistant", text: "Hai, saya pembantu AI." }], now: NOW, mode: "simulate" });
   assert.equal(llm.calls.length, 2);
   assert.match(llm.calls[0].system, /Loan eligibility and affordability/);
   const ctx2 = llm.calls[1].messages.at(-1).content;
   assert.match(ctx2, /"financing_engine"/);
-  assert.match(ctx2, /"instalment_for_needed":1992/);
+  assert.match(ctx2, /"instalment_for_needed":2020/);
   assert.match(ctx2, /"recalculated_this_turn":true/);
   assert.equal(r.decision, "reply");
-  assert.match(r.reply, /RM1,992/);
+  assert.match(r.reply, /RM2,020/);
   assert.deepEqual(r.attempts[0].recalculated.slice(0, 2), ["route", "age"]);
   const save = r.actions.find((a) => a.type === "save_financing");
   assert.equal(save.result.outcome, "potentially_affordable");

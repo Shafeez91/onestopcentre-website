@@ -87,6 +87,8 @@ export function renderFinancing(fin) {
       route: r.route, outcome: r.outcome, outcome_label: r.outcome_label, missing: r.missing, ask_next: r.next_questions,
       max_financing: r.max_financing, max_instalment: r.max_instalment, tenure_years: r.tenure_years,
       financing_needed: r.financing_needed, instalment_for_needed: r.instalment_for_needed, dsr_pct_for_needed: r.dsr_pct_for_needed,
+      // LPPSA: what the financing is made of (property + MRTT premium + financing legal fee) and the most the property may cost
+      ...(r.package ? { financing_breakdown: r.package } : {}), ...(r.max_package ? { max_property_price_no_down_payment: r.max_package } : {}),
       shortfall: r.shortfall, buyer_top_up: r.buyer_top_up, extra_down_payment: r.extra_down_payment, limited_by: r.limited_by,
       tests: r.tests?.map((t) => ({ test: t.en, max_instalment: t.max_instalment, pass: t.pass })),
       bank_scenarios: r.scenarios, rules_verified: r.rules_verified, notes: r.notes, needs_advisor: r.escalate,

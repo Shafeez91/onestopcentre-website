@@ -67,9 +67,12 @@ test("LPPSA: three salary tests, binding test, limits and outcome", () => {
   assert.equal(r.max_instalment, 2700);
   assert.equal(r.tenure_years, 35);
   assert.equal(r.max_by_income, 609000);
-  assert.equal(r.max_financing, 450000);
+  // LPPSA finances the property (100% of RM450,000) plus the financing agreement's legal fee on the whole amount:
+  // 1.25% × RM456,158 = RM5,702 + 8% SST = RM6,158 (Garis Panduan Bil. 1/2024; SRO scale)
+  assert.equal(r.max_financing, 456158);
   assert.equal(r.limited_by, "property_value");
-  assert.equal(r.instalment_for_needed, 1992);
+  assert.deepEqual(r.package, { property: 450000, mrtt: 0, legal: 6158, total: 456158, legal_financed: true, instalment: 2020, mrtt_monthly: 0, legal_monthly: 27 });
+  assert.equal(r.instalment_for_needed, 2020);
   assert.equal(r.outcome, "potentially_affordable");
   assert.ok(r.tests.every((t) => t.pass));
   assert.equal(r.rules_verified, false);
@@ -82,7 +85,10 @@ test("LPPSA: second financing uses 50%, the RM1M cap leaves a top-up → adjustm
   assert.equal(r.max_instalment, 8500);          // 50% × 17,000
   assert.equal(r.max_financing, 1000000);        // income would carry ~RM1.84M
   assert.equal(r.limited_by, "lppsa_cap");
-  assert.equal(r.buyer_top_up, 200000);
+  // the RM1M maximum covers the legal fee too: RM987,850 property + RM12,150 legal fee
+  assert.equal(r.buyer_top_up, 212150);
+  assert.equal(r.package.property, 987850);
+  assert.equal(r.package.total, 1000000);
   assert.equal(r.instalment_for_needed, 4504);   // RM1M: 750k @4% + 250k @4.5%, 35 years
   assert.equal(r.outcome, "may_be_affordable_with_adjustments");
   assert.ok(r.escalate.includes("second_lppsa_financing"));
@@ -92,7 +98,7 @@ test("LPPSA: older applicant gets a shorter tenure; shortfall bands", () => {
   const base = { route: "lppsa", age: 60, basic_salary: 4000, fixed_allowances: 1000, mandatory_deductions: 500, commitments_monthly: 800, confirmed_service: "yes" };
   const ok = assess({ ...base, property_price: 300000 });
   assert.equal(ok.tenure_years, 30);
-  assert.equal(ok.instalment_for_needed, 1432);
+  assert.equal(ok.instalment_for_needed, 1452);   // RM300,000 + RM4,094 legal fee, 30 years
   assert.equal(ok.max_by_income, 565000);
   assert.equal(ok.outcome, "potentially_affordable");
   assert.equal(assess({ ...base, property_price: 640000 }).outcome, "may_be_affordable_with_adjustments"); // ≤ 20% above RM565,545
@@ -107,8 +113,29 @@ test("LPPSA: not confirmed in service → challenging and escalated; unknown →
   assert.ok(r.escalate.includes("not_confirmed_in_service"));
   const u = assess({ ...LPPSA_A, confirmed_service: null });
   assert.equal(u.outcome, "insufficient_information");
-  assert.equal(u.max_financing, 450000, "figures still shown");
+  assert.equal(u.max_financing, 456158, "figures still shown");
   assert.deepEqual(u.missing, ["confirmed_service"]);
+});
+
+test("LPPSA: the MRTT premium and legal fee are financed with the property, with their share of the instalment", () => {
+  const r = assess({ ...LPPSA_A, mrtt_premium: 12000 });
+  assert.deepEqual(r.package, { property: 450000, mrtt: 12000, legal: 6322, total: 468322, legal_financed: true, instalment: 2074, mrtt_monthly: 53, legal_monthly: 28 });
+  assert.equal(r.financing_needed, 468322);
+  assert.equal(r.outcome, "potentially_affordable");
+  // the most the property may cost (no down payment) once MRTT and legal fee are financed too: RM609,000 total
+  assert.deepEqual(r.max_package, { property: 589000, mrtt: 12000, legal: 7927, total: 609000, legal_financed: true });
+  // the financed legal fee is not a cash cost
+  const legal = r.upfront.items.find((i) => i.key === "legal_loan");
+  assert.equal(legal.amount, 0);
+  assert.match(legal.en, /financed by LPPSA/);
+  // the buyer pays the legal fee in cash instead
+  const cash = assess({ ...LPPSA_A, mrtt_premium: 12000, finance_legal_fees: "no" });
+  assert.equal(cash.package.legal, 0);
+  assert.equal(cash.package.total, 462000);
+  assert.ok(cash.upfront.items.find((i) => i.key === "legal_loan").amount > 0);
+  // no premium entered yet: said plainly, never guessed
+  assert.ok(assess(LPPSA_A).notes.some((n) => /MRTT \/ MRTA premium not included yet/.test(n)));
+  assert.ok(!r.notes.some((n) => /MRTT/.test(n)));
 });
 
 test("missing information: insufficient, no numbers, the next 1–2 questions in order", () => {

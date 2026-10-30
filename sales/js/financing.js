@@ -13,7 +13,7 @@ const ESCALATE = {
 const FIELD_LABEL = {
   route: "Route", age: "Age", basic_salary: "Basic salary", fixed_allowances: "Fixed allowances", self_employed_income: "Business income",
   mandatory_deductions: "Statutory deductions", commitments_monthly: "Monthly commitments", credit_card_balance: "Credit card balance",
-  confirmed_service: "Confirmed in service", property_price: "Property price",
+  confirmed_service: "Confirmed in service", property_price: "Property price", mrtt_premium: "MRTT / MRTA premium",
 };
 export const outcomeBadge = (o) => badge((OUTCOMES[o] || {}).en || "No check yet", OUTCOME_KIND[o] || "");
 const rules = () => financingRules(S.settings?.financing);
@@ -41,7 +41,7 @@ export function resultHtml(r) {
     return `${head}<p class="note">Still needed: ${(r.missing || []).map((k) => esc(FIELD_LABEL[k] || k.replace(/_/g, " "))).join(", ") || "—"}.</p>`;
   }
   const kv = [
-    ["Estimated max financing", money(r.max_financing)],
+    [r.route === "lppsa" ? "Estimated max financing (property + MRTT + legal fee)" : "Estimated max financing", money(r.max_financing)],
     ["Max monthly instalment", money(r.max_instalment ?? r.scenarios?.[0]?.max_instalment)],
     ["Tenure", r.tenure_years + " years"],
     r.financing_needed ? ["Financing needed", money(r.financing_needed)] : null,
@@ -50,10 +50,19 @@ export function resultHtml(r) {
     r.extra_down_payment ? ["Extra down payment (margin)", money(r.extra_down_payment)] : null,
     r.shortfall ? ["Shortfall vs income", money(r.shortfall)] : null,
   ].filter(Boolean);
+  const rm = (n) => esc(money(n) || "RM0");
+  const pk = r.package, mx = r.max_package;
+  // LPPSA: the financing is the property part + the MRTT premium + the financing agreement's legal fee
+  const breakdown = r.route === "lppsa" && (pk || mx) ? `<h3>Financing breakdown</h3><table class="mini"><thead><tr><th></th>${pk ? "<th>This property</th><th>Monthly share</th>" : ""}${mx ? "<th>Highest price you qualify for (no down payment)</th>" : ""}</tr></thead><tbody>
+      <tr><td>Property</td>${pk ? `<td>${rm(pk.property)}</td><td>${rm(pk.instalment - (pk.mrtt_monthly || 0) - (pk.legal_monthly || 0))}</td>` : ""}${mx ? `<td>${rm(mx.property)}</td>` : ""}</tr>
+      <tr><td>MRTT / MRTA premium (financed)</td>${pk ? `<td>${rm(pk.mrtt)}</td><td>${rm(pk.mrtt_monthly)}</td>` : ""}${mx ? `<td>${rm(mx.mrtt)}</td>` : ""}</tr>
+      <tr><td>Legal fee, financing agreement (incl. SST)${(pk || mx).legal_financed ? "" : " — paid in cash"}</td>${pk ? `<td>${rm(pk.legal)}</td><td>${rm(pk.legal_monthly)}</td>` : ""}${mx ? `<td>${rm(mx.legal)}</td>` : ""}</tr>
+      <tr><td><b>Total LPPSA financing</b></td>${pk ? `<td><b>${rm(pk.total)}</b></td><td><b>${rm(pk.instalment)}</b></td>` : ""}${mx ? `<td><b>${rm(mx.total)}</b></td>` : ""}</tr>
+    </tbody></table>` : "";
   const tests = r.tests ? `<table class="mini"><thead><tr><th>LPPSA test</th><th>Max instalment</th><th>Result</th></tr></thead><tbody>${r.tests.map((t) => `<tr><td>${esc(t.en)}</td><td>${money(t.max_instalment)}</td><td>${t.pass === null ? "—" : t.pass ? badge("Pass", "ok") : badge("Fail", "alert")}</td></tr>`).join("")}</tbody></table>` : "";
   const scen = r.scenarios ? `<table class="mini"><thead><tr><th>Scenario</th><th>DSR</th><th>Max loan</th><th>Fits?</th></tr></thead><tbody>${r.scenarios.map((s) => `<tr><td>${esc(s.label)}</td><td>${s.dsr_pct}% @ ${s.rate_pct}%</td><td>${money(s.max_loan)}</td><td>${s.pass === null ? "—" : s.pass ? badge("Yes", "ok") : badge("No", "alert")}</td></tr>`).join("")}</tbody></table>` : "";
   const up = r.upfront ? `<details><summary>Upfront costs estimate · ${money(r.upfront.total)}</summary><table class="mini"><tbody>${r.upfront.items.map((i) => `<tr><td>${esc(i.en)}</td><td>${money(i.amount)}</td></tr>`).join("")}</tbody></table>${r.upfront.notes.map((n) => `<p class="note">${esc(n)}</p>`).join("")}</details>` : "";
-  return `${head}<dl class="kv">${kv.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>${tests}${scen}
+  return `${head}<dl class="kv">${kv.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>${breakdown}${tests}${scen}
     ${(r.notes || []).map((n) => `<p class="note">${esc(n)}</p>`).join("")}
     ${r.escalate?.length ? `<p class="note"><b>Advisor needed:</b> ${r.escalate.map((e) => esc(ESCALATE[e] || e)).join(", ")}</p>` : ""}
     ${r.missing?.length ? `<p class="note">Still needed for a full check: ${r.missing.map((k) => esc(FIELD_LABEL[k] || k.replace(/_/g, " "))).join(", ")}.</p>` : ""}
@@ -85,6 +94,8 @@ export function financingSection(data) {
       <h3 class="full">LPPSA only</h3>
       <label>Permanent &amp; confirmed in service?<select name="confirmed_service">${opt("", "Unknown", i.confirmed_service)}${opt("yes", "Yes", i.confirmed_service)}${opt("no", "No", i.confirmed_service)}</select></label>
       ${num("service_years", "Years in service", i.service_years)}
+      ${num("mrtt_premium", "MRTT / MRTA premium financed (RM, from the insurer's quote or SmartKira)", i.mrtt_premium)}
+      <label>Legal fee of the financing agreement<select name="finance_legal_fees">${opt("", "Financed by LPPSA", i.finance_legal_fees)}${opt("no", "Paid in cash", i.finance_legal_fees)}</select></label>
       <label>Second LPPSA financing?<select name="second_financing">${opt("", "No", i.second_financing ? "yes" : "")}${opt("yes", "Yes", i.second_financing ? "yes" : "")}</select></label>
       <h3 class="full">Bank only</h3>
       ${num("variable_income", "Variable income / month (overtime, commission)", i.variable_income)}
