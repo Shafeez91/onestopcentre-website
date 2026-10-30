@@ -96,7 +96,7 @@ const WEB_SYSTEM = `You research ONE question for the AI sales assistant of One 
 export async function webResearch(deps, { question, projectNames = [] }) {
   if (!deps?.research) return null;
   try {
-    const r = await deps.research({ system: WEB_SYSTEM, prompt: `Projects being discussed: ${projectNames.join(", ") || "(none named)"}\nBuyer's question: ${question}`, model: deps.model, maxSearches: 3, maxFetches: 2, timeoutMs: deps.webTimeoutMs ?? 25000 });
+    const r = await deps.research({ system: WEB_SYSTEM, prompt: `Projects being discussed: ${projectNames.join(", ") || "(none named)"}\nBuyer's question: ${question}`, model: deps.model, maxSearches: deps.maxSearches ?? 3, maxFetches: deps.maxFetches ?? 2, timeoutMs: deps.webTimeoutMs ?? 25000 });
     const found = r.text && !/^NOT FOUND/i.test(r.text);
     return { question: String(question).slice(0, 300), found, findings: String(r.text || "").slice(0, 2500), sources: r.sources.slice(0, 6), searches: r.searches, usage: r.usage, at: new Date().toISOString() };
   } catch (e) {

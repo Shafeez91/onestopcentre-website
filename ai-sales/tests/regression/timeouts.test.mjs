@@ -145,10 +145,10 @@ afterEach(() => { globalThis.fetch = realFetch; process.env = envBackup; });
 
 test("console endpoint: draft → web research → second draft, each a separate request under the budget; reserve charged once; tokens checked", async () => {
   const { default: simulate, BUDGET_MS, WEB_MS } = await import("../../../netlify/functions/sales-ai.mjs");
-  assert.ok(BUDGET_MS <= 25000 && WEB_MS <= 25000, "each step fits well inside Netlify's 30 s");
+  assert.ok(BUDGET_MS <= 25000 && WEB_MS <= 27000, "each step fits inside Netlify's 30 s");
   const llm = slowModel(0, SHUTTLE_HANDOVER, SHUTTLE_ANSWER);
   let asked = 0;
-  const deps = { llm, research: { web: true, research: async () => { asked++; return { text: "- M MIRA's developer page lists a 'Direct Shuttle Service' to LRT Sri Rampai. https://www.mahsing.com.my/m-mira", sources: [{ url: "https://www.mahsing.com.my/m-mira", title: "M MIRA" }], searches: 1, usage: {} }; } } };
+  const deps = { llm, research: { web: true, research: async (q) => { asked++; assert.deepEqual([q.maxSearches, q.maxFetches, q.timeoutMs], [2, 1, WEB_MS], "a lighter search with most of the 30 s"); return { text: "- M MIRA's developer page lists a 'Direct Shuttle Service' to LRT Sri Rampai. https://www.mahsing.com.my/m-mira", sources: [{ url: "https://www.mahsing.com.my/m-mira", title: "M MIRA" }], searches: 1, usage: {} }; } } };
   const history = [{ role: "user", text: "How far m mira from nearest public transport?" }, { role: "assistant", text: "LRT Sri Rampai is the nearest station." }];
   const post = (extra = {}) => simulate(new Request("https://x/api/sales/ai/simulate", { method: "POST", headers: { authorization: "Bearer tok", "content-type": "application/json" },
     body: JSON.stringify({ message: "Does it has shuttle service?", history, ...extra }) }), {}, deps);
