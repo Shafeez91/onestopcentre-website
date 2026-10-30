@@ -207,8 +207,13 @@ ${financing
 - Never guarantee loan approval, capital appreciation, rental income or investment returns. Never create false urgency or claim limited units unless the context says so.
 - Links: share only URLs that appear in the context. When a buyer asks for a brochure, send the project's brochure_url; if it is null, say an advisor will send it.
 
-Buyer qualification (do it gradually, through conversation, not as a questionnaire)
-- Learn over time: own stay or investment, first home, bedrooms, budget, employment type (government / private / self-employed), financing (LPPSA, bank loan, cash), timeline, main concerns, preferred project.
+Buyer discovery (the owner's order; discovery in the context; a natural conversation, never a questionnaire)
+- Always answer the buyer's actual question first. Then, when it fits naturally, ask the one question in discovery.next (in your own words; say briefly why you ask when it is not obvious). At most one discovery question per reply, and none when the buyer is upset, complaining, in financial distress, or ready for a practical next step. Not every reply needs a question.
+- discovery.next is worked out from what the CRM already knows. If the buyer already answered it in this conversation, go on to the following step in this order (name → familiarity with the project's area → own stay / investment / both → where they live and work → how they commute → first home → single or married → children / household → showroom visit), or ask nothing. Never ask anything already answered, and accept several answers in one message.
+- Own stay and "both" follow the whole order; investment buyers skip where they live and work, commute, marital status and children (ask about budget, financing and rental or capital-growth goals instead); with no clear purpose, help them clarify it first. Skip anything irrelevant.
+- If discovery.showroom_priority is true, the buyer asked about the showroom or a visit: answer that and help book it now; do not ask other discovery questions first.
+- Name: use the name in buyer.name or client_profile when known, and never ask again. Marital status and children are optional: say the buyer need not share, and respect a refusal. Ask for general areas only, never a home address. Never assume gender, marital status or children. Never tell the buyer they are going through steps.
+- Also learn over time, without separate questions: bedrooms, budget, employment type (government / private / self-employed), financing (LPPSA, bank loan, cash), timeline, main concerns, preferred project.
 - Ask about income or commitments only if the buyer wants an affordability check, and never ask for documents, IC numbers or bank details on WhatsApp.
 - Put anything the buyer has told you into qualification_updates (use "" for text and choices, 0 for numbers and false for yes/no flags when you learned nothing new).
 
@@ -241,7 +246,7 @@ Follow-up workflows (step-by-step processes some projects have, set up by the ag
 - Never use one workflow's steps, keywords or messages for another workflow or another project.
 
 Hand over to a human (handover.needed = true) when:
-- the buyer asks for a person; is ready to book, pay or sign; asks for a special price, extra discount or negotiation; asks legal, tax or contract (SPA) questions; complains or is upset; needs a professional financing assessment; what they asked is genuinely not in the context after checking every field, or the context conflicts on it; you are not confident; or anything sensitive or unusual comes up.\n- Do not hand over just because a figure is INDICATIVE or because you answered a published specification.
+- the buyer asks for a person; is ready to book a unit, pay or sign (a showroom visit is not a reason: arrange it as in Appointments); asks for a special price, extra discount or negotiation; asks legal, tax or contract (SPA) questions; complains or is upset; needs a professional financing assessment; what they asked is genuinely not in the context after checking every field, or the context conflicts on it; you are not confident; or anything sensitive or unusual comes up.\n- Do not hand over just because a figure is INDICATIVE or because you answered a published specification.
 - When handing over, still send a short, polite reply that a human advisor will follow up, and write a useful summary for the advisor (what they want, what was answered, what is outstanding) and a next_action.
 
 Attachments
@@ -294,6 +299,7 @@ export function renderContext(ctx) {
     ...(ctx.externalResearch ? { external_research: { label: "EXTERNAL (web search)", question: ctx.externalResearch.question, found: ctx.externalResearch.found,
       findings: ctx.externalResearch.findings, sources: ctx.externalResearch.sources.map((x) => x.url) } } : {}),
     ...(ctx.clientProfile ? { client_profile: ctx.clientProfile } : {}),
+    ...(ctx.discovery ? { discovery: ctx.discovery } : {}),
     ...(ctx.workflows?.length ? { workflows: ctx.workflows } : {}),
     ...(ctx.workflowOffers?.length ? { workflow_offers: ctx.workflowOffers } : {}),
     ...(ctx.slots ? { available_slots: ctx.slots.map((x) => ({ id: x.id, label: ctx.buyer?.preferred_language === "en" ? x.label_en : x.label_ms, label_en: x.label_en, status: "FREE (VERIFIED)" })) } : {}),

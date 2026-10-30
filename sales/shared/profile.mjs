@@ -15,6 +15,7 @@ const o = (...pairs) => Object.fromEntries(pairs);
 
 /** type: text | number | select (one option) | multi (several options) | textarea */
 export const PROFILE_FIELDS = [
+  { key: "preferred_name", group: "basic", label: "Preferred name / how to address", type: "text", hint: "as the buyer gave it; \"not_disclosed\" if they prefer not to say" },
   { key: "age_range", group: "basic", label: "Age or age range", type: "text", hint: "only if the buyer said" },
   { key: "marital_status", group: "basic", label: "Marital status", type: "select", options: o(["single", "Single"], ["married", "Married"], ["other", "Other"], ["not_disclosed", "Not disclosed"]), hint: "only if the buyer volunteered it" },
   { key: "occupants", group: "basic", label: "Intended occupants", type: "text", hint: "e.g. 4 (couple + 2 children)" },
@@ -46,6 +47,8 @@ export const PROFILE_FIELDS = [
   { key: "max_monthly_instalment", group: "preferences", label: "Comfortable monthly instalment (RM)", type: "number", hint: "only if the buyer said" },
   { key: "financial_notes", group: "preferences", label: "Other financial constraints", type: "text", hint: "only what the buyer chose to share" },
 
+  { key: "showroom_visit", group: "intent", label: "Showroom visit", type: "select", options: o(
+    ["visited", "Already visited"], ["not_visited", "Not visited yet"], ["booked", "Appointment booked"], ["wants_visit", "Wants to arrange a visit"], ["not_yet", "Not interested yet"]) },
   { key: "motivation", group: "intent", label: "Main buying motivation", type: "text" },
   { key: "decision_makers", group: "intent", label: "Others involved in the decision", type: "text", hint: "e.g. spouse, parents" },
   { key: "documents_pending", group: "intent", label: "Documents or actions pending", type: "text" },

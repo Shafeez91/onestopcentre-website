@@ -10,6 +10,7 @@ import { buildSystemPrompt, renderContext, buildMessages, REPLY_SCHEMA, REPLY_SC
 import { DEFAULT_MODEL, LlmError } from "./llm.mjs";
 import { applyInsights } from "./insights.mjs";
 import { routeLookups, webResearch, shouldResearch, renderLookup } from "./research.mjs";
+import { nextDiscovery } from "./discovery.mjs";
 import { extractDistances, extractMinutes } from "../../sales/shared/validator.mjs";
 import { mergeFinancing, attachFinancing, renderFinancing, cleanInputs, isNewAssessment, advisorSummary } from "./financing.mjs";
 
@@ -174,6 +175,9 @@ export async function respond(p) {
   // 2) verified context
   const ctx = await clock("context_ms", () => loadContext(p.db, { leadId: p.leadId, message, history, now }));
   if (askedLang) ctx.buyer = { ...(ctx.buyer || {}), language_requested: askedLang };
+  // the owner's discovery order: the next question worth asking, from what the CRM already knows
+  ctx.discovery = nextDiscovery({ known: ctx.clientProfile?.known, buyerName: ctx.buyer?.name, appointments: (ctx.lead?.open_appointments || []).length,
+    message, readiness: ctx.lead?.qualification_known?.readiness });
   if (ctx.aiPaused && p.mode === "live") return finish({ decision: "paused", reply: null, reason: "AI is paused for this lead; a human handles replies." });
   const settings = ctx.settings || {};
   const model = settings.ai?.model || DEFAULT_MODEL;
