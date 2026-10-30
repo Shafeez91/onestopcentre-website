@@ -5,6 +5,7 @@ import { callClaude, researchClaude } from "./llm.mjs";
 import { mapsService } from "./maps.mjs";
 import { waConfig, sendWhatsApp } from "./whatsapp.mjs";
 import { calConfig, busy, freeSlots, bookSlot, cancelEvent, CalendarError } from "./calendar.mjs";
+import { docStorage } from "./documents.mjs";
 
 /**
  * Calendar service, or null when the calendar is not configured. The private key comes from GOOGLE_PRIVATE_KEY,
@@ -37,6 +38,7 @@ export function liveDeps() {
     wa: wa ? { send: (to, msg) => sendWhatsApp(wa, to, msg) } : null,
     cal: calendarService(db),
     research: researchDeps(db),
+    storage: db ? docStorage() : null,
     now: () => new Date(),
   };
 }

@@ -14,6 +14,7 @@ const FLAGS = [
   ["whatsapp_outbound", "WhatsApp sending", "Allows any outbound WhatsApp message, including human replies from the inbox."],
   ["follow_ups", "Automated follow-ups", "Lets the follow-up engine send scheduled messages (always subject to consent and opt-outs)."],
   ["loan_engine", "Loan eligibility engine", "Lets the WhatsApp AI run a preliminary LPPSA / bank affordability check when a buyer asks, using the Financing rules. Results are always labelled estimates, never approvals; difficult cases go to an advisor. The AI test console uses it even when off."],
+  ["financing_documents", "Financing documents", "Lets advisors upload a buyer's payslip, CCRIS report or bank statement on the lead page for the AI to read the figures into the loan calculator. Staff check every figure; files are private and deleted after 30 days."],
   ["calendar_booking", "Calendar booking", "Lets the AI offer free Google Calendar slots and book the one the buyer picks. The buyer is told it is confirmed only after the calendar event exists."],
 ];
 const SAFEGUARDS = [

@@ -15,6 +15,7 @@ import { confirmationText, placeFor } from "./calendar.mjs";
 import { sendOutbound, buyerLanguage } from "./outbound.mjs";
 import { runAutomation, confirmAppointmentNow, automationOf, openHumanTaskAbout } from "./automation.mjs";
 import { createHash } from "node:crypto";
+import { purgeDocuments } from "./documents.mjs";
 
 export { sendOutbound };
 
@@ -352,6 +353,10 @@ export async function runWorker(deps, { maxJobs = 10, followUps = true, reminder
   const t = deps.now();
   if (reminders && t.getUTCHours() === 19 && t.getUTCMinutes() < 2) {
     try { out.purged = await db.rpc("ai_purge_expired", {}); } catch (e) { out.errors.push("purge: " + (e?.message || e)); }
+  }
+  // financing documents (payslips, CCRIS, statements): every hour, so an erased or expired file goes within the hour
+  if (deps.storage && t.getUTCMinutes() < 2) {
+    try { out.documents_purged = await purgeDocuments(deps); } catch (e) { out.errors.push("documents purge: " + (e?.message || e)); }
   }
   return out;
 }
