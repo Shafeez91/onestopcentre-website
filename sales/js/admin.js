@@ -61,6 +61,8 @@ export async function settings(el, params) {
       <label>Assistant name<input name="name" value="${attr(p.name)}"${dis}></label>
       <label class="check"><input type="checkbox" checked disabled> Discloses it is an AI (mandatory)</label>
       <label class="check"><input type="checkbox" name="allow_manglish"${p.allow_manglish ? " checked" : ""}${dis}> Mirror Manglish when the buyer uses it</label>
+      <label class="full">Reply style<select name="reply_style"${dis}>${opt("standard", "Standard — up to 3 messages, short paragraphs (about 20–60 words each)", p.reply_style || "standard")}${opt("short", "Short chat — up to 3 one-line messages (about 7–10 words each): answer first, then explain", p.reply_style || "standard")}</select>
+        <small>Short chat: message 1 answers the question, message 2 explains, message 3 adds a detail or asks one question. The AI introduction and price/loan notes may add a few words.</small></label>
       <label class="full">Tone guidance<textarea name="tone" class="persona-tone" rows="20" spellcheck="false"${dis}>${esc(p.tone)}</textarea></label>
       <label class="full">Greeting (English)<textarea name="greeting_en" rows="2"${dis}>${esc(p.greeting_en)}</textarea></label>
       <label class="full">Greeting (Bahasa Malaysia)<textarea name="greeting_ms" rows="2"${dis}>${esc(p.greeting_ms)}</textarea></label>

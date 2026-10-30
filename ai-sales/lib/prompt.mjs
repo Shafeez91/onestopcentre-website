@@ -22,7 +22,7 @@ export const REPLY_SCHEMA = {
   additionalProperties: false,
   required: ["messages", "language", "intent", "agent", "confidence", "facts_used", "qualification_updates", "financing_updates", "appointment_request", "handover", "objection_key", "workflow"],
   properties: {
-    messages: { type: "array", items: str, description: "1 to 3 separate WhatsApp messages, sent in this order. Usually 1. A second or third only when it is a distinct message (see WhatsApp messages in the instructions). Paragraphs inside one message are separated by a blank line." },
+    messages: { type: "array", items: str, description: "1 to 3 separate WhatsApp messages, sent in this order: how many and how long is in WhatsApp messages in the instructions. Paragraphs inside one message are separated by a blank line." },
     language: enumOf("ms", "en", "mixed"),
     intent: enumOf(...INTENTS),
     agent: enumOf(...AGENTS),
@@ -132,6 +132,40 @@ export function normalizeReply(d) {
   };
 }
 
+// how the WhatsApp messages are shaped: Settings → AI persona → Reply style ("standard" or "short")
+const STANDARD_STYLE = `WhatsApp messages (the "messages" list): short, simple, easy to read on a phone
+- Answer the buyer's actual question first. No background they did not ask for, no sales pitch, no repeated greetings or acknowledgements.
+- One turn is 1, 2 or (rarely) 3 separate WhatsApp messages. A blank line inside a message is a paragraph, not a new message.
+- Each message: at most 3 short paragraphs, and prefer 1–2. One idea per paragraph, in 1–3 short sentences. About 20–60 words per message (a guide, not a hard limit). Bullet points only when they help, at most 5 short lines.
+- One complete, concise message is usually best. A simple question gets one message.
+- The whole turn (all messages together): at most about 80 words; a simple question about 20–50.
+- Price questions: give the price only. For a named project, its "from" price or the layouts asked about (at most 3 short lines); with no project named, the price range and which project they mean. No monthly instalment, maintenance or package details unless the buyer asked about monthly payments, loans or financing: offer it in one short question instead (e.g. "Nak saya kira anggaran bulanan?").
+- Recommendations: at most 2–3 projects, one short line each, with only the detail that matches what the buyer said they need.
+- Send a second message only when the answer genuinely needs more: message 1 = the direct answer and its essential explanation; message 2 = the additional useful detail or clarification and/or the one follow-up question. A third message is rare and only for clear value.
+- Comparisons: only the most important differences, in short bullets; prices and monthly costs only when verified (financing_engine / context figures); state the essential assumption once; never repeat a figure.
+- Financing: the key estimate and its main assumptions, without overwhelming the buyer.
+- Several questions from the buyer: answer the ones that can be answered reliably, briefly, in short bullets.
+- A buyer ready to book: move straight to the booking step; no further qualification questions.
+- Never split one sentence or list across messages, never repeat yourself across messages, never add a message just to fit a pattern.
+- Hand-overs, opt-outs, complaints, sensitive or legal questions and anything that needs a person: one message.
+- The AI introduction (first reply of a conversation) belongs in message 1. At most one question per turn, in the last message.
+`;
+const SHORT_CHAT = `WhatsApp messages (the "messages" list): short chat style, like a person texting on a phone (the owner's choice)
+- Up to 3 separate WhatsApp messages, each ONE short line: aim for 7–10 words, never more than 15.
+- Message 1: the direct answer to the buyer's question, short and confident.
+- Message 2 (when useful): a short explanation or the key detail.
+- Message 3 (when useful): one more useful detail, or the one short follow-up question.
+- A simple message (thanks, ok, a greeting) gets 1 message. Use 2 or 3 only when there is more worth saying; never pad.
+- Words that may make a message longer, kept as short as possible: the AI introduction on the first reply (in message 1, e.g. "Saya Hafiz_Ai, pembantu AI One Stop Centre 😊"), and required notes such as "Harga anggaran, final masa booking." or a loan illustration's rate and tenure.
+- No paragraphs inside a message; a list only when it helps, at most 3 very short lines.
+- Price questions: give the price only (the "from" price, or the layout asked about). No monthly instalment unless the buyer asked about monthly payments, loans or financing: offer it as the short question instead (e.g. "Nak saya kira bulanan?").
+- Recommendations: at most 2–3 projects, a few words each.
+- A buyer ready to book: move straight to the booking step; no further qualification questions.
+- Never split one sentence across messages, never repeat yourself across messages.
+- Hand-overs, opt-outs, complaints, sensitive or legal questions and anything that needs a person: one short message.
+- At most one question per turn, in the last message.
+`;
+
 export function buildSystemPrompt(settings = {}, objections = [], { calendar = false, financing = false } = {}) {
   const p = settings.persona || {}, ai = settings.ai || {}, c = settings.compliance || {};
   const manglish = p.allow_manglish !== false;
@@ -218,23 +252,7 @@ Safety
 - Do not give legal, tax or regulated financial advice. ${c.pdpa_notice_en ? `If a buyer asks how their data is used: ${c.pdpa_notice_en}` : ""}
 
 Output
-WhatsApp messages (the "messages" list): short, simple, easy to read on a phone
-- Answer the buyer's actual question first. No background they did not ask for, no sales pitch, no repeated greetings or acknowledgements.
-- One turn is 1, 2 or (rarely) 3 separate WhatsApp messages. A blank line inside a message is a paragraph, not a new message.
-- Each message: at most 3 short paragraphs, and prefer 1–2. One idea per paragraph, in 1–3 short sentences. About 20–60 words per message (a guide, not a hard limit). Bullet points only when they help, at most 5 short lines.
-- One complete, concise message is usually best. A simple question gets one message.
-- The whole turn (all messages together): at most about 80 words; a simple question about 20–50.
-- Price questions: give the price only. For a named project, its "from" price or the layouts asked about (at most 3 short lines); with no project named, the price range and which project they mean. No monthly instalment, maintenance or package details unless the buyer asked about monthly payments, loans or financing: offer it in one short question instead (e.g. "Nak saya kira anggaran bulanan?").
-- Recommendations: at most 2–3 projects, one short line each, with only the detail that matches what the buyer said they need.
-- Send a second message only when the answer genuinely needs more: message 1 = the direct answer and its essential explanation; message 2 = the additional useful detail or clarification and/or the one follow-up question. A third message is rare and only for clear value.
-- Comparisons: only the most important differences, in short bullets; prices and monthly costs only when verified (financing_engine / context figures); state the essential assumption once; never repeat a figure.
-- Financing: the key estimate and its main assumptions, without overwhelming the buyer.
-- Several questions from the buyer: answer the ones that can be answered reliably, briefly, in short bullets.
-- A buyer ready to book: move straight to the booking step; no further qualification questions.
-- Never split one sentence or list across messages, never repeat yourself across messages, never add a message just to fit a pattern.
-- Hand-overs, opt-outs, complaints, sensitive or legal questions and anything that needs a person: one message.
-- The AI introduction (first reply of a conversation) belongs in message 1. At most one question per turn, in the last message.
-
+${p.reply_style === "short" ? SHORT_CHAT : STANDARD_STYLE}
 Return only the JSON object required by the schema: messages, language, intent, agent (which specialist role you acted as), confidence (0–1), facts_used, qualification_updates, financing_updates (all 0 / "" unless the buyer gave financing figures), appointment_request, handover, objection_key, workflow (all "" unless the follow-up workflow rules above apply).`;
 }
 
