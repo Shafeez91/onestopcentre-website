@@ -3,7 +3,7 @@
 // the knowledge base first, then web research — and the figures are worked out in code. Fake database and AI only.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseRentRates, findRentRates, rentalEstimate, renderRental, RENTAL_Q } from "../../../sales/shared/rental.mjs";
+import { parseRentRates, findRentRates, rentalEstimate, renderRental, roomMix, RENTAL_Q } from "../../../sales/shared/rental.mjs";
 import { respond } from "../../lib/orchestrator.mjs";
 import { buildSystemPrompt } from "../../lib/prompt.mjs";
 
@@ -12,9 +12,9 @@ const AURORA = { name: "M AURORA", maintPsf: 0.33, layouts: [
   { layout: "Type E", size_sqft: "1019", bedrooms: "4", price_from: "RM587,000" }] };
 
 test("rates are read only from sentences about renting: psf ranges, single rates and per-room rents", () => {
-  assert.deepEqual(parseRentRates("Sewa M Aurora: RM2.30–2.80 psf sebulan; bilik RM700–900 (iProperty, Okt 2026)"), { psf: [2.3, 2.8], room: [700, 900] });
-  assert.deepEqual(parseRentRates("- Units are listed for rent at about RM2.50 per sq ft. Rooms rent for RM650 to RM850 per room."), { psf: [2.5, 2.5], room: [650, 850] });
-  assert.deepEqual(parseRentRates("Maintenance RM0.33 psf. Harga dari RM519,000."), { psf: null, room: null }, "maintenance and prices are not rents");
+  assert.deepEqual(parseRentRates("Sewa M Aurora: RM2.30–2.80 psf sebulan; bilik RM700–900 (iProperty, Okt 2026)"), { psf: [2.3, 2.8], room: [700, 900], roomTypes: null });
+  assert.deepEqual(parseRentRates("- Units are listed for rent at about RM2.50 per sq ft. Rooms rent for RM650 to RM850 per room."), { psf: [2.5, 2.5], room: [650, 850], roomTypes: null });
+  assert.deepEqual(parseRentRates("Maintenance RM0.33 psf. Harga dari RM519,000."), { psf: null, room: null, roomTypes: null }, "maintenance and prices are not rents");
   assert.ok(RENTAL_Q.test("Mana margin lg untung?") && RENTAL_Q.test("Boleh buat kiraan sewaan bilik") && !RENTAL_Q.test("Harga 3 bilik berapa?"));
 });
 
@@ -26,10 +26,12 @@ test("the estimate: rent = rate × size, gross yield = 12 months ÷ price, rent 
   assert.equal(d.gross_yield, "4.9%–5.9%");
   assert.equal(d.maintenance_per_month, "RM300");
   assert.equal(d.rent_after_maintenance, "RM1,810–RM2,260");
-  assert.equal(d.room_rent_total_per_month, "RM2,100–RM2,700"); // 3 rooms
+  assert.equal(d.room_rent_total_per_month, "RM2,100–RM2,700 (all rooms let)"); // 3 rooms at the flat rate
+  assert.equal(d.room_mix, "3 × RM700–RM900");
   const view = renderRental([{ estimate: e, rates: r }]);
   assert.match(view.label, /ESTIMATE/);
   assert.equal(view.projects[0].source, 'our knowledge base ("Sewa M Aurora")');
+  assert.equal(view.projects[0].room_rates, "per room RM700–RM900");
   assert.equal(view.projects[0].based_on, "a rent rate recorded for this project");
   for (const v of [2110, 2560, 300, 1810, 2260, 2100, 2700]) assert.ok(e.amounts.includes(v), String(v));
   assert.equal(rentalEstimate(AURORA, { psf: null, room: null }), null);
@@ -130,5 +132,28 @@ test("respond(): a long rental reference outside the AI's knowledge budget is st
   const r = await respond({ db: db([filler, long]), llm, message: "Mana margin lg untung?", history, now: NOW, mode: "simulate" });
   assert.match(ctxOf(llm.calls[0]).rental_estimates.projects[0].based_on, /CONSERVATIVE SCENARIO/);
   assert.equal(r.decision, "reply", JSON.stringify(r.violations));
+});
+
+test("room rent by room type: master, medium, small; a +1 study is a small room; worked examples are not rates", () => {
+  assert.deepEqual(parseRentRates("Sewa bilik KL (Okt 2026): Master room RM1,100–1,300; Medium room RM850; Small room RM650–750 sebulan.").roomTypes,
+    { master: [1100, 1300], medium: [850, 850], small: [650, 750] });
+  assert.deepEqual(parseRentRates("Bilik utama RM1,200, bilik sederhana RM900, bilik kecil RM700.").roomTypes, { master: [1200, 1200], medium: [900, 900], small: [700, 700] });
+  assert.equal(parseRentRates("Example:\n\nA 1,000 sqft condominium has:\n\n* 1 Master Room: RM1,200.\n* 1 Small Room: RM700.\n\n⸻\n\n7. NEXT").roomTypes, null);
+  assert.deepEqual([roomMix("1+1"), roomMix("2"), roomMix("3"), roomMix("4"), roomMix("")],
+    [["master", "small"], ["master", "medium"], ["master", "medium", "small"], ["master", "medium", "small", "small"], []]);
+  const rooms = { id: "r1", project_id: null, title: "Sewa bilik KL", content: "Kadar sewa bilik (KL, Okt 2026): Master room RM1,200, Medium room RM900, Small room RM700 sebulan." };
+  const r = findRentRates({ knowledge: [REFERENCE, rooms], project: { id: "pa", name: "M AURORA", area: "Old Klang Road" } });
+  assert.deepEqual([r.psf, r.source.basis, r.roomTypes, r.roomSource.basis], [[2.5, 2.5], "scenario", { master: [1200, 1200], medium: [900, 900], small: [700, 700] }, "room_reference"]);
+  const e = rentalEstimate(AURORA, r);
+  const d = e.layouts.find((x) => x.layout === "Type D"), t = e.layouts.find((x) => x.layout === "Type E");
+  assert.equal(d.room_mix, "Master RM1,200 + Medium RM900 + Small RM700");
+  assert.equal(d.room_rent_total_per_month, "RM2,800 (all rooms let)");
+  assert.equal(d.gross_yield_by_room, "6.5%");
+  assert.equal(t.room_rent_total_per_month, "RM3,500 (all rooms let)");
+  const view = renderRental([{ estimate: e, rates: r }]).projects[0];
+  assert.equal(view.room_rates, "master room RM1,200; medium room RM900; small room RM700");
+  assert.match(view.room_source, /general room-rate reference, not specific to this project/);
+  assert.match(renderRental([{ estimate: e, rates: r }]).notes, /Room totals assume every room is let/);
+  assert.match(buildSystemPrompt({ persona: { name: "Hafiz_Ai" } }), /Room rent depends on the room: quote the mix as given/);
 });
 
