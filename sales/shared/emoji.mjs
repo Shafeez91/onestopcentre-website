@@ -20,8 +20,13 @@ export function limitEmojis(messages, { max = 1 } = {}) {
   return { messages: out, removed };
 }
 
-/** How many emojis a reply may have: 0 for serious replies, otherwise 1. */
-export function emojiAllowance({ decision = "reply", intent = null, objectionKey = null, financing = false } = {}) {
-  if (decision !== "reply" || objectionKey || financing || SERIOUS_INTENTS.has(intent)) return 0;
+// Settings → AI persona → Emoji level: "none" (never), "light" (warm moments only; the default), "friendly" (one
+// fitting emoji on most replies). Every level keeps serious replies emoji-free and allows at most one per reply.
+export const EMOJI_LEVELS = ["none", "light", "friendly"];
+export const emojiLevel = (persona = {}) => (EMOJI_LEVELS.includes(persona?.emoji_level) ? persona.emoji_level : "light");
+
+/** How many emojis a reply may have: 0 when emojis are off or the reply is serious, otherwise 1. */
+export function emojiAllowance({ decision = "reply", intent = null, objectionKey = null, financing = false, level = "light" } = {}) {
+  if (level === "none" || decision !== "reply" || objectionKey || financing || SERIOUS_INTENTS.has(intent)) return 0;
   return 1;
 }

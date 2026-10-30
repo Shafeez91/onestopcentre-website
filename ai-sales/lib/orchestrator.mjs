@@ -14,7 +14,7 @@ import { nextDiscovery, readDiscoveryAnswer } from "./discovery.mjs";
 import { extractDistances, extractMinutes } from "../../sales/shared/validator.mjs";
 import { mergeFinancing, attachFinancing, renderFinancing, cleanInputs, isNewAssessment, advisorSummary } from "./financing.mjs";
 import { addressFor, parseTitlePreference, fixSalutation } from "../../sales/shared/salutation.mjs";
-import { limitEmojis, emojiAllowance } from "../../sales/shared/emoji.mjs";
+import { limitEmojis, emojiAllowance, emojiLevel } from "../../sales/shared/emoji.mjs";
 
 const QUAL_FIELDS = ["purpose", "first_home", "bedrooms", "size_sqft", "budget_min", "budget_max", "employment", "financing", "timeline_months", "readiness", "concerns"];
 
@@ -151,7 +151,7 @@ export function finalTouches(messages, { decision = "reply", data = {}, ctx = {}
     adjustments.push(...f.fixed.map((x) => `salutation: ${x}`));
     return f.text;
   });
-  const max = emojiAllowance({ decision, intent: data.intent, objectionKey: data.objection_key, financing });
+  const max = emojiAllowance({ decision, intent: data.intent, objectionKey: data.objection_key, financing, level: emojiLevel(ctx.settings?.persona) });
   const e = limitEmojis(out, { max });
   if (e.removed) adjustments.push(`emojis: ${e.removed} removed (at most ${max} in this reply)`);
   out = e.messages.filter((m) => m && /\p{L}/u.test(m));
