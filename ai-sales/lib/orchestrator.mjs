@@ -269,11 +269,13 @@ export async function respond(p) {
   const recentBuyer = [message, ...history.filter((h) => h.role !== "assistant").slice(-4).map((h) => h.text)].join("\n");
   const rentalAsk = RENTAL_Q.test(recentBuyer);
   const focusProjects = (ctx.projects || []).filter((x) => x.inFocus);
-  const rentRates = rentalAsk && focusProjects.length ? findRentRates({ knowledge: ctx.knowledge, projectIds: focusProjects.map((x) => x.id), web: found.web }) : null;
-  const rentalEst = rentRates ? focusProjects.map((x) => rentalEstimate({ name: x.name, layouts: x.layouts, maintPsf: x.maintPsfWebsite }, rentRates)).filter(Boolean) : [];
-  ctx.rental = rentalAsk && focusProjects.length ? (renderRental(rentalEst, rentRates) || { status: "NO SOURCE", note: "No rent rate for this project in our knowledge base or web research: give no rent or yield figure." }) : null;
+  const rentalItems = rentalAsk ? focusProjects.map((x) => {
+    const rates = findRentRates({ knowledge: ctx.knowledge, project: { id: x.id, name: x.name, area: x.area }, web: found.web });
+    return { rates, estimate: rates ? rentalEstimate({ name: x.name, layouts: x.layouts, maintPsf: x.maintPsfWebsite }, rates) : null };
+  }) : [];
+  ctx.rental = rentalAsk && focusProjects.length ? (renderRental(rentalItems) || { status: "NO SOURCE", note: "No rent rate for this project in our knowledge base or web research: give no rent or yield figure." }) : null;
   ctx.rules.rentalAsk = rentalAsk;
-  ctx.rules.rentalAmounts = rentalEst.flatMap((e) => e.amounts);
+  ctx.rules.rentalAmounts = rentalItems.flatMap((x) => x.estimate?.amounts || []);
   ctx.rules.allowedAmounts.push(...ctx.rules.rentalAmounts);
   const system = buildSystemPrompt(settings, ctx.objections, { calendar: !!p.calendar, financing: finOn });
   let contextText = renderContext(ctx);

@@ -256,6 +256,7 @@ ${financing
 
 Rent and yield (rental_estimates in the context)
 - Rent, gross yield and "which layout gives the better margin / return" come only from rental_estimates. Quote those figures as they are, say they are estimates ("anggaran"), name the source (and the date for web research) and that rent and return are not guaranteed. Gross yield is before costs; rent after maintenance still leaves out sinking fund, tax, vacancy and repairs. Never work out a rent, yield or rate yourself, and never use a rate that is not in rental_estimates.
+- based_on says what the rate is. For a CONSERVATIVE SCENARIO, say plainly it is a cautious assumption from our rental reference, not actual rent for that area, and that an advisor can share comparable listings; for an area range, say it is the asking-rent range for the area (asking rents, not achieved rents).
 - Per-room figures only when rental_estimates gives room rent. Whether the building allows room rental or short stays is for an advisor to confirm.
 - If rental_estimates says NO SOURCE: give no rent or yield figure. Say current rental data is being checked and an advisor will share it; you may compare the layouts on facts (size, rooms, bathrooms, price).
 - Keep it short: the 2–3 layouts that matter, one line each.
