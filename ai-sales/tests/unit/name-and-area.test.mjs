@@ -148,3 +148,14 @@ test("emojis: a greeting that only names the topics (\"harga, lokasi dan pembiay
   assert.match(r.messages[0], /😊/);
   assert.match(buildSystemPrompt({ persona: { name: "Hafiz_Ai" } }), /In warm moments .* add one that fits/);
 });
+
+test("respond(): \"Hi saya Mr Zan\" saves the title and the name, and the name is not asked again", async () => {
+  const llm = llmOf(draft(["Hi Mr Zan! Saya Hafiz_Ai, pembantu AI Hafizan Hanis."], { intent: "greeting" }));
+  const r = await respond({ db: db({ full_name: "😁" }), llm, leadId: "L1", message: "Hi saya Mr Zan", now: NOW, mode: "simulate" });
+  const c = ctxOf(llm.calls[0]);
+  assert.equal(c.buyer.address.use_in_malay, "Mr Zan");
+  assert.equal(c.buyer.name_status, "confirmed");
+  assert.notEqual(c.discovery.next?.key, "name");
+  assert.deepEqual(r.actions.find((a) => a.type === "set_salutation"), { type: "set_salutation", salutation: "Mr", gender: "male" });
+  assert.deepEqual(r.actions.find((a) => a.type === "set_profile").changes, [{ field: "preferred_name", value: "Zan", status: "confirmed" }]);
+});

@@ -226,6 +226,11 @@ export async function respond(p) {
   // so this reply already uses it and the question is never asked again
   const lastAiText = [...(history || [])].reverse().find((h) => h.role === "assistant")?.text || "";
   const profileAnswers = ctx.buyer ? readDiscoveryAnswer({ message, lastAiText, buyerName: ctx.buyer.name, known: ctx.clientProfile?.known }) : [];
+  // "saya Mr Zan" / "call me Puan Aina" gives the name too: it is the buyer's, so the name question is not asked again
+  const knownName = ctx.clientProfile?.known?.preferred_name?.value ?? ctx.clientProfile?.known?.preferred_name;
+  if (ctx.buyer && titlePref?.name && !knownName && !profileAnswers.some((a) => a.field === "preferred_name")) {
+    profileAnswers.push({ field: "preferred_name", value: titlePref.name, status: "confirmed" });
+  }
   if (profileAnswers.length) {
     ctx.clientProfile = ctx.clientProfile || { known: {} };
     ctx.clientProfile.known = { ...(ctx.clientProfile.known || {}) };
