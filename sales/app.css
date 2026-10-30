@@ -156,6 +156,10 @@ details.card>summary{color:var(--ink)}
 .icon:disabled{opacity:.3}
 input,select,textarea{font:inherit;color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:10px;padding:9px 11px;width:100%;min-height:40px;max-width:100%}
 textarea{resize:vertical}
+/* AI persona → Tone guidance holds the owner's full master prompt (thousands of lines): about 7 times the old
+   2-row box (~75 px) on desktop and iPad, a large share of the screen on phones; scrolls inside, resizable */
+.persona-tone{height:560px;min-height:200px;overflow-y:auto;resize:vertical;line-height:1.5;white-space:pre-wrap}
+@media (max-width:640px){.persona-tone{height:62vh;min-height:320px}}
 /* iPad/iPhone Safari draws date and time boxes at their own native width, ignoring width:100%, so they stuck out
    of their column; without the native look they size like any other field (tapping still opens the picker) */
 input[type=date],input[type=time],input[type=datetime-local],input[type=month]{-webkit-appearance:none;appearance:none;display:block;min-width:0;text-align:left}
