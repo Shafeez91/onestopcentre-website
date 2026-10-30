@@ -10,7 +10,7 @@ import { buildSystemPrompt, renderContext, buildMessages, REPLY_SCHEMA, REPLY_SC
 import { DEFAULT_MODEL, LlmError } from "./llm.mjs";
 import { applyInsights } from "./insights.mjs";
 import { routeLookups, webResearch, shouldResearch, renderLookup } from "./research.mjs";
-import { nextDiscovery } from "./discovery.mjs";
+import { nextDiscovery, readDiscoveryAnswer } from "./discovery.mjs";
 import { extractDistances, extractMinutes } from "../../sales/shared/validator.mjs";
 import { mergeFinancing, attachFinancing, renderFinancing, cleanInputs, isNewAssessment, advisorSummary } from "./financing.mjs";
 import { addressFor, parseTitlePreference, fixSalutation } from "../../sales/shared/salutation.mjs";
@@ -202,9 +202,23 @@ export async function respond(p) {
   // the buyer says how to be addressed in this message ("call me Mr Tan", "panggil saya Puan"): used from this reply on
   const titlePref = parseTitlePreference(message);
   if (titlePref && ctx.buyer) ctx.buyer.address = addressFor({ full_name: titlePref.name || ctx.buyer.name, salutation: titlePref.salutation, gender: titlePref.gender, salutation_source: "customer" });
+  // the buyer's answer to the name / area question the AI just asked: saved now (not only by the later insights call),
+  // so this reply already uses it and the question is never asked again
+  const lastAiText = [...(history || [])].reverse().find((h) => h.role === "assistant")?.text || "";
+  const profileAnswers = ctx.buyer ? readDiscoveryAnswer({ message, lastAiText, buyerName: ctx.buyer.name, known: ctx.clientProfile?.known }) : [];
+  if (profileAnswers.length) {
+    ctx.clientProfile = ctx.clientProfile || { known: {} };
+    ctx.clientProfile.known = { ...(ctx.clientProfile.known || {}) };
+    for (const a of profileAnswers) ctx.clientProfile.known[a.field] = { value: a.value, status: "confirmed" };
+    const pn = profileAnswers.find((a) => a.field === "preferred_name");
+    const contact = titlePref ? { full_name: titlePref.name || ctx.buyer.name, salutation: titlePref.salutation, gender: titlePref.gender, salutation_source: "customer" } : (ctx.contact || { full_name: ctx.buyer.name });
+    if (pn) ctx.buyer.address = addressFor(contact, { preferredName: pn.value });
+  }
+  if (ctx.buyer?.address) ctx.buyer.name_status = ctx.buyer.address.name_status;
   // the owner's discovery order: the next question worth asking, from what the CRM already knows
   ctx.discovery = nextDiscovery({ known: ctx.clientProfile?.known, buyerName: ctx.buyer?.name, appointments: (ctx.lead?.open_appointments || []).length,
-    message, readiness: ctx.lead?.qualification_known?.readiness });
+    message, readiness: ctx.lead?.qualification_known?.readiness,
+    aiReplies: (history || []).filter((h) => h.role === "assistant").length, projectInFocus: (ctx.projects || []).some((x) => x.inFocus) });
   if (ctx.aiPaused && p.mode === "live") return finish({ decision: "paused", reply: null, reason: "AI is paused for this lead; a human handles replies." });
   const settings = ctx.settings || {};
   const model = settings.ai?.model || DEFAULT_MODEL;
@@ -374,6 +388,7 @@ export async function respond(p) {
     if (f && !actions.some((a) => a.type === "send_file" && a.document_id === id)) actions.push({ type: "send_file", document_id: f.id, title: f.title, kind: f.kind, project_id: f.project_id });
   }
   if (titlePref && p.leadId) actions.push({ type: "set_salutation", salutation: titlePref.salutation, gender: titlePref.gender });
+  if (profileAnswers.length && p.leadId) actions.push({ type: "set_profile", changes: profileAnswers });
   // remember a language the buyer asked for in this message, so later replies and follow-ups use it
   const askedNow = requestedLanguage(message);
   if (askedNow && askedNow !== ctx.buyer?.preferred_language) actions.push({ type: "set_language", language: askedNow });
@@ -431,6 +446,10 @@ export async function applyActions(db, { leadId, contactId, result, conversation
         try { await db.patch(path, { salutation: a.salutation, ...(a.gender ? { gender: a.gender } : {}), salutation_source: "customer", salutation_confidence: "confirmed" }); }
         catch { await db.patch(path, { salutation: a.salutation }); }
       }
+    } else if (a.type === "set_profile") {
+      // the buyer's own answer (name, area familiarity): an advisor's entry is never overwritten, the RPC flags a conflict
+      try { await db.rpc("ai_lead_profile_set", { p_lead: leadId, p_changes: a.changes, p_source: "ai", p_message: messageId }); }
+      catch { continue; }
     } else if (a.type === "set_language") {
       if (contactId) await db.patch(`ai_contacts?id=eq.${encodeURIComponent(contactId)}`, { preferred_language: a.language });
     } else if (a.type === "pause_ai") {
