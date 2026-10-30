@@ -400,6 +400,44 @@ test("AI test console: shows the Google Maps lookup (route type, distance, locat
   } finally { await ctx.close(); }
 });
 
+test("AI persona: the Tone guidance editor is ~7× the old height on desktop and iPad, roomy on phones, scrolls, and saves the whole prompt", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  // a master prompt the size of the real one (1,405 lines, 63,129 characters on 30 Oct): headings, numbering, blank lines
+  const PROMPT = "CLAUDE MASTER PROMPT\n\n" + Array.from({ length: 1400 }, (_, i) => (i % 50 === 0 ? `\nSECTION ${i / 50 + 1}\n` : `${i % 50}. Rule ${i}: reply in short WhatsApp messages — keep the buyer's language.`)).join("\n") + "\n\nEND OF PROMPT";
+  for (const [name, vp, min, max] of [["desktop", VIEWPORTS.desktop, 525, 600], ["ipad", VIEWPORTS.ipad, 525, 600], ["phone", VIEWPORTS.phone, 320, 560]]) {
+    const { page, ctx, writes, errors } = await newPage(vp, { mutate: (db) => { db.ai_settings[0].persona = { ...db.ai_settings[0].persona, name: "Hafiz_Ai", tone: PROMPT, greeting_en: "Hi!", greeting_ms: "Salam!" }; } });
+    try {
+      await page.goto(base + "/sales/#/settings?tab=persona");
+      await page.waitForSelector("#sf textarea[name=tone]");
+      const box = await page.$eval("#sf textarea[name=tone]", (el) => ({ h: el.getBoundingClientRect().height, scroll: el.scrollHeight, client: el.clientHeight, resize: getComputedStyle(el).resize, overflowY: getComputedStyle(el).overflowY, value: el.value }));
+      assert.ok(box.h >= min && box.h <= max, `${name}: editor height ${box.h}px`);
+      assert.ok(box.h >= 7 * 75 || name === "phone", `${name}: about 7× the old 75px box`);
+      assert.equal(box.value, PROMPT, `${name}: the full prompt is loaded, line breaks and all`);
+      assert.ok(box.scroll > box.client * 10, "long text scrolls inside the editor");
+      assert.equal(box.resize, "vertical");
+      assert.equal(box.overflowY, "auto");
+      // the other persona fields keep their small size
+      assert.ok((await page.$eval("#sf textarea[name=greeting_en]", (el) => el.getBoundingClientRect().height)) < 120);
+      // the page itself does not scroll sideways, and Save stays reachable below the editor
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `${name}: no horizontal scroll`);
+      await page.$eval("#sf textarea[name=tone]", (el) => { el.scrollTop = el.scrollHeight; });
+      assert.ok(await page.$eval("#sf textarea[name=tone]", (el) => el.scrollTop > 0), "scrolls to the end of the prompt");
+      if (name === "ipad") {
+        await page.$eval("#sf textarea[name=tone]", (el) => { el.value += "\n\nNEW LINE ADDED"; el.dispatchEvent(new Event("input", { bubbles: true })); });
+        await page.locator("#sf button").scrollIntoViewIfNeeded();
+        await page.click("#sf button");
+        await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Persona saved/.test(t.textContent)));
+        const w = writes.find((x) => x.table === "ai_settings" && x.body?.persona);
+        assert.equal(w.body.persona.tone, PROMPT + "\n\nNEW LINE ADDED", "the whole prompt is saved, nothing cut");
+        assert.equal(w.body.persona.greeting_en, "Hi!");
+        assert.equal(w.body.persona.name, "Hafiz_Ai");
+        assert.equal(w.body.persona.discloses_ai, true);
+      }
+      if (process.env.E2E_SHOTS) await page.screenshot({ path: path.join(process.env.E2E_SHOTS, `${name}-persona.png`) });
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  }
+});
+
 test("AI settings: shows today's usage and saves a valid daily limit", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage(VIEWPORTS.ipad);
   try {

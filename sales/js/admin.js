@@ -61,7 +61,7 @@ export async function settings(el, params) {
       <label>Assistant name<input name="name" value="${attr(p.name)}"${dis}></label>
       <label class="check"><input type="checkbox" checked disabled> Discloses it is an AI (mandatory)</label>
       <label class="check"><input type="checkbox" name="allow_manglish"${p.allow_manglish ? " checked" : ""}${dis}> Mirror Manglish when the buyer uses it</label>
-      <label class="full">Tone guidance<textarea name="tone" rows="2"${dis}>${esc(p.tone)}</textarea></label>
+      <label class="full">Tone guidance<textarea name="tone" class="persona-tone" rows="20" spellcheck="false"${dis}>${esc(p.tone)}</textarea></label>
       <label class="full">Greeting (English)<textarea name="greeting_en" rows="2"${dis}>${esc(p.greeting_en)}</textarea></label>
       <label class="full">Greeting (Bahasa Malaysia)<textarea name="greeting_ms" rows="2"${dis}>${esc(p.greeting_ms)}</textarea></label>
       ${own ? `<div class="actions full"><button class="btn pri">Save persona</button></div>` : ""}</form>`;
