@@ -16,7 +16,8 @@
 
 const HEDGE = /(anggaran|anggarkan|indicative|indikatif|dari\s+rm|from\s+rm|bermula|starting|sekitar|around|lebih kurang|approx|approximately|tertakluk|subject to|kira-kira|lebih\s+kurang|estimate|estimated|mungkin)/i;
 const ASSUMPTION = /(faedah|interest|kadar|rate|tempoh|tenure|tahun|years|margin|pinjaman|loan|financing|pembiayaan)/i;
-const NEGATION_BEFORE = /(not|no|cannot|can't|cant|never|tidak|tak|bukan|tiada|takkan|belum|not yet|unable to|tidak dapat|tak boleh)\W+(\w+\W+){0,3}$/i;
+// whole words only, including WhatsApp short forms ("x dpt dijamin", "tk blh", "tdk", "bkn", "blm", "xde")
+const NEGATION_BEFORE = /(?<![a-z])(not|no|cannot|can't|cant|never|tidak|tak|bukan|tiada|takkan|belum|not yet|unable to|tidak dapat|tak boleh|x|tk|tdk|bkn|blm|xde|takde|tkde|xdpt|xblh|xleh)\W+(\w+\W+){0,3}$/i;
 
 const RM = /\bRM\s?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s?(k|mil|million|juta|ribu)?\b/gi;
 

@@ -134,6 +134,14 @@ function researchTrace(ctx, routes) {
  * The last checks on an AI reply's text before it is sent, in code (no AI call): a wrong title before the buyer's name
  * is replaced by the right address (Smart Salutation), and emojis are kept to one per turn, none in serious replies.
  */
+// a reply about financing figures (no emoji there): a financing intent, or an RM amount given per month / as an
+// instalment. Only naming the topic ("info harga, lokasi dan pembiayaan") is not one.
+export function financingReply(intent, messages, engineOn = true) {
+  if (!engineOn) return false;
+  if (/financ|instal|loan|lppsa|affordab/i.test(String(intent || ""))) return true;
+  return /RM\s?[\d,.]+\s?(k|ribu)?[^.\n]{0,40}(sebulan|bulanan|per month|\/month|a month|monthly|ansuran|instal)/i.test((messages || []).join(" "));
+}
+
 export function finalTouches(messages, { decision = "reply", data = {}, ctx = {}, financing = false } = {}) {
   const adjustments = [];
   const addr = ctx.buyer?.address;
@@ -395,7 +403,7 @@ export async function respond(p) {
 
   // separate WhatsApp messages only for a normal AI reply; a safe reply or a hand-over is one message
   const raw = decision === "reply" ? data.messages : [reply];
-  const { messages, adjustments } = finalTouches(raw, { decision, data, ctx, financing: !!fin && /instal|ansuran|financ|pembiayaan|loan|lppsa/i.test(String(data.intent) + raw.join(" ")) });
+  const { messages, adjustments } = finalTouches(raw, { decision, data, ctx, financing: financingReply(data.intent, raw, !!fin) });
   // the draft hands a factual question to an advisor because our data lacks it: research it once on the web and,
   // if something was found, write the reply again with the findings (no second daily-limit charge)
   const handoverReason = actions.find((a) => a.type === "handover")?.reason;

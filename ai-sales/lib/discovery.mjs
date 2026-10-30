@@ -67,7 +67,7 @@ export function nextDiscovery({ known = {}, buyerName = null, appointments = 0, 
 // ---- reading the buyer's answer to the name / area question the AI just asked, so it is saved at once ----
 const NOT_NAME_WORD = /^(ok|okay|ya|yes|yup|yep|boleh|blh|sure|can|no|tak|x|tidak|hi|hai|hello|helo|salam|assalamualaikum|thanks|thank|tq|terima|nak|mahu|mau|want|interested|looking|tanya|nk|ada|apa|berapa|brp|harga|price|rumah|unit|projek|project|lppsa|loan|dari|from|kat|dekat|di|in|at|the|and|dan|untuk|utk|saya|sy|aku|i|im|my|is|sorry|maaf|baik|alright|noted|nope|haha|hehe|lol|tu|ni|itu|ini|nama|name|nanti|esok|lusa|later|tomorrow|today|now|sekarang|balik|back|semula|lagi|je|sahaja|please|pls)$/i;
 const YES = /^\s*(ya+|yes+|yup|yep|boleh+|blh|ok(ay)?|sure|betul|correct|can|bole|yaa|ye+|yea+h?|okey|ok je|boleh je|blh je)\b/i;
-const DECLINE = /(tak\s*(nak|mahu|perlu|payah)|x\s*(nak|payah|perlu)|tak payah|rather not|prefer not|no need|not comfortable|private|rahsia|tak (mahu|nak) (bagi|beritahu|share))/i;
+const DECLINE = /((tak|x|tiada|takde|xde|tkde|tak\s+ada|x\s+ada)\s*nama|no\s+name|don'?t\s+have\s+a\s+name|tak\s*(nak|mahu|perlu|payah)|x\s*(nak|payah|perlu)|tak payah|rather not|prefer not|no need|not comfortable|private|rahsia|tak (mahu|nak) (bagi|beritahu|share))/i;
 const ASKED_NAME = /(nama|name)/i;
 const ASKED_CALL = /(panggil|call you|address you)/i;
 const ASKED_AREA = /(familiar|biasa\s+(dengan|dgn)|tahu\s+(kawasan|area|lokasi)|kenal\s+(kawasan|area)|pernah\s+(ke|pergi|datang|sampai)|area\s+sekitar|kawasan\s+sekitar|surroundings)/i;
