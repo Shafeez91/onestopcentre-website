@@ -58,7 +58,8 @@ Rules:
 - Never output names, IC / MyKad numbers, addresses, account, card or employee numbers, or reference numbers, in any field or warning.
   You may give the birth year (from the date of birth or the first two digits of the IC number) and nothing else about identity.
 - payslip: basic_salary is basic pay (gaji pokok). fixed_allowances are allowances paid every month (e.g. ITKA, ITP, COLA, housing, fixed
-  travel; not BSH, bonus or one-off claims). variable_income is overtime, commission, claims or bonus this month. statutory_deductions are income tax (PCB / cukai),
+  travel, and on government pay slips ITP, ITKA, ITK, ITKT, ITJU, EPW, acting allowance, COLA / Bantuan Sara Hidup,
+  BIW, BISM, BISS; not bonus, overtime or one-off claims). Keep each allowance's name as printed. variable_income is overtime, commission, claims or bonus this month. statutory_deductions are income tax (PCB / cukai),
   EPF / KWSP, SOCSO / PERKESO and EIS / SIP. loan_deductions are repayments of financing deducted from pay: LPPSA housing, personal or koperasi
   financing, ANGKASA or BPA loan deductions, car financing. other_deductions are everything else (zakat, insurance, union, savings, CP38).
   employer_sector: government for federal or state government servants, statutory_body for badan berkanun. appointment_date: the

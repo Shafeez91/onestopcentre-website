@@ -86,3 +86,23 @@ None is green, and every page and summary says it is not an approval.
   - summaries
 - Browser test "financing tools": sidebar, live results, validation, copy, save to client, comparison, reset.
 - Layout tests (no horizontal scroll at phone, tablet and desktop sizes) cover the 3 new routes.
+
+## Auto-fill from documents (30 Oct 2026, evening)
+Both calculators have an **Auto-fill from documents** panel (advisors and above; Settings switch "Financing documents").
+- **Upload:** a payslip, CCRIS report or bank statement goes to `/api/sales/financing/documents` with `action: "extract"`.
+- **Read-only:** the AI reads it (the same reader as the lead page) and the figures come back; **the file and the figures
+  are not stored** on the server. The daily AI limit applies, and an audit entry records the action without figures.
+- **Read once, use in both:** what was read stays in the browser tab, so the other calculator can use it ("Fill this
+  calculator from N documents"). "Forget documents" clears it.
+- **Mapping** (`sales/shared/calc/autofill.mjs`):
+
+| Calculator | Fields filled |
+|---|---|
+| LPPSA | basic salary; each eligible allowance by its code (COLA = Bantuan Sara Hidup); PCB / KWSP / PERKESO / EIS / other statutory; financing deductions; an LPPSA deduction → second financing + existing instalment; other deductions; age (birth year); service status; KWSP scheme when KWSP is deducted |
+| Bank | basic salary, fixed allowances, average variable pay, statutory total; commitments by type from CCRIS (car, personal, property, PTPTN, other; cards as a balance), else from the payslip or statement; age; employer type |
+
+- **Highlighting:** filled fields are highlighted, with the source as a tooltip. A field the advisor edits is no longer
+  highlighted.
+- **Checks** are listed, e.g. allowances LPPSA does not count, a CCRIS facility with no instalment, koperasi missing
+  from CCRIS, arrears, low confidence, a private employer on the LPPSA page.
+- The property price, rate and DSR are never filled.

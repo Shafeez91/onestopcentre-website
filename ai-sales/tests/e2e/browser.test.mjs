@@ -1229,6 +1229,50 @@ test("financing tools: sidebar group, live LPPSA and bank results, validation, c
   } finally { await ctx.close(); }
 });
 
+test("financing tools: auto-fill from a payslip fills the LPPSA form and recalculates; the same documents fill the bank calculator", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const { page, ctx, errors } = await newPage({ width: 1366, height: 1000 });
+  try {
+    const blank = { payslip: { employer_sector: "unknown", fixed_allowances: [], variable_income: [], statutory_deductions: [], loan_deductions: [], other_deductions: [], service_status: "unknown" }, ccris: { facilities: [] }, bank_statement: { regular_loan_payments: [] }, warnings: [] };
+    const slip = { ...blank, readable: true, document_kind: "payslip", period: "2026-09", confidence: "high", payslip: { ...blank.payslip, employer_sector: "government", basic_salary: 4000,
+      fixed_allowances: [{ name: "ITKA", amount: 500 }, { name: "COLA", amount: 500 }], statutory_deductions: [{ name: "PCB", amount: 100 }, { name: "KWSP", amount: 400 }],
+      loan_deductions: [{ name: "Koperasi", amount: 800 }], birth_year: 1996, service_status: "permanent_confirmed", net_pay: 3200 } };
+    const sent = [];
+    await page.route("**/api/sales/financing/documents", (r) => { sent.push(JSON.parse(r.request().postData())); r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ extraction: slip, stored: false }) }); });
+    await page.goto(base + "/sales/#/calc-lppsa");
+    await page.waitForSelector("#cdf");
+    await page.setInputFiles("#cdf input[name=file]", { name: "slip.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 x") });
+    await page.click("#cdf button.pri");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /fields filled/.test(t.textContent)));
+    assert.equal(sent[0].action, "extract");
+    assert.equal(sent[0].kind, "payslip");
+    assert.equal(await page.inputValue('#cf [name="basic_salary"]'), "4000");
+    assert.equal(await page.inputValue('#cf [name="allowances.itka"]'), "500");
+    assert.equal(await page.inputValue('#cf [name="mandatory.kwsp"]'), "400");
+    assert.equal(await page.inputValue('#cf [name="financing_deductions"]'), "800");
+    assert.equal(await page.inputValue('#cf [name="age"]'), String(new Date().getFullYear() - 1996));
+    assert.ok(await page.$('#cf [name="basic_salary"].autofilled'), "highlighted for checking");
+    assert.match(await page.getAttribute('#cf [name="basic_salary"]', "title"), /From payslip 2026-09: basic pay/);
+    await page.waitForFunction(() => /RM2,700\.00/.test(document.querySelector("#cres").textContent), null, { timeout: 5000 });
+    assert.match(await page.textContent("#cdocs"), /Payslip · 2026-09 · high confidence/);
+    // changing a highlighted figure makes it the advisor's
+    await page.fill('#cf [name="basic_salary"]', "4100");
+    assert.equal(await page.$('#cf [name="basic_salary"].autofilled'), null);
+    // the bank calculator uses the documents already read, without another upload
+    await page.click("[data-nav=calc-bank]");
+    await page.waitForSelector("#cdfill");
+    await page.click("#cdfill");
+    assert.equal(await page.inputValue('#cf [name="basic_salary"]'), "4000");
+    assert.equal(await page.inputValue('#cf [name="fixed_allowances"]'), "1000");
+    assert.equal(await page.inputValue('#cf [name="statutory_deductions"]'), "500");
+    assert.equal(await page.inputValue('#cf [name="commitments.personal.amount"]'), "800");
+    assert.equal(await page.inputValue('#cf [name="employment_type"]'), "government");
+    assert.equal(sent.length, 1, "read once");
+    await page.click("#cdforget");
+    assert.equal(await page.$("#cdfill"), null);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("financing check is hidden from viewers; settings validate and save the rule set", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage({ width: 1024, height: 900 });
   try {

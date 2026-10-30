@@ -1,11 +1,13 @@
 // AI Sales dashboard — Financing tools: LPPSA eligibility calculator, bank loan eligibility calculator and the
 // LPPSA vs bank comparison. Internal advisor tools: every figure comes from the deterministic engines in
 // ../shared/calc (exact decimals, versioned rules with sources); nothing here is sent to a buyer automatically.
-import { SB, S, can, $, $$, esc, attr, q, act, toast, modal, opt, badge, empty } from "./core.js";
+import { SB, S, can, $, $$, esc, attr, q, act, toast, modal, opt, badge, empty, api } from "./core.js";
 import { lppsaRuleset, bankRuleset, LPPSA_ALLOWANCES, BANKS, SOURCES, VERIFIED_ON } from "../shared/calc/rules.mjs";
 import { calcLppsa } from "../shared/calc/lppsa.mjs";
 import { calcBank, COMMITMENTS } from "../shared/calc/bank.mjs";
 import { whatsappSummary, compareScenarios } from "../shared/calc/summary.mjs";
+import { lppsaFromDocs, bankFromDocs } from "../shared/calc/autofill.mjs";
+import { DOC_KINDS, DOC_MIME, DOC_MAX_BYTES } from "../shared/finance-docs.mjs";
 
 const rm = (n, d = 2) => (n === null || n === undefined || !Number.isFinite(Number(n)) ? "—" : "RM" + Number(n).toLocaleString("en-MY", { minimumFractionDigits: d, maximumFractionDigits: d }));
 const rm0 = (n) => rm(n, 0);
@@ -61,6 +63,7 @@ function validate(f) {
 /* ---------- shared page frame ---------- */
 function frame(el, { key, title, sub, formHtml }) {
   el.innerHTML = `<div class="page-head"><div><h1>${esc(title)}</h1><p class="sub">${sub}</p></div></div>${tabs(key)}
+  ${can("advisor") && S.settings?.flags?.financing_documents !== false ? `<section class="card calc-docs" id="cdocs" aria-live="polite"></section>` : ""}
   <div class="calc">
     <form class="calc-in card" id="cf" novalidate autocomplete="off">${formHtml}</form>
     <a class="calc-mini" id="cmini" href="#cres-anchor" aria-label="Go to the result"></a>
@@ -75,7 +78,7 @@ function frame(el, { key, title, sub, formHtml }) {
   </div>`;
 }
 
-function bindFrame(el, { key, run, saveRoute }) {
+function bindFrame(el, { key, run, saveRoute, autofill }) {
   const f = $("#cf", el), out = $("#cres", el);
   let last = null;
   const recalc = () => {
@@ -93,6 +96,8 @@ function bindFrame(el, { key, run, saveRoute }) {
   f.addEventListener("input", recalc);
   f.addEventListener("change", recalc);
   recalc();
+  const docsBox = $("#cdocs", el);
+  if (docsBox && autofill) bindDocs(docsBox, f, autofill, recalc);
   $("#c-reset", el).onclick = () => { if (!confirm("Clear all figures on this calculator?")) return; f.reset(); store.del(key); store.del(key + ":result"); recalc(); };
   $("#c-print", el).onclick = printPage;
   $("#c-copy", el).onclick = async () => {
@@ -105,6 +110,76 @@ function bindFrame(el, { key, run, saveRoute }) {
   if (save) save.onclick = () => last && saveToClient(last, saveRoute);
   // render is per calculator
   function render(r) { return key === "lppsa" ? lppsaResult(r) : bankResult(r); }
+}
+
+/* ---------- auto-fill from documents: read once, used by both calculators ---------- */
+// The file is read by the AI and returned; neither the file nor the figures are stored on the server. What was read is
+// kept in this browser tab only (like the calculator figures) so the other calculator can use it too.
+const docsStore = { get: () => store.get("docs") || [], set: (v) => store.set("docs", v) };
+async function prepareFile(file) {
+  if (!file.type.startsWith("image/")) return { blob: file, mime: file.type, name: file.name };
+  const img = await createImageBitmap(file).catch(() => null);
+  if (!img) return { blob: file, mime: file.type, name: file.name };
+  const s = Math.min(1, 1600 / Math.max(img.width, img.height)), c = document.createElement("canvas");
+  c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.85));
+  return blob ? { blob, mime: "image/jpeg", name: file.name } : { blob: file, mime: file.type, name: file.name };
+}
+const toBase64 = (blob) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
+const KIND_READ = { payslip: "Payslip", ccris: "CCRIS report", bank_statement: "Bank statement", other: "Not a financing document" };
+
+function bindDocs(box, form, autofill, recalc) {
+  let lastChecks = [];
+  const apply = () => {
+    const docs = docsStore.get().map((d) => d.extraction);
+    const { values, sources, checks } = autofill(docs);
+    $$(".autofilled", form).forEach((x) => { x.classList.remove("autofilled"); x.removeAttribute("title"); });
+    for (const [name, v] of Object.entries(values)) {
+      const inp = form.elements[name];
+      if (!inp) continue;
+      inp.value = v; inp.classList.add("autofilled"); inp.title = "From " + sources[name];
+    }
+    lastChecks = checks;
+    recalc();
+    render();
+    return Object.keys(values).length;
+  };
+  const render = () => {
+    const docs = docsStore.get();
+    box.innerHTML = `<div class="calc-docs-head"><div><h2>Auto-fill from documents</h2><p class="note">Upload the buyer's <b>payslip</b>, <b>CCRIS report</b> or <b>bank statement</b>. The AI reads the figures, fills this calculator and it recalculates. Figures filled in are <span class="autofilled-key">highlighted</span>: check each against the document. Files are read and not stored; only upload documents the buyer agreed to share.</p></div></div>
+      <form id="cdf" class="calc-docs-form"><label>Document<select name="kind">${Object.entries(DOC_KINDS).map(([k, v]) => opt(k, v.en, "payslip")).join("")}</select></label>
+        <label>File (PDF or photo, up to 4 MB)<input type="file" name="file" accept="${attr(DOC_MIME.join(","))}" required></label>
+        <button class="btn pri">Read and fill</button></form>
+      ${docs.length ? `<ul class="list calc-docs-list">${docs.map((d, i) => `<li><b>${esc(KIND_READ[d.extraction.document_kind] || d.extraction.document_kind)}</b>${d.extraction.period ? ` · ${esc(d.extraction.period)}` : ""} · ${esc(d.extraction.confidence)} confidence <small>${esc(d.file)}</small>
+          ${!d.extraction.readable ? `<small class="err">Could not be read: nothing taken from it.</small>` : ""}${(d.extraction.warnings || []).map((w) => `<small>⚠ ${esc(w)}</small>`).join("")}
+          <button type="button" class="link" data-rmdoc="${i}">Remove</button></li>`).join("")}</ul>
+        ${lastChecks.length ? `<div class="calc-warn">${lastChecks.map((c) => `<p>⚠ ${esc(c)}</p>`).join("")}</div>` : ""}
+        <div class="calc-actions"><button type="button" class="btn" id="cdfill">Fill this calculator from ${docs.length} document${docs.length === 1 ? "" : "s"}</button><button type="button" class="btn ghost" id="cdforget">Forget documents</button></div>` : ""}`;
+    const df = $("#cdf", box);
+    df.onsubmit = (e) => {
+      e.preventDefault();
+      const file = df.file.files[0];
+      if (!file) return toast("Choose a file first.", "err");
+      if (!DOC_MIME.includes(file.type)) return toast("Only PDF, JPG, PNG or WEBP files.", "err");
+      act(df.querySelector("button"), async () => {
+        const p = await prepareFile(file);
+        if (p.blob.size > DOC_MAX_BYTES) throw new Error("The file is larger than 4 MB. Upload a smaller scan or one page at a time.");
+        const { extraction } = await api("/api/sales/financing/documents", { method: "POST", body: JSON.stringify({ action: "extract", kind: df.kind.value, mime: p.mime, data: await toBase64(p.blob) }) });
+        docsStore.set([...docsStore.get(), { file: file.name.slice(0, 80), kind: df.kind.value, extraction, at: new Date().toISOString() }]);
+        const n = apply();
+        toast(extraction.readable ? `${n} field${n === 1 ? "" : "s"} filled: check the highlighted figures` : "The AI could not read this as a financing document.", extraction.readable ? "ok" : "err");
+      });
+    };
+    $$("[data-rmdoc]", box).forEach((b) => b.onclick = () => { const d = docsStore.get(); d.splice(Number(b.dataset.rmdoc), 1); docsStore.set(d); apply(); });
+    const fill = $("#cdfill", box);
+    if (fill) fill.onclick = () => { const n = apply(); toast(`${n} field${n === 1 ? "" : "s"} filled: check the highlighted figures`); };
+    const forget = $("#cdforget", box);
+    if (forget) forget.onclick = () => { docsStore.set([]); lastChecks = []; $$(".autofilled", form).forEach((x) => { x.classList.remove("autofilled"); x.removeAttribute("title"); }); render(); };
+  };
+  // a highlighted figure the advisor changes is theirs now
+  form.addEventListener("input", (e) => { if (e.target.classList?.contains("autofilled")) { e.target.classList.remove("autofilled"); e.target.removeAttribute("title"); } });
+  render();
 }
 
 // the printed summary includes the rules and sources
@@ -161,7 +236,7 @@ export async function lppsaCalc(el) {
       <h3>Eligible fixed allowances <small class="note">only these count (LPPSA FAQ); leave others out</small></h3>
       ${LPPSA_ALLOWANCES.map(([k, l]) => n("allowances." + k, l)).join("")}
       <h3>Mandatory deductions</h3>
-      ${n("mandatory.tax", "Income tax (PCB)")}${n("mandatory.kwsp", "KWSP")}${n("mandatory.perkeso", "PERKESO / SOCSO")}${n("mandatory.eis", "EIS / SIP")}
+      ${n("mandatory.tax", "Income tax (PCB)")}${n("mandatory.kwsp", "KWSP")}${n("mandatory.perkeso", "PERKESO / SOCSO")}${n("mandatory.eis", "EIS / SIP")}${n("mandatory.other", "Other statutory deductions")}
       <h3>Other deductions</h3>
       ${n("financing_deductions", "Financing deductions", { hint: "personal, koperasi, ANGKASA, car (not this LPPSA)" })}
       ${n("other_deductions", "Other deductions", { hint: "zakat, insurance, savings, union" })}
@@ -176,9 +251,9 @@ export async function lppsaCalc(el) {
       ${n("legal_fee", "Legal fee, if quoted", { hint: "optional — replaces the SRO estimate" })}
       ${n("other_costs", "Other financed costs (e.g. LTHO)", { hint: "optional" })}
     </div>` });
-  bindFrame(el, { key: "lppsa", saveRoute: "LPPSA", run: (input) => {
+  bindFrame(el, { key: "lppsa", saveRoute: "LPPSA", autofill: lppsaFromDocs, run: (input) => {
     const m = input.mandatory || {};
-    const parts = ["tax", "kwsp", "perkeso", "eis"].map((k) => m[k]).filter((v) => v !== undefined);
+    const parts = ["tax", "kwsp", "perkeso", "eis", "other"].map((k) => m[k]).filter((v) => v !== undefined);
     const engine = { ...input, mandatory_deductions: parts.length ? parts.reduce((s, v) => s + (Number(v) || 0), 0) : null };
     delete engine.mandatory;
     return calcLppsa(engine, rules);
@@ -249,7 +324,7 @@ export async function bankCalc(el) {
       ${n("other_fees", "Other capitalised fees", { hint: "optional, e.g. legal fees financed" })}
     </div>` });
   const showBank = () => { const b = BANKS.find((x) => x.key === $("#cf [name=bank]", el).value); $("#banklink", el).innerHTML = b?.calculator ? `Official calculator: <a href="${attr(b.calculator)}" target="_blank" rel="noopener">${esc(b.name)}</a>` : b?.key ? "No official calculator page verified for this bank yet." : ""; };
-  bindFrame(el, { key: "bank", saveRoute: "bank", run: (input) => {
+  bindFrame(el, { key: "bank", saveRoute: "bank", autofill: bankFromDocs, run: (input) => {
     const r = calcBank({ ...input, housing_loans: Number(input.housing_loans || 1) }, rules);
     return r;
   } });
