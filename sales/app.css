@@ -609,3 +609,6 @@ ol.stages{padding-left:1.4em}
 .autofilled-key{background:var(--acc-soft);border:1px solid var(--acc);border-radius:6px;padding:0 6px}
 @container (max-width:700px){.calc-docs-form{grid-template-columns:minmax(0,1fr)}}
 @media print{.calc-docs{display:none!important}}
+.col-k.col-closing{background:var(--bg)}
+.col-k.col-closing.won h3{color:var(--ok)}.col-k.col-closing.lost h3{color:var(--mute)}
+.col-k .link.sm{display:inline-block;margin-top:6px;font-size:.82rem}

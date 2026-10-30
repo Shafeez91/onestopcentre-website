@@ -114,13 +114,24 @@ export const apptBadge = (s) => badge((APPT[s] || [s])[0], (APPT[s] || [, ""])[1
 
 /* ======================= Pipeline ======================= */
 export async function pipeline(el) {
-  const rows = (await q(SB.from("ai_leads").select("id,lead_code,temperature,score,stage_id,owner_email,primary_project_id,updated_at,contact:ai_contacts(full_name,phone_e164,email)").is("closed_at", null).order("updated_at", { ascending: false }).limit(2000))) || [];
-  const cols = openStages();
-  el.innerHTML = `<div class="page-head"><h1>Sales pipeline</h1><p class="sub">${rows.length} open leads · move a lead with its stage menu</p>${can("manager") ? `<a class="btn" href="#/settings/pipeline">Edit stages</a>` : ""}</div>
-  <div class="kanban">${cols.map((s) => { const ls = rows.filter((l) => l.stage_id === s.id); return `<section class="col-k"><h3>${esc(s.name)} <span>${ls.length}</span></h3>
-    ${ls.map((l) => `<article class="kcard"><a href="#/lead/${attr(l.id)}"><b>${esc(contactName(l.contact))}</b></a><small>${esc(l.lead_code)} · ${esc(projectName(l.primary_project_id) || "No project")}</small>
-      <div>${tempBadge(l.temperature)} <small>${esc(l.owner_email || "Unassigned")}</small></div>
-      ${can("advisor") ? `<select data-move="${attr(l.id)}" aria-label="Move ${attr(l.lead_code)}">${S.stages.filter((x) => x.active).map((x) => opt(x.id, x.name, l.stage_id)).join("")}</select>` : ""}</article>`).join("") || `<p class="empty sm">Empty</p>`}</section>`; }).join("")}</div>`;
+  // open stages, then the closing stages (won / lost) at the end: leads there are closed, so they are fetched apart
+  // (the most recent per stage) and a link opens the full list; moving one back to an open stage reopens it
+  const closing = S.stages.filter((s) => s.active && (s.is_won || s.is_lost));
+  const [rows, closedRows] = await Promise.all([
+    q(SB.from("ai_leads").select("id,lead_code,temperature,score,stage_id,owner_email,primary_project_id,updated_at,contact:ai_contacts(full_name,phone_e164,email)").is("closed_at", null).order("updated_at", { ascending: false }).limit(2000)),
+    closing.length ? q(SB.from("ai_leads").select("id,lead_code,temperature,score,stage_id,owner_email,primary_project_id,updated_at,closed_at,contact:ai_contacts(full_name,phone_e164,email)").not("closed_at", "is", null).in("stage_id", closing.map((s) => s.id)).order("closed_at", { ascending: false }).limit(1000)) : [],
+  ]);
+  const open = rows || [], closed = closedRows || [];
+  const SHOW = 50;
+  const card = (l) => `<article class="kcard"><a href="#/lead/${attr(l.id)}"><b>${esc(contactName(l.contact))}</b></a><small>${esc(l.lead_code)} · ${esc(projectName(l.primary_project_id) || "No project")}</small>
+      <div>${tempBadge(l.temperature)} <small>${esc(l.owner_email || "Unassigned")}</small>${l.closed_at ? ` <small>· closed ${esc(fmtDate(l.closed_at, false))}</small>` : ""}</div>
+      ${can("advisor") ? `<select data-move="${attr(l.id)}" aria-label="Move ${attr(l.lead_code)}">${S.stages.filter((x) => x.active).map((x) => opt(x.id, x.name, l.stage_id)).join("")}</select>` : ""}</article>`;
+  const column = (s, ls, isClosing) => `<section class="col-k${isClosing ? " col-closing " + (s.is_won ? "won" : "lost") : ""}"><h3>${esc(s.name)} <span>${ls.length}</span></h3>
+    ${isClosing ? `<p class="note sm">${s.is_won ? "Won" : "Lost"} · closed leads${ls.length > SHOW ? ` · latest ${SHOW} shown` : ""}</p>` : ""}
+    ${ls.slice(0, isClosing ? SHOW : undefined).map(card).join("") || `<p class="empty sm">Empty</p>`}
+    ${isClosing && ls.length ? `<a class="link sm" href="#/leads?status=closed&stage=${attr(s.id)}">View all ${ls.length} in Leads & CRM</a>` : ""}</section>`;
+  el.innerHTML = `<div class="page-head"><h1>Sales pipeline</h1><p class="sub">${open.length} open leads · ${closed.length} closed (won / lost) · move a lead with its stage menu</p>${can("manager") ? `<a class="btn" href="#/settings/pipeline">Edit stages</a>` : ""}</div>
+  <div class="kanban">${openStages().map((s) => column(s, open.filter((l) => l.stage_id === s.id), false)).join("")}${closing.map((s) => column(s, closed.filter((l) => l.stage_id === s.id), true)).join("")}</div>`;
   $$("[data-move]", el).forEach((s) => s.onchange = () => act(null, async () => {
     await q(SB.from("ai_leads").update({ stage_id: s.value }).eq("id", s.dataset.move).select("id"), { expectRows: true });
     pipeline(el);
