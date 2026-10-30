@@ -159,3 +159,16 @@ test("respond(): \"Hi saya Mr Zan\" saves the title and the name, and the name i
   assert.deepEqual(r.actions.find((a) => a.type === "set_salutation"), { type: "set_salutation", salutation: "Mr", gender: "male" });
   assert.deepEqual(r.actions.find((a) => a.type === "set_profile").changes, [{ field: "preferred_name", value: "Zan", status: "confirmed" }]);
 });
+
+test("short forms mirror the buyer: full words until the buyer writes short forms", async () => {
+  const { SHORT_FORMS } = await import("../../lib/orchestrator.mjs");
+  for (const t of ["Hi saya Mr Zan", "Kalau sewa bilik, mana lagi untung?", "Saya nak tanya harga", "Box ada tak?"]) assert.equal(SHORT_FORMS.test(t), false, t);
+  for (const t of ["Mana margin lg untung?", "blh share layout?", "tq", "btw ada promo?", "sy nk tgk unit", "x pe"]) assert.equal(SHORT_FORMS.test(t), true, t);
+  const llm = llmOf(draft(["Hi Mr Zan! Saya Hafiz_Ai, pembantu AI Hafizan Hanis."], { intent: "greeting" }));
+  await respond({ db: db({ full_name: "Ali" }), llm, leadId: "L1", message: "Hi saya Mr Zan", now: NOW, mode: "simulate" });
+  assert.deepEqual(ctxOf(llm.calls[0]).buyer_writing, { uses_short_forms: false });
+  const llm2 = llmOf(draft(["Blh, sy share layout."]));
+  await respond({ db: db({ full_name: "Ali" }), llm: llm2, leadId: "L1", message: "blh share layout?", history: [{ role: "user", text: "hi" }, { role: "assistant", text: "Hi, saya Hafiz_Ai, pembantu AI Hafizan Hanis." }], now: NOW, mode: "simulate" });
+  assert.deepEqual(ctxOf(llm2.calls[0]).buyer_writing, { uses_short_forms: true });
+  assert.match(buildSystemPrompt({ persona: { name: "Hafiz_Ai" } }), /while uses_short_forms is false, including your first reply, write full words/);
+});

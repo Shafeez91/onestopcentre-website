@@ -80,6 +80,9 @@ export const MONTHLY_Q = /(bulanan|sebulan|\bbulan\b|ansuran|monthly|per\s+month
 // a monthly instalment figure in the reply
 const MONTHLY_FIGURE = /(ansuran|instal+ment|RM\s?[\d,.]+\s*(?:k\b)?\s*(?:\/\s*(?:month|mth|mo|bulan|bln)\b|sebulan|a\s+month|per\s+month|monthly|bulanan))/i;
 
+// WhatsApp short forms a buyer may write (BM and English); colloquial full words (nak, tak, je) do not count
+export const SHORT_FORMS = /(?<![\p{L}\p{N}])(yg|dgn|utk|sbb|blh|bleh|tgk|kt|dlm|lps|sy|nk|mcm|dpt|jgn|skrg|org|brp|xde|x|tq|tqvm|thx|pls|plz|btw|fyi|lg|lgi|bkn|blm|sgt|dh|knp|cmne|cmna|camne|mne|bape|dm|pm)(?![\p{L}\p{N}])/iu;
+
 // a monthly instalment in the reply; a rent figure from the rental estimate ("~RM2,290 sebulan") is not one
 function monthlyInstalment(text, rentalAmounts = []) {
   if (/(ansuran|instal+ment)/i.test(text)) return true;
@@ -287,6 +290,8 @@ export async function respond(p) {
   }) : [];
   ctx.rental = rentalAsk && focusProjects.length ? (renderRental(rentalItems) || { status: "NO SOURCE", note: "No rent rate for this project in our knowledge base or web research: give no rent or yield figure." }) : null;
   ctx.rules.rentalAsk = rentalAsk;
+  // mirror the buyer's writing: WhatsApp short forms only once the buyer uses them ("blh", "yg", "tq", "btw" …)
+  ctx.buyerWriting = { uses_short_forms: SHORT_FORMS.test([message, ...history.filter((h) => h.role !== "assistant").map((h) => h.text)].join("\n")) };
   ctx.rules.rentalAmounts = rentalItems.flatMap((x) => x.estimate?.amounts || []);
   ctx.rules.allowedAmounts.push(...ctx.rules.rentalAmounts);
   const system = buildSystemPrompt(settings, ctx.objections, { calendar: !!p.calendar, financing: finOn });
