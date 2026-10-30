@@ -15,7 +15,10 @@ import { bindingOf, signContinuation, verifyContinuation } from "../../ai-sales/
 
 const MAX_HISTORY = 30;
 export const BUDGET_MS = 23000;   // the reply: leaves time to log the run and answer before the 30-second cut-off
-export const WEB_MS = 21000;      // the web research step on its own
+// the web research step on its own: it does nothing else, so it may use most of the 30 s. Measured 29 Oct: 21 s was
+// not enough for 3 searches + 2 page reads (0 results), so the console asks for 2 searches and 1 page read
+export const WEB_MS = 26000;
+const WEB_LIMITS = { maxSearches: 2, maxFetches: 1 };
 
 // one structured line per step: timings and outcome only, never the buyer's words or any key
 const logLine = (o) => console.log(JSON.stringify({ evt: "ai_simulate", ...o }));
@@ -47,7 +50,7 @@ export default async (req, context, deps = {}) => {
 
   try {
     if (cont?.step === "research") {
-      const web = await webResearch({ research: research?.research, webTimeoutMs: WEB_MS }, { question: cont.q, projectNames: cont.pn || [] });
+      const web = await webResearch({ research: research?.research, webTimeoutMs: WEB_MS, ...WEB_LIMITS }, { question: cont.q, projectNames: cont.pn || [] });
       const ms = Date.now() - t0;
       logLine({ rid, step: "research", found: !!web?.found, searches: web?.searches || 0, error: web?.error ? "yes" : undefined, web_ms: ms });
       const next = web?.found ? signContinuation({ step: "redraft", bind, web }) : null;
