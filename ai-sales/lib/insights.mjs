@@ -37,7 +37,7 @@ export const INSIGHTS_SCHEMA = {
         text: { ...str, description: "When changed: 2–5 factual sentences about the client's situation, written for a sales advisor. Facts only, no recommendations, nothing not said in the conversation." },
         last_client_question: { ...str, description: "The buyer's latest question we have not fully answered, in their words. \"\" if none." },
         outstanding: { ...str, description: "Information or documents the buyer asked for or still owes. \"\" if none." },
-        next_question: { ...str, description: "The one most useful qualification question still open (e.g. preferred budget), or \"\"." },
+        next_question: { ...str, description: "The next discovery question still open, in the owner's order: name, familiarity with the project's area, own stay / investment / both, where they live and work, how they commute, first home, single or married (optional), children / household (optional), showroom visit. Investment buyers skip the household and commute ones. \"\" if none." },
       },
     },
     next_action: {
