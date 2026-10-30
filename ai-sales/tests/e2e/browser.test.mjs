@@ -153,10 +153,13 @@ test("settings: AI persona has the adaptive reply style and the advisor's name a
     assert.equal(await page.inputValue("#sf input[name=advisor_name]"), "Hafizan Hanis");
     assert.match(await page.inputValue("#sf input[name=advisor_credentials]"), /12 years.*more than 500 purchasers/);
     await page.selectOption("#sf select[name=reply_style]", "adaptive");
+    assert.equal(await page.inputValue("#sf select[name=emoji_level]"), "light", "light until someone chooses");
+    await page.selectOption("#sf select[name=emoji_level]", "friendly");
     await page.click("#sf button.pri");
     await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Persona saved/.test(t.textContent)));
     const w = writes.find((x) => x.table === "ai_settings" && x.body?.persona);
     assert.equal(w.body.persona.reply_style, "adaptive");
+    assert.equal(w.body.persona.emoji_level, "friendly");
     assert.equal(w.body.persona.advisor_name, "Hafizan Hanis");
     assert.equal(w.body.persona.discloses_ai, true);
     assert.deepEqual(errors, []);
