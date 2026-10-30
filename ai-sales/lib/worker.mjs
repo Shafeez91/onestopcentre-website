@@ -36,8 +36,38 @@ const historyOf = (msgs) => msgs.filter((m) => m.body && delivered(m)).map((m) =
  */
 export function segmentKey(jobId, i) {
   if (!i) return jobId;
-  const h = createHash("sha256").update(`${jobId}:message:${i}`).digest("hex");
+  return uuidFrom(`${jobId}:message:${i}`);
+}
+/** A fixed UUID derived from a text (name-based, version 5 layout): the same seed always gives the same key. */
+function uuidFrom(seed) {
+  const h = createHash("sha256").update(seed).digest("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h[16], 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+const FILE_REPEAT_MS = 10 * 60 * 1000;
+/**
+ * Sends the files the AI chose (send_file actions) after its reply, each as a WhatsApp document (PDF) or image,
+ * by a 1-hour signed link to the private knowledge bucket. Only files still marked shareable go; the same file is not
+ * sent twice to one chat within 10 minutes; a retried job never sends a file twice (key per job and file).
+ */
+export async function sendFiles(deps, { conversation, to, files, jobId, runId = null }) {
+  const { db } = deps, out = [];
+  if (!deps.knowledgeFiles) return out;
+  for (const a of files) {
+    const doc = (await db.get(`ai_documents?id=eq.${enc(a.document_id)}&share_with_customers=eq.true&select=id,title,storage_path,mime_type`))?.[0];
+    if (!doc?.storage_path) { out.push({ document_id: a.document_id, sent: false, reason: "no longer shareable" }); continue; }
+    const since = new Date(deps.now().getTime() - FILE_REPEAT_MS).toISOString();
+    const recent = await db.get(`ai_messages?conversation_id=eq.${enc(conversation.id)}&direction=eq.outbound&status=in.(queued,sent,delivered,read)&created_at=gte.${enc(since)}&media=cs.${enc(JSON.stringify([{ document_id: doc.id }]))}&select=id&limit=1`).catch(() => []);
+    if (recent?.length) { out.push({ document_id: doc.id, sent: false, reason: "just sent" }); continue; }
+    const kind = doc.mime_type === "application/pdf" ? "document" : "image";
+    const title = String(doc.title || "Brochure");
+    const filename = kind === "document" && !/\.pdf$/i.test(title) ? title + ".pdf" : title;
+    const r = await sendOutbound(deps, { conversation, to, senderType: "ai", purpose: "reply", runId, sourceJobId: uuidFrom(`${jobId}:file:${doc.id}`),
+      file: { kind, document_id: doc.id, title, filename, caption: title.replace(/\.[a-z0-9]{2,4}$/i, ""), link: () => deps.knowledgeFiles.sign(doc.storage_path, 3600) } });
+    out.push({ document_id: doc.id, sent: !!r.sent, ...(r.error ? { reason: r.error } : {}) });
+    if (r.blocked) break;
+  }
+  return out;
 }
 
 /**
@@ -176,6 +206,9 @@ export async function processReplyJob(deps, job, settings) {
         // to their newer message answers everything: nothing more to do here
       } else if (sent.sent) {
         await db.patch(`ai_conversations?id=eq.${enc(conv.id)}`, { unread_count: 0 });
+        // brochures and other files the AI said it is sending: after the whole reply went out
+        const files = (result.actions || []).filter((a) => a.type === "send_file");
+        if (files.length && sent.complete) sent.files = await sendFiles(deps, { conversation: conv, to, files, jobId: job.id, runId }).catch((e) => [{ sent: false, reason: String(e?.message || e) }]);
         if (!lead.first_response_at) await db.patch(`ai_leads?id=eq.${enc(lead.id)}`, { first_response_at: deps.now().toISOString() });
       } else {
         // the buyer was not answered: one follow-up reminder per buyer per day, however many replies fail
@@ -204,7 +237,7 @@ export async function processReplyJob(deps, job, settings) {
   }
   // retried: the recorded rows (one per message) prevent a double send; only what is still queued or failed goes out
   if (sent && !sent.complete && !sent.blocked && !sent.superseded && sent.kind !== "config") throw new Error("WhatsApp send failed: " + sent.error);
-  return { status: "done", decision: result.decision, sent: !!sent?.sent };
+  return { status: "done", decision: result.decision, sent: !!sent?.sent, ...(sent?.files ? { files: sent.files } : {}) };
 }
 
 /** Books a slot the buyer chose, then sends the fixed confirmation. Never claims success unless the event exists. */

@@ -409,7 +409,7 @@ test("brochure: the project's brochure link from the website CMS is given to the
   const ctx = llm.calls[0].messages.at(-1).content;
   assert.match(ctx, /"brochure_url":"https:\/\/example\.test\/brochure\.pdf"/);
   assert.match(ctx, /"id":"t2"[^}]*"brochure_url":null/);
-  assert.match(llm.calls[0].system, /asks for a brochure, send the project's brochure_url/);
+  assert.match(llm.calls[0].system, /If there is no such file, send the project's brochure_url/);
   assert.equal(r.decision, "reply", JSON.stringify(r.violations));
 });
 

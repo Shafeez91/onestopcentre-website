@@ -8,17 +8,17 @@ export const BUCKET = "ai-financing-docs";
 const enc = (p) => p.split("/").map(encodeURIComponent).join("/");
 
 /** Storage REST calls with the service role. Never exposed to the browser: a short signed link is used to view. */
-export function docStorage(call = asService) {
+export function docStorage(call = asService, bucket = BUCKET) {
   const ok = async (r, what) => { if (!r.ok) throw new Error(`Storage ${what} failed (HTTP ${r.status}): ${(await r.text()).slice(0, 200)}`); return r; };
   return {
-    put: async (path, bytes, mime) => ok(await call(`/storage/v1/object/${BUCKET}/${enc(path)}`, { method: "POST", headers: { "content-type": mime, "x-upsert": "false" }, body: bytes }), "upload"),
-    get: async (path) => Buffer.from(await (await ok(await call(`/storage/v1/object/${BUCKET}/${enc(path)}`, { method: "GET" }), "download")).arrayBuffer()),
+    put: async (path, bytes, mime) => ok(await call(`/storage/v1/object/${bucket}/${enc(path)}`, { method: "POST", headers: { "content-type": mime, "x-upsert": "false" }, body: bytes }), "upload"),
+    get: async (path) => Buffer.from(await (await ok(await call(`/storage/v1/object/${bucket}/${enc(path)}`, { method: "GET" }), "download")).arrayBuffer()),
     sign: async (path, seconds = 60) => {
-      const r = await ok(await call(`/storage/v1/object/sign/${BUCKET}/${enc(path)}`, { method: "POST", body: JSON.stringify({ expiresIn: seconds }) }), "link");
+      const r = await ok(await call(`/storage/v1/object/sign/${bucket}/${enc(path)}`, { method: "POST", body: JSON.stringify({ expiresIn: seconds }) }), "link");
       const j = await r.json();
       return sbUrl() + "/storage/v1" + (j.signedURL || j.signedUrl);
     },
-    remove: async (paths) => (paths.length ? ok(await call(`/storage/v1/object/${BUCKET}`, { method: "DELETE", body: JSON.stringify({ prefixes: paths }) }), "delete") : null),
+    remove: async (paths) => (paths.length ? ok(await call(`/storage/v1/object/${bucket}`, { method: "DELETE", body: JSON.stringify({ prefixes: paths }) }), "delete") : null),
   };
 }
 

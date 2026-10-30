@@ -95,7 +95,8 @@ export function waConfig(env) {
 }
 
 /**
- * Sends one message. `msg` is { text } (only inside the 24-hour window) or { template: { name, lang, params } }.
+ * Sends one message. `msg` is { text } or { file: { kind: "document" | "image", link, filename, caption } } (both only
+ * inside the 24-hour window; Meta downloads the file from the link), or { template: { name, lang, params } }.
  * Returns the WhatsApp message id (wamid). Throws WhatsAppError with kind "window" when Meta refuses a free-form
  * message outside the window, "config" for credential problems, "rejected" otherwise.
  */
@@ -107,6 +108,12 @@ export async function sendWhatsApp(cfg, to, msg, { fetchImpl = fetch } = {}) {
   if (msg.template) {
     const params = (msg.template.params || []).map((t) => ({ type: "text", text: String(t ?? "").slice(0, 1000) || "-" }));
     body = { ...base, type: "template", template: { name: msg.template.name, language: { code: msg.template.lang || "ms" }, ...(params.length ? { components: [{ type: "body", parameters: params }] } : {}) } };
+  } else if (msg.file) {
+    const f = msg.file, caption = String(f.caption || "").slice(0, 1024);
+    if (!/^https:\/\//.test(f.link || "")) throw new WhatsAppError("File link missing", { kind: "rejected" });
+    body = f.kind === "image"
+      ? { ...base, type: "image", image: { link: f.link, ...(caption ? { caption } : {}) } }
+      : { ...base, type: "document", document: { link: f.link, filename: String(f.filename || "document.pdf").slice(0, 240), ...(caption ? { caption } : {}) } };
   } else {
     const text = String(msg.text || "").trim();
     if (!text) throw new WhatsAppError("Empty message", { kind: "rejected" });

@@ -1112,6 +1112,35 @@ test("financing documents: upload and read a payslip, see what was read, use the
   } finally { await ctx.close(); }
 });
 
+test("knowledge: Read with AI renders a photo brochure, sends it to the AI and saves the entries as drafts", { skip: skip || (!chromium && "playwright not installed") }, async () => {
+  const doc = { id: "kd1", project_id: "t1", title: "Aurora floor plan.png", kind: "floor_plan", lang: "ms", mime_type: "image/png", size_bytes: 1000, extract_status: "not_applicable", share_with_customers: true, storage_path: "docs/kd1/plan.png", created_at: new Date().toISOString() };
+  const { page, ctx, writes, errors } = await newPage({ width: 1280, height: 900 }, { mutate: (db) => { db.ai_documents = [doc]; } });
+  try {
+    // a 1x1 PNG as the stored file
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    await page.route("**/storage/v1/object/ai-docs/**", (r) => r.fulfill({ status: 200, contentType: "image/png", headers: { "access-control-allow-origin": "*" }, body: png }));
+    const asked = [];
+    await page.route("**/api/sales/knowledge/read", (r) => { const b = JSON.parse(r.request().postData()); asked.push(b);
+      r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ readable: true, warnings: [], entries: [{ page: 1, title: "Type A layout", content: "850 sq ft, 3 bedrooms. Source: Aurora floor plan.png, page 1" }] }) }); });
+    await page.goto(base + "/sales/#/knowledge?tab=docs");
+    await page.waitForSelector("[data-read]");
+    assert.match(await page.textContent("[data-read]"), /^Read with AI$/);
+    assert.match(await page.textContent("#kbody"), /can be sent by the AI on WhatsApp/);
+    await page.click("[data-read]");
+    await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /1 draft entry from 1 page/.test(t.textContent)));
+    assert.equal(asked.length, 1);
+    assert.equal(asked[0].document_id, "kd1");
+    assert.equal(asked[0].pages[0].n, 1);
+    assert.equal(asked[0].pages[0].mime, "image/jpeg");
+    assert.ok(Buffer.from(asked[0].pages[0].data, "base64").subarray(0, 2).equals(Buffer.from([0xff, 0xd8])), "a JPEG");
+    const ins = writes.find((w) => w.table === "ai_knowledge_chunks" && w.method === "POST");
+    assert.deepEqual(ins.body, [{ document_id: "kd1", project_id: "t1", lang: "ms", title: "Type A layout", content: "850 sq ft, 3 bedrooms. Source: Aurora floor plan.png, page 1", position: 0 }]);
+    assert.ok(!("approved" in ins.body[0]), "saved as a draft");
+    assert.ok(writes.some((w) => w.table === "ai_documents" && w.method === "PATCH" && w.body.extract_status === "extracted"));
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test("financing check is hidden from viewers; settings validate and save the rule set", { skip: skip || (!chromium && "playwright not installed") }, async () => {
   const { page, ctx, writes, errors } = await newPage({ width: 1024, height: 900 });
   try {

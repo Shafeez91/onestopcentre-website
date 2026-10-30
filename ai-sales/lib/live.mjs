@@ -39,6 +39,7 @@ export function liveDeps() {
     cal: calendarService(db),
     research: researchDeps(db),
     storage: db ? docStorage() : null,
+    knowledgeFiles: db ? docStorage(undefined, "ai-docs") : null,   // files staff marked shareable (Knowledge → Documents)
     now: () => new Date(),
   };
 }

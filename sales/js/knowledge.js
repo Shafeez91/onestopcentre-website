@@ -2,7 +2,7 @@
 // public.projects (the website listings) is read-only here; listing edits stay in the existing website admin.
 import { parseCSV, chunkText } from "../shared/text.mjs";
 import { projectSpecs, coverage, COVERAGE_FIELDS } from "../shared/listing.mjs";
-import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, projectName, keepPlace } from "./core.js";
+import { SB, S, can, $, $$, esc, attr, fmtDate, q, act, toast, guardForm, clearDraft, formData, modal, badge, opt, empty, ro, money, projectName, keepPlace, api } from "./core.js";
 
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" });
 const projectOptions = (sel, blank = "— General (all projects) —") => opt("", blank, sel) + S.projects.map((p) => opt(p.id, p.name, sel)).join("");
@@ -238,6 +238,53 @@ async function extractText(file) {
   return null; // images / video: stored, not text-searchable
 }
 
+// "Read with AI": pages without selectable text (designed or scanned PDFs, photos) are rendered here as images and
+// read by the AI a few pages per request (each request has 30 seconds); the entries are saved as drafts to approve
+const READ_PAGES = 3, MAX_READ_PAGES = 40, PAGE_PX = 1600;
+const canRead = (d) => /^(application\/pdf|image\/(jpeg|png|webp))$/.test(d.mime_type || "");
+const canvasJpeg = (c) => new Promise((ok) => c.toBlob((b) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.readAsDataURL(b); }, "image/jpeg", 0.82));
+async function pageImages(blob, mime) {
+  if (mime.startsWith("image/")) {
+    const img = await createImageBitmap(blob), s = Math.min(1, PAGE_PX / Math.max(img.width, img.height)), c = document.createElement("canvas");
+    c.width = Math.round(img.width * s); c.height = Math.round(img.height * s); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    return { total: 1, render: async () => canvasJpeg(c) };
+  }
+  await loadScript(PDFJS);
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS.replace("pdf.min.js", "pdf.worker.min.js");
+  const pdf = await window.pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
+  return { total: pdf.numPages, render: async (n) => {
+    const page = await pdf.getPage(n), v1 = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: Math.min(3, PAGE_PX / Math.max(v1.width, v1.height)) });
+    const c = document.createElement("canvas"); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+    const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    return canvasJpeg(c);
+  } };
+}
+async function readWithAi(d, say) {
+  const { data: blob, error } = await SB.storage.from("ai-docs").download(d.storage_path);
+  if (error) throw error;
+  const doc = await pageImages(blob, d.mime_type);
+  const total = Math.min(doc.total, MAX_READ_PAGES);
+  let saved = 0, pos = 0;
+  const warnings = [];
+  const old = (await q(SB.from("ai_knowledge_chunks").select("position").eq("document_id", d.id).order("position", { ascending: false }).limit(1))) || [];
+  pos = old.length ? old[0].position + 1 : 0;
+  for (let first = 1; first <= total; first += READ_PAGES) {
+    const nums = Array.from({ length: Math.min(READ_PAGES, total - first + 1) }, (_, i) => first + i);
+    say(`Reading pages ${nums[0]}–${nums.at(-1)} of ${total}…`);
+    const pages = [];
+    for (const n of nums) pages.push({ n, mime: "image/jpeg", data: await doc.render(n) });
+    const r = await api("/api/sales/knowledge/read", { method: "POST", body: JSON.stringify({ document_id: d.id, pages }) });
+    warnings.push(...(r.warnings || []));
+    if (r.entries?.length) {
+      await q(SB.from("ai_knowledge_chunks").insert(r.entries.map((e) => ({ document_id: d.id, project_id: d.project_id, lang: d.lang, title: e.title, content: e.content, position: pos++ }))));
+      saved += r.entries.length;
+    }
+  }
+  await SB.from("ai_documents").update({ extract_status: saved ? "extracted" : "failed", extract_error: saved ? null : (warnings[0] || "The AI found no property details on these pages.").slice(0, 300) }).eq("id", d.id);
+  return { saved, pages: total, more: doc.total > total, warnings };
+}
+
 export async function knowledge(el, params) {
   const tab = params.get("tab") || "docs";
   const proj = params.get("project") || "";
@@ -266,16 +313,27 @@ async function docsTab(el, proj) {
     <label>Kind<select name="kind">${["brochure", "price_list", "floor_plan", "spreadsheet", "promotion", "image", "video", "faq", "other"].map((k) => opt(k, k.replace("_", " "))).join("")}</select></label>
     <label>Language<select name="lang">${opt("", "—")}${opt("en", "English")}${opt("ms", "Bahasa Malaysia")}${opt("mixed", "Mixed")}</select></label>
     <label class="check"><input type="checkbox" name="share_with_customers"> AI may send this file to buyers</label>
-    <p class="note full">Files are stored privately (max 50 MB). Text from PDF, spreadsheet, CSV and text files is extracted in your browser into draft knowledge entries for you to review and approve.</p>
+    <p class="note full">Files are stored privately (max 50 MB). Text from PDF, spreadsheet, CSV and text files is extracted in your browser into draft knowledge entries for you to review and approve. For brochures without selectable text and photos, press <b>Read with AI</b>. Files marked “AI may send” (PDF, JPG or PNG) can be sent by the AI on WhatsApp when a buyer asks for them.</p>
     <div class="actions full"><button class="btn pri" data-busy="Uploading…">Upload &amp; extract</button></div><div id="upmsg" class="full note" aria-live="polite"></div></form></section>` : ""}
   ${docs.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Document</th><th>Project</th><th>Text</th><th>Entries</th><th></th></tr></thead><tbody>
    ${docs.map((d) => { const c = counts.filter((x) => x.document_id === d.id); return `<tr><td data-label="Document"><b>${esc(d.title)}</b><small>${esc(d.kind)} · ${esc(((d.size_bytes || 0) / 1048576).toFixed(1))} MB · ${esc(fmtDate(d.created_at, false))}</small>${d.share_with_customers ? badge("Shareable", "ok") : ""}</td>
     <td data-label="Project">${esc(projectName(d.project_id)) || "All"}</td><td data-label="Text">${badge(d.extract_status.replace("_", " "), d.extract_status === "failed" ? "alert" : d.extract_status === "extracted" ? "ok" : "")}${d.extract_error ? `<small>${esc(d.extract_error)}</small>` : ""}</td>
     <td data-label="Entries"><a href="#/knowledge?tab=entries&doc=${attr(d.id)}">${c.filter((x) => x.approved).length} approved / ${c.length}</a></td>
-    <td><button class="link" data-dl="${attr(d.storage_path)}">Open</button>${can("manager") ? ` <button class="link" data-share="${attr(d.id)}" data-v="${d.share_with_customers ? "0" : "1"}">${d.share_with_customers ? "Stop sharing" : "Allow sharing"}</button> <button class="link danger" data-deldoc="${attr(d.id)}" data-path="${attr(d.storage_path)}">Delete</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>` : empty("No documents uploaded yet.")}`;
+    <td><button class="link" data-dl="${attr(d.storage_path)}">Open</button>${can("manager") && canRead(d) ? ` <button class="link" data-read="${attr(d.id)}">${d.extract_status === "extracted" ? "Read again with AI" : "Read with AI"}</button>` : ""}${can("manager") ? ` <button class="link" data-share="${attr(d.id)}" data-v="${d.share_with_customers ? "0" : "1"}">${d.share_with_customers ? "Stop sharing" : "Allow sharing"}</button> <button class="link danger" data-deldoc="${attr(d.id)}" data-path="${attr(d.storage_path)}">Delete</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>` : empty("No documents uploaded yet.")}`;
   const reload = () => keepPlace(el, () => docsTab(el, proj));
   $$("[data-dl]", el).forEach((b) => b.onclick = () => act(b, async () => { const { data, error } = await SB.storage.from("ai-docs").createSignedUrl(b.dataset.dl, 300); if (error) throw error; window.open(data.signedUrl, "_blank", "noopener"); }));
   if (!can("manager")) return;
+  $$("[data-read]", el).forEach((b) => b.onclick = () => {
+    const d = docs.find((x) => x.id === b.dataset.read);
+    if (d.extract_status === "extracted" && !confirm("Read this file again with AI? New draft entries are added next to the existing ones.")) return;
+    const label = b.textContent;
+    act(b, async () => {
+      const r = await readWithAi(d, (t) => { b.textContent = t; });
+      b.textContent = label;
+      toast(`${r.saved} draft entr${r.saved === 1 ? "y" : "ies"} from ${r.pages} page${r.pages === 1 ? "" : "s"}${r.more ? ` (first ${r.pages} pages only)` : ""}: review and approve them in Knowledge entries`, r.saved ? "ok" : "err");
+      reload();
+    });
+  });
   $$("[data-share]", el).forEach((b) => b.onclick = () => act(b, async () => { await q(SB.from("ai_documents").update({ share_with_customers: b.dataset.v === "1" }).eq("id", b.dataset.share).select("id"), { expectRows: true }); reload(); }, "Saved"));
   $$("[data-deldoc]", el).forEach((b) => b.onclick = () => { if (!confirm("Delete this document and all knowledge entries extracted from it?")) return;
     act(b, async () => { await SB.storage.from("ai-docs").remove([b.dataset.path]); await q(SB.from("ai_documents").delete().eq("id", b.dataset.deldoc).select("id"), { expectRows: true }); reload(); }, "Deleted"); });
@@ -297,7 +355,7 @@ async function docsTab(el, proj) {
           const ex = await extractText(file);
           if (!ex) { await SB.from("ai_documents").update({ extract_status: "not_applicable" }).eq("id", docId); continue; }
           const chunks = chunkText(ex.sections);
-          if (!chunks.length) throw new Error("No selectable text found (scanned PDFs need OCR — add the key facts manually).");
+          if (!chunks.length) throw new Error("No selectable text found (a designed or scanned PDF): press Read with AI.");
           for (let i = 0; i < chunks.length; i += 100) {
             await q(SB.from("ai_knowledge_chunks").insert(chunks.slice(i, i + 100).map((c, j) => ({ document_id: docId, project_id: v.project_id, lang: v.lang, title: c.title, content: c.content.slice(0, 8000), position: i + j }))));
           }

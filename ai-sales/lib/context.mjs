@@ -5,6 +5,10 @@ import { projectSpecs, resolveFocus, coverage, conflicts as findConflicts, trans
 import { workflowContext } from "./workflows.mjs";
 import { profileContext } from "./insights.mjs";
 
+// what WhatsApp accepts as a document / image sent by link (Meta: documents up to 100 MB, images up to 5 MB)
+export const SENDABLE = /^(application\/pdf|image\/jpeg|image\/png)$/;
+export const MAX_SEND_BYTES = { pdf: 100 * 1048576, image: 5 * 1048576 };
+
 const SITE = "https://onestopcentreproperty.com/";
 const DAY = 864e5;
 const enc = encodeURIComponent;
@@ -157,11 +161,18 @@ export async function loadContext(db, { leadId = null, message = "", history = [
   for (const p of projects) [p.url, p.urlMs, p.brochure, p.mapUrl, p.facts?.official_url, p.facts?.showroom_map_url].filter(Boolean).forEach((u) => allowedUrls.add(u));
   if (wa) { allowedUrls.add("https://wa.me/" + wa); allowedUrls.add("wa.me/" + wa); }
 
+  // files staff marked "AI may send this file to buyers" (Knowledge → Documents): PDFs and photos only, for the
+  // projects being discussed (or general ones); all of them when no project is in focus yet, so the buyer can name one
+  const shareable = ((await db.get("ai_documents?share_with_customers=eq.true&select=id,title,kind,project_id,mime_type,size_bytes&order=created_at.desc&limit=40").catch(() => [])) || [])
+    .filter((d) => SENDABLE.test(d.mime_type || "") && Number(d.size_bytes || 0) <= MAX_SEND_BYTES[d.mime_type === "application/pdf" ? "pdf" : "image"]);
+  const files = shareable.filter((d) => !focus.ids.length || !d.project_id || focus.ids.includes(d.project_id)).slice(0, 10)
+    .map((d) => ({ id: d.id, title: d.title, kind: d.kind, project_id: d.project_id || null }));
+
   const isFirstReply = !(history || []).some((h) => h.role === "assistant");
   return {
     settings, objections: objections || [], lead, buyer, aiPaused, isFirstReply, websiteLoan, workflows, workflowOffers, clientProfile, profileMeta, businessWa: wa ? "https://wa.me/" + wa : null,
     today: now.toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" }),
-    projects, focus, promotions: promotions || [], knowledge,
+    projects, focus, promotions: promotions || [], knowledge, files,
     rules: {
       allowedAmounts: [...allowed], indicativeAmounts: [...indicative],
       hasFreshAvailability: projects.some((p) => p.freshAvailable > 0),
