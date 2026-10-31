@@ -284,7 +284,8 @@ export async function respond(p) {
   const found = p._prior || {};
   const routes = found.routes !== undefined ? found.routes
     // a map lookup needs a planning call and the map requests: only when the reply itself still has time after it
-    : mapsOn && left() > 20000 ? await clock("maps_ms", () => routeLookups({ llm: p.llm, maps: R.maps, model, deadline: deadline ? Date.now() + Math.min(7000, left() - 14000) : null }, { message, history, projects: ctx.projects })) : null;
+    // the reply keeps at least 17 s for the AI (a long chat can need 12–15 s)
+    : mapsOn && left() > 21000 ? await clock("maps_ms", () => routeLookups({ llm: p.llm, maps: R.maps, model, deadline: deadline ? Date.now() + Math.min(7000, left() - 17000) : null }, { message, history, projects: ctx.projects })) : null;
   ctx.routeLookups = routes?.lookups || [];
   ctx.routeMissingPlace = routes?.missing_place || "";
   ctx.externalResearch = found.web?.found ? found.web : found.web ? { ...found.web, findings: "", sources: [] } : null;
