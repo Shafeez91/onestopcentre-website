@@ -187,8 +187,8 @@ export async function processReplyJob(deps, job, settings) {
     if (f.calendar_booking && deps.cal) { try { slots = await deps.cal.slots(settings, deps.now()); } catch { slots = null; } }
     result = await respond({ db, llm: deps.llm, reserve: () => db.rpc("ai_reserve_ai_call", {}), leadId: lead.id, message, history: historyOf(earlier), now: deps.now(),
       mode: "live", calendar: !!slots, slots: slots || [], research: deps.research || null, budgetMs: deps.replyBudgetMs || null });
-    // the AI ran out of this run's time: try once more on the next run (fresh time) before the buyer gets the safe reply
-    if (result.decision === "error" && result.errorKind === "timeout" && (job.attempts || 1) < 2) throw new Error("AI reply timed out; retrying on the next run");
+    // the AI ran out of this run's time: try twice more on later runs (fresh time) before the buyer gets the safe reply
+    if (result.decision === "error" && result.errorKind === "timeout" && (job.attempts || 1) < 3) throw new Error("AI reply timed out; retrying on the next run");
   }
 
   const runId = await logRun(db, { result, leadId: lead.id, conversationId: conv.id, channel: "whatsapp", input: { job: job.id } });
@@ -322,7 +322,10 @@ export async function processFollowUp(deps, fj, settings) {
 
 /* ---------------------------------------------------------------- runner */
 // an AI reply takes 15–20 s: a job is only claimed when it can finish before the function is stopped
-export const MIN_JOB_MS = 18000;
+// a job is started only with nearly a whole run left: an AI reply can need ~7 s of data lookups plus 12–15 s of AI on
+// a busy turn (31 Oct: the 4th reply in one run had 12 s left and timed out twice). Each incoming message starts its
+// own run, so taking one reply per run does not hold the others up.
+export const MIN_JOB_MS = 22000;
 // profile updates wait this long, so replies to buyers always go first
 export const INSIGHTS_DELAY_MS = 90e3;
 
