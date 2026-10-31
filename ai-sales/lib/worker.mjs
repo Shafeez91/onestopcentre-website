@@ -186,7 +186,8 @@ export async function processReplyJob(deps, job, settings) {
     // calendar unavailable → the AI collects a preferred time instead of offering slots
     if (f.calendar_booking && deps.cal) { try { slots = await deps.cal.slots(settings, deps.now()); } catch { slots = null; } }
     result = await respond({ db, llm: deps.llm, reserve: () => db.rpc("ai_reserve_ai_call", {}), leadId: lead.id, message, history: historyOf(earlier), now: deps.now(),
-      mode: "live", calendar: !!slots, slots: slots || [], research: deps.research || null, budgetMs: deps.replyBudgetMs || null });
+      // a retry after a timeout skips map and web lookups, so the AI gets the whole run (31 Oct: lookups + a long chat)
+      mode: "live", calendar: !!slots, slots: slots || [], research: (job.attempts || 1) > 1 ? null : deps.research || null, budgetMs: deps.replyBudgetMs || null });
     // the AI ran out of this run's time: try twice more on later runs (fresh time) before the buyer gets the safe reply
     if (result.decision === "error" && result.errorKind === "timeout" && (job.attempts || 1) < 3) throw new Error("AI reply timed out; retrying on the next run");
   }
