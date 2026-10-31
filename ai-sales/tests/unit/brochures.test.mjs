@@ -49,13 +49,13 @@ test("the AI is offered only sendable files (PDF, JPG, PNG within WhatsApp's lim
   assert.equal(ctxOf(none.calls[0]).files, undefined);
 });
 
-test("file:<id> in facts_used becomes a send_file action, only for files offered and only on a normal reply", async () => {
+test("file:<id> in facts_used becomes a send_file action, only for files offered; not with a sensitive hand-over", async () => {
   assert.deepEqual(normalizeReply({ messages: ["x"], facts_used: ["kb:1", "file:a", "file:a", "file:b", "file:c"] }).send_files, ["a", "b"], "at most 2, no repeats");
   assert.ok(!("send_files" in REPLY_SCHEMA.properties), "the reply schema does not grow");
   const r = await respond({ db: db(), llm: llmWith(reply({ facts_used: ["file:d-aurora", "file:d-video", "file:made-up"] })), message: "Boleh share brochure M Aurora?", now: NOW, mode: "simulate" });
   assert.deepEqual(r.actions.filter((a) => a.type === "send_file").map((a) => a.document_id), ["d-aurora"]);
   const h = await respond({ db: db(), llm: llmWith(reply({ handover: { needed: true, reason: "customer_request", summary: "s", next_action: "n" } })), message: "Boleh share brochure M Aurora?", now: NOW, mode: "simulate" });
-  assert.equal(h.actions.some((a) => a.type === "send_file"), false, "a hand-over sends no file");
+  assert.equal(h.actions.some((a) => a.type === "send_file"), false, "a hand-over because the buyer asked for a person sends no file");
 });
 
 test("WhatsApp: a PDF goes as a document with its file name, a photo as an image; both by link", async () => {
