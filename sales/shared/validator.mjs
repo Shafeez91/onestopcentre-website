@@ -53,7 +53,8 @@ const PROMO_HEDGE = /(tertakluk|subject to|semak|check|sahkan|confirm with|perlu
 const APPT_CONFIRM = /((appointment|temujanji|janji temu|booking|tempahan|slot|lawatan|visit|viewing)[^.?!\n]{0,40}(confirmed|disahkan|sudah (di)?sahkan|telah ditempah|dah book|berjaya ditempah|is booked|has been booked|telah dibuat)|\b(confirmed|disahkan)\b[^.?!\n]{0,30}(appointment|temujanji|slot|visit|lawatan|viewing))/i;
 const IMPERSONATION = /((i am|i'm|im)\s+(a\s+)?(human|real person|real agent|not (a |an )?(bot|ai|robot))|saya\s+(manusia|orang sebenar|bukan\s+(bot|ai|robot))|(saya|i)\s+(dah|sudah|telah|have|has|had)\s+(pernah\s+)?(lawat|melawat|visited|been to|pergi ke|tengok sendiri|seen)\s+((the|that|this|our|your|ke)\s+)?(showroom|projek|project|site|unit|tapak))/i;
 const AI_DISCLOSURE = /(\bAI\b|pembantu\s+AI|AI\s+assistant|assistant\s+AI|pembantu\s+maya|virtual\s+assistant|pembantu\s+digital|digital\s+assistant)/i;
-const CHECKING = /(semak|check|confirm|sahkan|sama ada|whether|if any|kalau ada|akan maklumkan|will let you know|perlu (di)?sahkan|need to confirm)/i;
+// the sentence says availability is unknown or being checked ("… tidak ada dalam rekod saya", "no live unit list")
+const CHECKING = /(semak|check|confirm|sahkan|sama ada|whether|if any|kalau ada|akan maklumkan|will let you know|perlu (di)?sahkan|need to confirm|(tidak|tiada|tak|x|belum)\s+(ada\s+)?(dalam|dlm)\s+(rekod|senarai|info)|(not|isn't|aren't)\s+(in|on)\s+(our|my)\s+(records?|list)|no live unit|don'?t have (a )?live)/i;
 const PENDING = /(belum|not yet|pending|menunggu|akan (di)?sahkan|will confirm|to be confirmed|akan confirm|perlu (di)?sahkan)/i;
 const CONFIRM_WORD = /(confirmed|disahkan|sudah (di)?sahkan|telah ditempah|dah book|berjaya ditempah|is booked|has been booked|telah dibuat)/i;
 const sentenceAt = (text, index) => { const s = text.lastIndexOf(".", index) + 1, e = text.slice(index).search(/[.!?\n]/); return text.slice(s, e < 0 ? undefined : index + e); };
