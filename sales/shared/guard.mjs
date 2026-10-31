@@ -2,8 +2,9 @@
 // an opt-out or a request for a human is always honoured, whatever the AI would have said.
 import { parseTitlePreference } from "./salutation.mjs";
 
+// a bare "cancel" is not an opt-out: it usually means an appointment (31 Oct audit, WA-07); see isBareCancel
 const OPT_OUT = [
-  /^\s*(stop|unsubscribe|berhenti|henti|stop all|stopall|cancel)\s*[.!]*\s*$/i,
+  /^\s*(stop|unsubscribe|berhenti|henti|stop all|stopall)\s*[.!]*\s*$/i,
   /\b(jangan|tak payah|tidak perlu|x payah|xpayah)\s+(hantar|whatsapp|wasap|mesej|message|contact|hubungi|call|telefon)\b/i,
   /\b(don'?t|do not|stop)\s+(message|messaging|text|texting|contact|contacting|whatsapp|call|calling|send)(ing)?\s+(me|anymore)?/i,
   /\b(remove|padam)\s+(me|my number|nombor saya)\b/i,
@@ -46,8 +47,13 @@ export function languagePreference(message, history = []) {
   return null;
 }
 
-export const isOptOut = (text) => OPT_OUT.some((r) => r.test(String(text || "")));
-export const wantsHuman = (text) => HUMAN.some((r) => r.test(String(text || "")) && !(r === CALL_ME && parseTitlePreference(text)));
+// the whole text and each line on its own: the worker answers a burst of messages joined by line breaks, so "STOP"
+// then "ok" arrives as "STOP\nok" (31 Oct audit, WA-01)
+const parts = (text) => { const t = String(text || ""); const lines = t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean); return lines.length > 1 ? [t, ...lines] : [t]; };
+export const isOptOut = (text) => parts(text).some((t) => OPT_OUT.some((r) => r.test(t)));
+export const wantsHuman = (text) => parts(text).some((t) => HUMAN.some((r) => r.test(t) && !(r === CALL_ME && parseTitlePreference(t))));
+/** "cancel" on its own: cancel what? A person checks (an appointment, or messages) instead of an automatic opt-out. */
+export const isBareCancel = (text) => parts(text).some((t) => /^\s*(cancel|cancel it|batal|batalkan)\s*[.!]*\s*$/i.test(t));
 
 /**
  * The language to write to a buyer in: their saved choice when it is "en" or "ms"; otherwise what their own

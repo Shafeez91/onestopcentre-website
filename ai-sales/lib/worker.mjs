@@ -9,7 +9,7 @@
 // deps: { db (service-role adapter), llm, wa: { send(to, msg) } | null, cal: { slots(settings, now), book(details) } | null, now() }
 import { respond, applyActions, logRun, composeFollowUp } from "./orchestrator.mjs";
 import { summarizeLead } from "./insights.mjs";
-import { isOptOut, wantsHuman, fixedReply, replyLanguage } from "../../sales/shared/guard.mjs";
+import { isOptOut, wantsHuman, isBareCancel, fixedReply, replyLanguage } from "../../sales/shared/guard.mjs";
 import { decideFollowUp, consentState, templateParams } from "./followups.mjs";
 import { confirmationText, placeFor } from "./calendar.mjs";
 import { sendOutbound, buyerLanguage } from "./outbound.mjs";
@@ -194,13 +194,22 @@ export async function processReplyJob(deps, job, settings) {
 
   const runId = await logRun(db, { result, leadId: lead.id, conversationId: conv.id, channel: "whatsapp", input: { job: job.id } });
   const done = await applyActions(db, { leadId: lead.id, contactId: contact.id, result, conversationId: conv.id, runId, messageId: msgId });
+  // the AI failed and the buyer is told an advisor will reply: make sure a person is asked to (a task, so Telegram
+  // too). Before, nothing was opened (30 Oct: the AI credit ran out and no one was alerted). One per chat per day.
+  if (result.decision === "error" && result.errorKind !== "refusal") { // a refusal is a "sensitive" hand-over: it has its task
+    const account = ["auth", "rejected", "config"].includes(result.errorKind);
+    await openHumanTaskAbout(deps, conv.id, { cause: "ai_error", key: `${conv.id}:${deps.now().toISOString().slice(0, 10)}`,
+      title: account ? "AI replies are failing: check the Anthropic account (credit or API key), and reply to this buyer" : "Reply to the buyer: the AI could not answer their message",
+      details: `AI error (${result.errorKind || "error"}): ${String(result.error || "").slice(0, 200)}` });
+  }
 
   let sent = null;
   const out = result.messages?.length ? result.messages : result.reply ? [result.reply] : [];
   if (out.length && result.decision !== "paused") {
     if (canSend) {
-      // fixed replies to STOP / "talk to a person" are system messages: sent even while a person handles the chat
-      const t = await sendTurn(deps, { conversation: conv, to, messages: out, senderType: guard ? "system" : "ai", runId, jobId: job.id, inboundId: msgId });
+      // fixed replies to STOP / "talk to a person" / a bare "cancel" are system messages: sent even though the hand-over
+      // has just paused the AI (a bare "cancel" only gets here while the AI owns the chat)
+      const t = await sendTurn(deps, { conversation: conv, to, messages: out, senderType: guard || isBareCancel(message) ? "system" : "ai", runId, jobId: job.id, inboundId: msgId });
       sent = { ...t, sent: t.sent > 0, complete: t.sent === t.total };
       if ((t.blocked || t.superseded) && !t.sent) {
         // a person took over while the AI was writing (their conversation), or the buyer wrote again and the reply
@@ -358,7 +367,7 @@ export async function runWorker(deps, { maxJobs = 10, followUps = true, reminder
       if (job.kind === "wa_reply") { await processReplyJob(budgetMs ? { ...deps, replyBudgetMs: remaining() - 2000 } : deps, job, settings); out.replies++; }
       else if (job.kind === "lead_insights" && deps.llm && job.payload?.lead_id) {
         // never fails the job: insights are a convenience, and summarizeLead skips a message it already covered
-        const r = await summarizeLead(deps, job.payload.lead_id).catch((e) => ({ skipped: e?.message || String(e) }));
+        const r = await summarizeLead(deps, job.payload.lead_id, { reserve: () => db.rpc("ai_reserve_ai_call", {}) }).catch((e) => ({ skipped: e?.message || String(e) }));
         out.insights = (out.insights || 0) + (r.applied ? 1 : 0);
       }
       await db.patch(`ai_jobs?id=eq.${enc(job.id)}`, { status: "done", last_error: null });

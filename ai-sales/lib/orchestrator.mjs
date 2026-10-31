@@ -2,7 +2,7 @@
 //   guards (opt-out, human request) -> verified context -> AI draft -> business-rule validation
 //   (one corrected retry) -> decision (reply / handover / blocked / opt_out / paused / error) -> proposed CRM actions.
 // In "simulate" mode nothing is written; applyActions() performs the writes for live channels (Phase 4).
-import { isOptOut, wantsHuman, detectLanguage, fixedReply, languagePreference, requestedLanguage } from "../../sales/shared/guard.mjs";
+import { isOptOut, wantsHuman, isBareCancel, detectLanguage, fixedReply, languagePreference, requestedLanguage } from "../../sales/shared/guard.mjs";
 import { validateReply } from "../../sales/shared/validator.mjs";
 import { scoreLead } from "../../sales/shared/scoring.mjs";
 import { loadContext } from "./context.mjs";
@@ -269,6 +269,14 @@ export async function respond(p) {
       decision: "handover", reply: fixedReply("human", guessLang), language: guessLang, intent: "human_request", agent: "handover", confidence: 1,
       actions: [{ type: "handover", reason: "customer_request", summary: `Buyer asked to speak to a person: "${message.slice(0, 300)}"`, next_action: "Contact the buyer personally." },
                 { type: "pause_ai" }, { type: "cancel_follow_ups", reason: "human requested" }],
+    });
+  }
+  // "cancel" alone: an appointment or the messages? A person asks; nothing automatic goes out meanwhile
+  if (isBareCancel(message)) {
+    return finish({
+      decision: "handover", reply: fixedReply("human", guessLang), language: guessLang, intent: "other", agent: "handover", confidence: 1,
+      actions: [{ type: "handover", reason: "customer_request", summary: `Buyer wrote "${message.slice(0, 300)}": check whether they want to cancel an appointment or stop receiving messages.`, next_action: "Ask the buyer what they would like to cancel." },
+                { type: "pause_ai" }, { type: "cancel_follow_ups", reason: "buyer wrote cancel" }],
     });
   }
 

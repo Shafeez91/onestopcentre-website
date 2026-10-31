@@ -7,6 +7,7 @@ import { isOpen, nextOpening, decideFollowUp, consentState, renderTemplate, temp
 import { freeSlots, signAssertion, bookSlot, cancelEvent, calConfig, confirmationText, formatWhen, _resetTokenCache } from "../../lib/calendar.mjs";
 import { runWorker, sendTurn } from "../../lib/worker.mjs";
 import { memdb } from "./helpers/memdb.mjs";
+import { LlmError } from "../../lib/llm.mjs";
 
 // Wednesday 28 Oct 2026, 11:00 in Malaysia (03:00 UTC)
 const NOW = new Date("2026-10-28T03:00:00Z");
@@ -1167,5 +1168,96 @@ test("fixed replies (STOP, 'talk to a person') always go out, even if the buyer 
   assert.deepEqual([sys.sent, sys.superseded], [1, undefined]);
   const ai = await sendTurn(d, { conversation: conv, to: "60123456789", messages: ["Jawapan AI yang sudah lapuk."], senderType: "ai", jobId: "J8", inboundId: "M1" });
   assert.deepEqual([ai.sent, ai.superseded], [0, true], "an AI reply to an older message is dropped");
+  assert.equal(d.wa.sent.length, 1);
+});
+
+/* ================================================================ 31 Oct audit, batch B */
+test("audit WA-01: 'STOP' then 'ok' before the AI answers: opt-out recorded, no AI call, one confirmation", async () => {
+  const w = world();
+  w.ai_messages[0].body = "STOP";
+  w.ai_messages.push({ id: "M2", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "ok", created_at: ago(0.5), status: "received" });
+  w.ai_jobs.push({ id: "J2", kind: "wa_reply", payload: { conversation_id: "V1", message_id: "M2" }, status: "queued", attempts: 0, max_attempts: 5 });
+  w.ai_follow_up_jobs = [{ id: "F1", lead_id: "L1", status: "scheduled", run_at: ago(-600), step_index: 0 }];
+  const db = memdb(w), d = deps(db);
+  await runWorker(d);
+  assert.equal(d.llm.calls.length, 0);
+  assert.deepEqual(db.t.ai_consent_records.map((c) => [c.purpose, c.status]).sort(), [["marketing", "withdrawn"], ["service", "withdrawn"]]);
+  assert.equal(db.t.ai_follow_up_jobs[0].status, "cancelled");
+  assert.equal(db.t.ai_leads[0].ai_paused, true);
+  assert.equal(d.wa.sent.length, 1);
+  assert.match(d.wa.sent[0].msg.text, /tidak akan menghantar mesej lagi/);
+});
+
+test("audit WA-07: a bare 'cancel' asks a person (cancel what?) instead of unsubscribing the buyer", async () => {
+  const w = world(); w.ai_messages[0].body = "cancel";
+  const db = memdb(w), d = deps(db);
+  await runWorker(d);
+  assert.equal(d.llm.calls.length, 0);
+  assert.equal(db.t.ai_consent_records.length, 0, "no PDPA withdrawal recorded");
+  assert.deepEqual(db.t.ai_handover_events.map((h) => h.reason), ["customer_request"]);
+  assert.match(db.t.ai_handover_events[0].summary.text, /cancel an appointment or stop receiving messages/);
+  assert.equal(db.t.ai_leads[0].ai_paused, true, "nothing automatic goes out meanwhile");
+  assert.match(d.wa.sent[0].msg.text, /penasihat hartanah kami menghubungi/);
+  // while a person handles the chat, "cancel" is theirs to answer: no fixed reply, no change
+  const w2 = world(); w2.ai_messages[0].body = "cancel"; w2.ai_conversations[0].mode = "human"; w2.ai_leads[0].ai_paused = true;
+  const db2 = memdb(w2), d2 = deps(db2);
+  await runWorker(d2);
+  assert.equal(d2.wa.sent.length, 0);
+  assert.equal(db2.t.ai_consent_records.length, 0);
+});
+
+test("audit OPS-01: the AI fails (e.g. credit ran out): the buyer gets the safe reply and ONE task per chat per day says to check the Anthropic account", async () => {
+  const llm = async () => { throw new LlmError("AI request rejected (HTTP 400): Your credit balance is too low", { kind: "rejected", status: 400 }); };
+  const w = world();
+  const db = memdb(w), d = { ...deps(db), llm };
+  await runWorker(d);
+  assert.match(d.wa.sent[0].msg.text, /Penasihat kami akan menghubungi/);
+  assert.equal(db.t.ai_tasks.length, 1);
+  assert.equal(db.t.ai_tasks[0].title, "AI replies are failing: check the Anthropic account (credit or API key), and reply to this buyer");
+  assert.match(db.t.ai_tasks[0].source_key, /^ai_error:V1:\d{4}-\d\d-\d\d$/);
+  assert.match(db.t.ai_tasks[0].details, /AI error \(rejected\): AI request rejected \(HTTP 400\)/);
+  // the buyer writes again the same day and the AI fails again: still one task
+  db.t.ai_messages.push({ id: "M3", conversation_id: "V1", direction: "inbound", sender_type: "customer", body: "Hello?", created_at: new Date(NOW.getTime() + 60e3).toISOString(), status: "received" });
+  db.t.ai_jobs.push({ id: "J3", kind: "wa_reply", payload: { conversation_id: "V1", message_id: "M3" }, status: "queued", attempts: 0, max_attempts: 5 });
+  await runWorker(d);
+  assert.equal(db.t.ai_tasks.length, 1);
+  // a service hiccup gets the plain title; a refusal has its own "sensitive" hand-over and no extra task
+  const db2 = memdb(world()), d2 = { ...deps(db2), llm: async () => { throw new LlmError("AI service busy or unavailable (HTTP 529).", { kind: "unavailable", status: 529 }); } };
+  await runWorker(d2);
+  assert.equal(db2.t.ai_tasks[0].title, "Reply to the buyer: the AI could not answer their message");
+  const db3 = memdb(world()), d3 = { ...deps(db3), llm: async () => { throw new LlmError("The AI declined to answer this message.", { kind: "refusal" }); } };
+  await runWorker(d3);
+  assert.equal((db3.t.ai_tasks || []).filter((t) => /^ai_error:/.test(t.source_key)).length, 0);
+});
+
+test("audit AI-01: profile/summary jobs are booked against the daily AI limit (limit reached: no AI call)", async () => {
+  const w = world({ ai_jobs: [{ id: "J9", kind: "lead_insights", payload: { lead_id: "L1", message_id: "M1" }, status: "queued", attempts: 0, max_attempts: 5 }] });
+  let reserved = 0;
+  const db = memdb(w, { ai_reserve_ai_call: () => { reserved++; return { allowed: false, used: 200, cap: 200 }; } }), d = deps(db);
+  const r = await runWorker(d);
+  assert.equal(reserved, 1);
+  assert.equal(d.llm.calls.length, 0);
+  assert.equal(db.t.ai_jobs[0].status, "done", "skipped, not failed");
+  assert.equal(r.errors.length, 0);
+});
+
+test("audit WA-02: a workflow reminder waits while a person handles the chat, and carries on by itself after", async () => {
+  for (const takeover of [(w) => { w.ai_conversations[0].mode = "human"; }, (w) => { w.ai_leads[0].ai_paused = true; }]) {
+    const w = wfWorld(); takeover(w);
+    const db = memdb(w), d = deps(db);
+    await runWorker(d);
+    const job = db.t.ai_automation_jobs[0];
+    assert.equal(d.wa.sent.length, 0, "no reminder while a person handles the chat");
+    assert.deepEqual([job.status, job.reason, job.run_at], ["scheduled", "a person is handling this conversation; checking again later", new Date(NOW.getTime() + 24 * 3600e3).toISOString()]);
+    assert.equal(db.t.ai_workflow_leads[0].status, "active", "still in the workflow");
+    assert.equal((db.t.ai_tasks || []).length, 0, "no extra task: the person is already in the chat");
+  }
+  // AI resumed: the same job sends when it is due again
+  const w = wfWorld(); w.ai_conversations[0].mode = "human";
+  const db = memdb(w), d = deps(db);
+  await runWorker(d);
+  db.t.ai_conversations[0].mode = "ai"; db.t.ai_automation_jobs[0].run_at = PAST;
+  await runWorker(d);
+  assert.equal(db.t.ai_automation_jobs[0].status, "sent");
   assert.equal(d.wa.sent.length, 1);
 });
