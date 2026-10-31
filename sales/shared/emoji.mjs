@@ -6,6 +6,8 @@
 const EMOJI = /\p{Extended_Pictographic}(?:️|\p{Emoji_Modifier}|‍\p{Extended_Pictographic}️?)*/gu;
 export const SERIOUS_INTENTS = new Set(["complaint", "legal_or_contract", "negotiation", "opt_out", "human_request", "objection", "instalment"]);
 
+const ALWAYS_SERIOUS = new Set(["complaint", "legal_or_contract", "opt_out", "human_request"]);
+
 export const countEmojis = (text) => (String(text || "").match(EMOJI) || []).length;
 
 const tidy = (s) => s.replace(/[ \t]{2,}/g, " ").replace(/ +([.,!?;:])/g, "$1").replace(/[ \t]+\n/g, "\n").replace(/\n[ \t]+/g, "\n").trim();
@@ -38,7 +40,10 @@ export const PLAYFUL = /((?<![a-z])(ha|he|hi|wk|kah)\s?(ha|he|hi|wk|kah)[a-z]*|(
 
 /** How many emojis a reply may have: 0 when emojis are off or the reply is serious, otherwise 1. */
 export function emojiAllowance({ decision = "reply", intent = null, objectionKey = null, financing = false, level = "light", handoverReason = null, playful = false } = {}) {
-  if (level === "none" || objectionKey || SERIOUS_INTENTS.has(intent)) return 0;
+  if (level === "none") return 0;
+  // a laughing objection ("Mahal la 😂 hahaha") may keep a matching smiley; complaints, legal questions, opt-outs and
+  // requests for a person never get one
+  if (playful ? ALWAYS_SERIOUS.has(intent) : objectionKey || SERIOUS_INTENTS.has(intent)) return 0;
   if (decision !== "reply" && !(decision === "handover" && ROUTINE_HANDOVER.has(handoverReason))) return 0;
   if (financing && !playful) return 0;
   return 1;

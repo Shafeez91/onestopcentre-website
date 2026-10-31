@@ -126,6 +126,43 @@ export function messageStyle(text, i = 1, style = STYLE) {
  * block a reply that breaks them (hardOk false); readability rules run per message and only ask for a rewrite.
  * ok: nothing to fix. hardOk: safe to send. styleNotes: the readability problems found.
  */
+// rules a removed sentence cannot fix (the reply as a whole is wrong): no salvage
+const NO_SALVAGE = new Set(["missing_ai_disclosure", "empty_reply"]);
+const SENTENCES = /(?<=[.!?])\s+|\n+/;
+
+/**
+ * Removes the sentences behind the business-rule violations (the figure or quoted phrase each violation names) and
+ * checks what is left. Returns { data, check, removed } when the rest passes, at most 40% was removed and at least 15
+ * words remain; otherwise null (the reply is blocked as before).
+ */
+export function salvageDraft(data, check, rules = {}) {
+  const hard = (check?.violations || []).filter((v) => !STYLE_CODES.has(v.code));
+  if (!hard.length || hard.some((v) => NO_SALVAGE.has(v.code))) return null;
+  const tokens = [];
+  for (const v of hard) {
+    for (const m of String(v.detail || "").matchAll(/RM\s?[\d,.]+(?:\s?(?:k|mil|juta|ribu))?/gi)) tokens.push(m[0].replace(/\s+/g, "").toLowerCase());
+    for (const m of String(v.detail || "").matchAll(/"([^"]{3,80})"/g)) tokens.push(m[1].toLowerCase());
+  }
+  if (!tokens.length) return null;
+  const hit = (sentence) => { const low = sentence.toLowerCase(), squeezed = low.replace(/\s+/g, ""); return tokens.some((t) => (t.startsWith("rm") ? squeezed.includes(t) : low.includes(t))); };
+  const removed = [];
+  const list = (data.messages?.length ? data.messages : [data.reply]).map((m) => {
+    const paras = String(m || "").split(/\n\s*\n/).map((p) => {
+      const parts = p.split(SENTENCES);
+      const keep = parts.filter((x) => { if (hit(x)) { removed.push(x.trim()); return false; } return true; });
+      return keep.join(p.includes("\n") && !/[.!?]\s/.test(p) ? "\n" : " ").trim();
+    }).filter((p) => /\p{L}/u.test(p));
+    return paras.join("\n\n");
+  }).filter((m) => /\p{L}/u.test(m));
+  if (!removed.length || !list.length) return null;
+  const before = (data.messages || [data.reply]).join(" ").split(/\s+/).length, after = list.join(" ").split(/\s+/).length;
+  // only a small part may go, and a real answer must be left (not just the AI introduction): otherwise the safe reply
+  if (after < before * 0.6 || after < 15) return null;
+  const next = { ...data, messages: list, reply: list.join("\n\n") };
+  const again = checkTurn(next, rules);
+  return again.hardOk ? { data: next, check: again, removed } : null;
+}
+
 export function checkTurn(data, rules = {}) {
   const check = validateReply(data.reply, { ...rules, maxChars: 0 });
   const list = data.messages || [data.reply];
@@ -381,6 +418,13 @@ export async function respond(p) {
   // 5) decision
   const actions = [];
   let decision = "reply", reply = data.reply;
+  // a draft blocked by one bad sentence (31 Oct: "…harga permulaan sekitar RM350,000 hingga RM400,000" in an
+  // otherwise good reply): drop the sentences that break a rule and send the rest if it now passes every check
+  let salvaged = null;
+  if (!check.hardOk) {
+    salvaged = salvageDraft(data, check, ctx.rules);
+    if (salvaged) { data = salvaged.data; check = salvaged.check; reply = data.reply; }
+  }
   if (!check.hardOk) {
     decision = "blocked";
     reply = fixedReply("safe_fallback", data.language === "en" ? "en" : "ms");
@@ -494,6 +538,7 @@ export async function respond(p) {
     decision, reply: messages.join("\n\n"), messages, draft: data.reply, draft_messages: data.messages, language: data.language, intent: data.intent, agent: data.agent, confidence: Number(data.confidence),
     facts_used: data.facts_used || [], objection_key: data.objection_key || null, violations: check.violations, style_notes: check.styleNotes, actions,
     ...(adjustments.length ? { adjustments } : {}),
+    ...(salvaged ? { salvaged: salvaged.removed } : {}),
     qualification, score: scored.score, temperature: scored.temperature,
     ...(fin ? { financing: { inputs: fin.inputs, result: fin.result, recalculated } } : {}),
     // which project the reply was about and what its information lacked, so a hand-over can be traced to a data gap
