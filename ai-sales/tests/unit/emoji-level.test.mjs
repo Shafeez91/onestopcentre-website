@@ -74,3 +74,19 @@ test("31 Oct: a laughing buyer gets a matching smiley, also on a routine hand-ov
   const r = await respond({ db: db("friendly"), llm: llmOf(["Haha sy layan Zaza 😄 Unit facing KLCC, advisor kami akan check."], "project_info"), leadId: "L1", message: "Layan la sy!!!! Hahahaha", history, now: NOW, mode: "simulate" });
   assert.match(r.messages.join(" "), /😄/);
 });
+
+test("31 Oct: \"Mahal la 😂 hahaha\" — the one sentence with an invented price is dropped, the rest is sent with its smiley", async () => {
+  const { salvageDraft } = await import("../../lib/orchestrator.mjs");
+  const reply = ["Haha faham 😄 Harga memang perkara penting.\n\nUntuk M MIRA, pilihan paling rendah ialah Type A dari RM476,000 (anggaran website).",
+    "Kalau nak bandingkan, ada juga projek lain dengan harga permulaan sekitar RM350,000 hingga RM400,000.\n\nBajet bulanan yang selesa dalam lingkungan berapa?"];
+  const r = await respond({ db: db("friendly"), llm: llmOf(reply, "objection"), leadId: "L1", message: "Mahal la 😂 hahaha", history, now: NOW, mode: "simulate" });
+  assert.equal(r.decision, "reply", JSON.stringify(r.violations));
+  assert.doesNotMatch(r.messages.join(" "), /RM400,000|RM350,000/);
+  assert.match(r.messages.join(" "), /Haha faham 😄/);
+  assert.match(r.messages.join(" "), /Bajet bulanan/);
+  assert.deepEqual(r.salvaged, ["Kalau nak bandingkan, ada juga projek lain dengan harga permulaan sekitar RM350,000 hingga RM400,000."]);
+  // nothing to salvage when the whole reply is the problem
+  assert.equal(salvageDraft({ messages: ["Harga RM999,999 je!"], reply: "Harga RM999,999 je!" }, { violations: [{ code: "unverified_price", detail: "RM999,999 does not match" }] }, {}), null);
+  assert.equal(emojiAllowance({ intent: "objection", playful: true, level: "friendly" }), 1, "a laughing objection keeps its smiley");
+  assert.equal(emojiAllowance({ intent: "objection", playful: false, level: "friendly" }), 0);
+});
