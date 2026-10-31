@@ -15,7 +15,7 @@ import { RENTAL_Q, findRentRates, rentalEstimate, renderRental } from "../../sal
 import { extractDistances, extractMinutes } from "../../sales/shared/validator.mjs";
 import { mergeFinancing, attachFinancing, renderFinancing, cleanInputs, isNewAssessment, advisorSummary } from "./financing.mjs";
 import { addressFor, parseTitlePreference, fixSalutation } from "../../sales/shared/salutation.mjs";
-import { limitEmojis, emojiAllowance, emojiLevel } from "../../sales/shared/emoji.mjs";
+import { limitEmojis, emojiAllowance, emojiLevel, PLAYFUL } from "../../sales/shared/emoji.mjs";
 
 const QUAL_FIELDS = ["purpose", "first_home", "bedrooms", "size_sqft", "budget_min", "budget_max", "employment", "financing", "timeline_months", "readiness", "concerns"];
 
@@ -173,7 +173,7 @@ export function financingReply(intent, messages, engineOn = true) {
   return false;
 }
 
-export function finalTouches(messages, { decision = "reply", data = {}, ctx = {}, financing = false } = {}) {
+export function finalTouches(messages, { decision = "reply", data = {}, ctx = {}, financing = false, handoverReason = null, playful = false } = {}) {
   const adjustments = [];
   const addr = ctx.buyer?.address;
   let out = (messages || []).map((m) => {
@@ -182,7 +182,7 @@ export function finalTouches(messages, { decision = "reply", data = {}, ctx = {}
     adjustments.push(...f.fixed.map((x) => `salutation: ${x}`));
     return f.text;
   });
-  const max = emojiAllowance({ decision, intent: data.intent, objectionKey: data.objection_key, financing, level: emojiLevel(ctx.settings?.persona) });
+  const max = emojiAllowance({ decision, intent: data.intent, objectionKey: data.objection_key, financing, level: emojiLevel(ctx.settings?.persona), handoverReason, playful });
   const e = limitEmojis(out, { max });
   if (e.removed) adjustments.push(`emojis: ${e.removed} removed (at most ${max} in this reply)`);
   out = e.messages.filter((m) => m && /\p{L}/u.test(m));
@@ -465,7 +465,8 @@ export async function respond(p) {
 
   // separate WhatsApp messages only for a normal AI reply; a safe reply or a hand-over is one message
   const raw = decision === "reply" ? data.messages : [reply];
-  const { messages, adjustments } = finalTouches(raw, { decision, data, ctx, financing: financingReply(data.intent, raw, !!fin) });
+  const { messages, adjustments } = finalTouches(raw, { decision, data, ctx, financing: financingReply(data.intent, raw, !!fin),
+    handoverReason: actions.find((a) => a.type === "handover")?.reason || null, playful: PLAYFUL.test(message) });
   // the draft hands a factual question to an advisor because our data lacks it: research it once on the web and,
   // if something was found, write the reply again with the findings (no second daily-limit charge)
   const handoverReason = actions.find((a) => a.type === "handover")?.reason;

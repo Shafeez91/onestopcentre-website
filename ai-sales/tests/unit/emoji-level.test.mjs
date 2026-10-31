@@ -60,3 +60,17 @@ test("a maintenance fee or a rent a month is not a financing figure; a removed e
   assert.deepEqual(limitEmojis(["Faham, utk investment 👍 Sbg info, M AURORA freehold."], { max: 0 }).messages, ["Faham, utk investment. Sbg info, M AURORA freehold."]);
   assert.deepEqual(limitEmojis(["Terima kasih 🙏"], { max: 0 }).messages, ["Terima kasih"]);
 });
+
+test("31 Oct: a laughing buyer gets a matching smiley, also on a routine hand-over and next to loan figures; serious hand-overs still get none", async () => {
+  const { PLAYFUL } = await import("../../../sales/shared/emoji.mjs");
+  for (const t of ["Layan la sy!!!!\nHahahahahhaa", "hehe ok", "lol", "😂😂", "wkwk"]) assert.ok(PLAYFUL.test(t), t);
+  for (const t of ["Harga berapa?", "The hall is nice", "Hai Zaza"]) assert.ok(!PLAYFUL.test(t), t);
+  assert.equal(emojiAllowance({ decision: "handover", handoverReason: "conflicting_info", level: "friendly" }), 1, "advisor to check a detail");
+  assert.equal(emojiAllowance({ decision: "handover", handoverReason: "complaint", level: "friendly" }), 0);
+  assert.equal(emojiAllowance({ decision: "handover", handoverReason: "customer_request", level: "friendly" }), 0);
+  assert.equal(emojiAllowance({ decision: "reply", financing: true, playful: true, level: "friendly" }), 1, "laughing buyer, loan figures in the reply");
+  assert.equal(emojiAllowance({ decision: "reply", financing: true, playful: false, level: "friendly" }), 0);
+  assert.equal(emojiAllowance({ decision: "reply", intent: "complaint", playful: true, level: "friendly" }), 0, "a complaint stays serious even with haha");
+  const r = await respond({ db: db("friendly"), llm: llmOf(["Haha sy layan Zaza 😄 Unit facing KLCC, advisor kami akan check."], "project_info"), leadId: "L1", message: "Layan la sy!!!! Hahahaha", history, now: NOW, mode: "simulate" });
+  assert.match(r.messages.join(" "), /😄/);
+});
