@@ -83,6 +83,15 @@ const MONTHLY_FIGURE = /(ansuran|instal+ment|RM\s?[\d,.]+\s*(?:k\b)?\s*(?:\/\s*(
 // WhatsApp short forms a buyer may write (BM and English); colloquial full words (nak, tak, je) do not count
 export const SHORT_FORMS = /(?<![\p{L}\p{N}])(yg|dgn|utk|sbb|blh|bleh|tgk|kt|dlm|lps|sy|nk|mcm|dpt|jgn|skrg|org|brp|xde|x|tq|tqvm|thx|pls|plz|btw|fyi|lg|lgi|bkn|blm|sgt|dh|knp|cmne|cmna|camne|mne|bape|dm|pm)(?![\p{L}\p{N}])/iu;
 
+// the reply says a brochure / e-pamphlet / floor plan is being sent now (not an offer or a question)
+export function promisesFile(messages) {
+  for (const sentence of (messages || []).join("\n").split(/(?<=[.!?])\s+|\n+/)) {
+    if (/\?\s*$/.test(sentence) || /\b(kalau|jika|if you|shall i|nak saya|mahu saya|boleh saya|want me|would you)\b/i.test(sentence)) continue;
+    if (/\b(saya|sy|i'?m|i will|i'll|kami)\s+(akan\s+)?(hantar|kongsi|send|sending|share|sharing)\b[^.?\n]{0,60}\b(e-?pamphlet|brochure|brosur|risalah|floor ?plans?|pelan lantai|pdf)\b/i.test(sentence)) return true;
+  }
+  return false;
+}
+
 // a monthly instalment in the reply; a rent figure from the rental estimate ("~RM2,290 sebulan") is not one
 function monthlyInstalment(text, rentalAmounts = []) {
   if (/(ansuran|instal+ment)/i.test(text)) return true;
@@ -433,9 +442,19 @@ export async function respond(p) {
   }
   if (decision !== "reply") actions.push({ type: "cancel_follow_ups", reason: "conversation needs a human" });
   // files the AI chose to send (only ones staff marked shareable and the context offered); sent after the reply
-  if (decision === "reply") for (const id of data.send_files || []) {
-    const f = (ctx.files || []).find((x) => x.id === id);
-    if (f && !actions.some((a) => a.type === "send_file" && a.document_id === id)) actions.push({ type: "send_file", document_id: f.id, title: f.title, kind: f.kind, project_id: f.project_id });
+  // also with a hand-over for missing information (e.g. "an advisor will confirm availability"): the AI's own messages
+  // are sent then too, and may say the file is on its way. Never with a complaint, legal question, request for a
+  // person, negotiation or anything sensitive.
+  const hoReason = actions.find((a) => a.type === "handover")?.reason;
+  const ownMessages = decision === "reply" || (decision === "handover" && !["customer_request", "complaint", "legal", "negotiation", "sensitive"].includes(hoReason));
+  const addFile = (f) => { if (f && !actions.some((a) => a.type === "send_file" && a.document_id === f.id)) actions.push({ type: "send_file", document_id: f.id, title: f.title, kind: f.kind, project_id: f.project_id }); };
+  if (ownMessages) for (const id of data.send_files || []) addFile((ctx.files || []).find((x) => x.id === id));
+  // the reply says the brochure is being sent but no file was chosen (31 Oct: "Saya hantar e-pamphlet M AZURA
+  // sekarang", nothing attached): attach the shareable brochure of the project being discussed, when there is one
+  if (ownMessages && !actions.some((a) => a.type === "send_file") && promisesFile(data.messages || [data.reply])) {
+    const inFocus = (ctx.projects || []).filter((x) => x.inFocus).map((x) => x.id);
+    const brochures = (ctx.files || []).filter((f) => f.project_id && inFocus.includes(f.project_id) && /brochure|pamphlet|brosur/i.test(`${f.kind} ${f.title}`));
+    if (brochures.length === 1) addFile(brochures[0]);
   }
   if (titlePref && p.leadId) actions.push({ type: "set_salutation", salutation: titlePref.salutation, gender: titlePref.gender });
   if (profileAnswers.length && p.leadId) actions.push({ type: "set_profile", changes: profileAnswers });

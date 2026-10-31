@@ -172,3 +172,24 @@ test("short forms mirror the buyer: full words until the buyer writes short form
   assert.deepEqual(ctxOf(llm2.calls[0]).buyer_writing, { uses_short_forms: true });
   assert.match(buildSystemPrompt({ persona: { name: "Hafiz_Ai" } }), /while uses_short_forms is false, including your first reply, write full words/);
 });
+
+test("31 Oct: \"Saya hantar e-pamphlet M AZURA sekarang\" with no file chosen gets the project's brochure attached, also on a hand-over", async () => {
+  const { promisesFile } = await import("../../lib/orchestrator.mjs");
+  assert.equal(promisesFile(["Saya hantar e-pamphlet M AZURA sekarang."]), true);
+  assert.equal(promisesFile(["I'm sending you the M Mira brochure now."]), true);
+  assert.equal(promisesFile(["Kalau nak, sy blh hantar brochure?"]), false);
+  assert.equal(promisesFile(["Nak saya hantar e-pamphlet?"]), false);
+  assert.equal(promisesFile(["M AZURA ada 3 layout."]), false);
+  const t = {
+    ai_settings: [{ id: 1, persona: { name: "Hafiz_Ai" }, ai: { confidence_threshold: 0.7 }, business: {}, scoring: {}, compliance: {} }],
+    projects: [{ id: "az", slug: "azura", data: { n: "M AZURA", l: "Setapak", types: [{ name: "Type A", price: "RM380,000" }] } }],
+    ai_documents: [{ id: "d1", title: "M_AZURA_ePamphlet.pdf", kind: "brochure", project_id: "az", mime_type: "application/pdf", size_bytes: 1000 }],
+    ai_leads: [{ id: "L1", lead_code: "OSC-1", contact: { id: "c1", full_name: "Shafiq", preferred_language: "ms" }, qualification: {}, profile: { preferred_name: "Shafiq" }, profile_meta: {}, ai_summary: {} }],
+    ai_pipeline_stages: [], ai_appointments: [],
+  };
+  const fdb = { get: async (p) => structuredClone(t[p.split("?")[0]] || []), rpc: async () => [], post: async () => [{}], patch: async () => null };
+  const handover = draft(["Untuk M AZURA, ketersediaan unit akan disahkan oleh penasihat kami. Saya hantar e-pamphlet M AZURA sekarang."], { intent: "availability", handover: { needed: true, reason: "other", summary: "s", next_action: "n" } });
+  const r = await respond({ db: fdb, llm: llmOf(handover), leadId: "L1", message: "Nak tahu pasal azura, masih ada unit ke?", history: [{ role: "user", text: "Salam" }, { role: "assistant", text: "Waalaikumussalam. Saya Hafiz_Ai, pembantu AI Hafizan Hanis." }], now: NOW, mode: "simulate" });
+  assert.equal(r.decision, "handover");
+  assert.deepEqual(r.actions.filter((a) => a.type === "send_file").map((a) => a.document_id), ["d1"]);
+});
