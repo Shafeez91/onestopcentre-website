@@ -367,7 +367,7 @@ test("a photo with words: the AI answers the words (no automatic hand-over); a p
   assert.match(d.wa.sent[0].msg.text, /voice note/);
 });
 
-test("a live reply that runs out of time is retried once on the next run; the second time the buyer gets the safe reply", async () => {
+test("a live reply that runs out of time is retried on the next two runs; the third time the buyer gets the safe reply", async () => {
   const { LlmError } = await import("../../lib/llm.mjs");
   const slow = async () => { throw new LlmError("The AI service did not answer within this request's time limit.", { kind: "timeout" }); };
   // like the real ai_claim_jobs: one job, and a failed one only once its retry time has come
@@ -379,7 +379,11 @@ test("a live reply that runs out of time is retried once on the next run; the se
   assert.match(db.t.ai_jobs[0].last_error, /timed out; retrying/);
   db.t.ai_jobs[0].run_at = NOW.toISOString();
   await runWorker(d, { budgetMs: 26000, followUps: false, reminders: false });
-  assert.equal(d.wa.sent.length, 1, "second timeout: the safe reply, and an advisor is alerted");
+  assert.equal(d.wa.sent.length, 0, "second timeout: one more try (31 Oct: a busy minute timed out twice)");
+  assert.equal(db.t.ai_jobs[0].status, "failed");
+  db.t.ai_jobs[0].run_at = NOW.toISOString();
+  await runWorker(d, { budgetMs: 26000, followUps: false, reminders: false });
+  assert.equal(d.wa.sent.length, 1, "third timeout: the safe reply, and an advisor is alerted");
   assert.equal(db.t.ai_jobs[0].status, "done");
   assert.equal(db.t.ai_handover_events.length, 1);
 });
