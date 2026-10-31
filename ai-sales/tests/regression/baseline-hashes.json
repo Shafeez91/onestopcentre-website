@@ -9,7 +9,7 @@
   "favicon.ico": "f16da48ef0acab0ac55661b338e4e7e08bf057625bc1e308cf2b79d6198239e8",
   "favicon.svg": "c684221ba3a984c0f342108250d33ebc1d0abe4e2eb79e8871b1b0dfa29b646c",
   "icon-512.png": "f82c1b85367ca3267eecac6703b88d594e14bb1abd6c6fdfa6b354615625cab6",
-  "index.html": "73fdcc62bd690490ab4a21ffc40cf3cdb68c89a74b12796c2642786c68f8803c",
+  "index.html": "18cad76fe9f48e471f67a429d17ec6bcbc772bf443d5a1d53479c2dc571086ff",
   "netlify.toml": "96fffd899af349d3bd850c79c89581aad9e30e2872c563f1574e2ac5ac1b7a33",
   "netlify/edge-functions/property.js": "d1701a152fc91f35c0f4b2d94c16c21005799a3c6a849c02029970e1039da3df",
   "og-default-ms.jpg": "d50dd554e77600c39fdb08dd77cb420b367cc3d7798d3e71750191d81b2e9cae",
@@ -22,7 +22,8 @@
   "osc-logo-96.webp": "f03b0a13dc5a224984e7ed96dda20ab711866867fa0772182d553ea0af63d232",
   "osc-logo-original.png": "9cc7f4867868f4effc3de153d1a7b715f31e957cce187031679361cf3f3a8d44",
   "osc-logo.png": "6f66854f37d6f11b753e0a34b8119aceb788ac905a247b495fa8f10c35a301cc",
-  "property.html": "dcc751d07953b1e7d297cf45fa9a085b54d495c0253fea1fb408ab2d84bab7ea",
+  "property.html": "87c155893feff55b71b3ac8a3f2cccf641f5f39ea3782a6ae0d1e0941f9eefcc",
   "site.webmanifest": "74e0db978110962722f83309e78fee081ab094d73f6d907e4431ca9c3f85a742",
-  "_comment_2026_10_29": "index.html and property.html re-baselined on 29 Oct 2026 with the owner's approval: one addition to the project editor (a 'Location & accessibility' box for the existing `nearby` field). Nothing removed or changed."
+  "_comment_2026_10_29": "index.html and property.html re-baselined on 29 Oct 2026 with the owner's approval: one addition to the project editor (a 'Location & accessibility' box for the existing `nearby` field). Nothing removed or changed.",
+  "_comment_2026-10-31": "index.html and property.html updated with the owner's approval (PR #71): white screen while a property link loads, homepage stats count from the number shown."
 }

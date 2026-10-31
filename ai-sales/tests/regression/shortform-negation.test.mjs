@@ -18,3 +18,10 @@ test("real promises are still blocked, and a word ending in 'x' or 'no' is not a
     assert.ok(codes(t).includes("guarantee_language"), t);
   }
 });
+
+test("31 Oct: saying unit availability is not in our records is not an availability claim; a real claim still is", () => {
+  const ok = ["Untuk M AZURA di Setapak, maklumat unit yang masih ada tidak ada dalam rekod saya sekarang.", "Info unit yg masih ada x ada dlm rekod sy.",
+    "Which units are still available is not in our records, an advisor will check."];
+  for (const t of ok) assert.ok(!codes(t).includes("unverified_availability"), t);
+  for (const t of ["Unit Type B masih ada lagi!", "Yes, units are still available."]) assert.ok(codes(t).includes("unverified_availability"), t);
+});
