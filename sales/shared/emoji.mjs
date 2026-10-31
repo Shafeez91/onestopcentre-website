@@ -30,8 +30,16 @@ export function limitEmojis(messages, { max = 1 } = {}) {
 export const EMOJI_LEVELS = ["none", "light", "friendly"];
 export const emojiLevel = (persona = {}) => (EMOJI_LEVELS.includes(persona?.emoji_level) ? persona.emoji_level : "light");
 
+// a hand-over only because information is missing ("an advisor will check the KLCC-facing units") is not a serious
+// moment; complaints, legal questions, negotiation, a request for a person and anything sensitive are
+const ROUTINE_HANDOVER = new Set(["conflicting_info", "low_confidence", "other"]);
+// the buyer is laughing or joking: a matching 😄 / 😂 is fine even next to loan figures (31 Oct: "Layan la sy!!!! Hahahaha")
+export const PLAYFUL = /((?<![a-z])(ha|he|hi|wk|kah)\s?(ha|he|hi|wk|kah)[a-z]*|(?<![a-z])(lol|lmao|lolz)(?![a-z])|😂|🤣|😆|😄|😅)/iu;
+
 /** How many emojis a reply may have: 0 when emojis are off or the reply is serious, otherwise 1. */
-export function emojiAllowance({ decision = "reply", intent = null, objectionKey = null, financing = false, level = "light" } = {}) {
-  if (level === "none" || decision !== "reply" || objectionKey || financing || SERIOUS_INTENTS.has(intent)) return 0;
+export function emojiAllowance({ decision = "reply", intent = null, objectionKey = null, financing = false, level = "light", handoverReason = null, playful = false } = {}) {
+  if (level === "none" || objectionKey || SERIOUS_INTENTS.has(intent)) return 0;
+  if (decision !== "reply" && !(decision === "handover" && ROUTINE_HANDOVER.has(handoverReason))) return 0;
+  if (financing && !playful) return 0;
   return 1;
 }
