@@ -1,7 +1,7 @@
 // Phase 3 — AI pipeline tests with a fake database and scripted AI replies (no API key or network needed).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isOptOut, wantsHuman, detectLanguage } from "../../../sales/shared/guard.mjs";
+import { isOptOut, wantsHuman, isBareCancel, detectLanguage } from "../../../sales/shared/guard.mjs";
 import { validateReply, extractAmounts } from "../../../sales/shared/validator.mjs";
 import { buildMessages, buildSystemPrompt, REPLY_SCHEMA, normalizeReply } from "../../lib/prompt.mjs";
 import { loadContext, buyerAmounts, searchQuery } from "../../lib/context.mjs";
@@ -56,6 +56,16 @@ const scripted = (...replies) => { const calls = []; const fn = async (p) => { c
 test("opt-out detection (BM, EN) without false alarms", () => {
   for (const s of ["STOP", "stop", "Berhenti", "jangan hantar mesej lagi", "please don't message me anymore", "tolong padam nombor saya", "unsubscribe"]) assert.ok(isOptOut(s), s);
   for (const s of ["Bila projek ni stop jual?", "Harga dah stop naik ke?", "Nak tahu harga", "boleh hantar brochure?"]) assert.ok(!isOptOut(s), s);
+});
+
+test("31 Oct audit: STOP among several messages answered together still counts; a bare 'cancel' is not an opt-out", () => {
+  // the worker joins a burst of unanswered messages with line breaks
+  for (const s of ["STOP\nok", "Berhenti\nterima kasih", "Hi\nstop", "ok noted\r\nunsubscribe", "Thanks\nplease don't message me anymore"]) assert.ok(isOptOut(s), JSON.stringify(s));
+  for (const s of ["Bila projek ni stop jual?\nok", "Harga?\nstop naik ke?", "cancel", "Cancel.", "batal"]) assert.ok(!isOptOut(s), JSON.stringify(s));
+  for (const s of ["cancel", "Cancel it", "ok\nbatalkan", "BATAL!"]) assert.ok(isBareCancel(s), JSON.stringify(s));
+  for (const s of ["cancel appointment esok", "boleh cancel booking?", "STOP"]) assert.ok(!isBareCancel(s), JSON.stringify(s));
+  assert.ok(wantsHuman("Harga berapa?\nagent"), "a one-word request for a person on its own line");
+  assert.ok(!wantsHuman("harga berapa?\nis it freehold?"));
 });
 
 test("human-request detection", () => {

@@ -234,6 +234,11 @@ async function workflowFollowUp(deps, job, settings, ck) {
   const consent = await consentOf(db, conv.contact?.id);
   if (!ck("buyer has not opted out", consent.service !== "withdrawn")) return { status: "cancelled", reason: "buyer opted out" };
   if (!ck("WhatsApp sending switched on", !!f.whatsapp_outbound && !!deps.wa)) return { status: "skipped", reason: "WhatsApp sending is off" };
+  // a person took over the chat (or the buyer asked for one): no automatic reminder now; checked again later, so the
+  // workflow carries on by itself once the AI is resumed (31 Oct audit, WA-02)
+  if (!ck("AI owns the conversation (no human takeover)", conv.mode === "ai" && !conv.lead?.ai_paused)) {
+    return { status: "scheduled", reason: "a person is handling this conversation; checking again later", run_at: new Date(now.getTime() + hours * 3600e3).toISOString() };
+  }
   // the buyer is talking to us (AI or a person) right now: wait until the conversation has been quiet for a while
   const pauseH = Math.max(0, Number(w.pause_if_active_hours) || 0);
   const last = (await db.get(`ai_messages?conversation_id=eq.${enc(conv.id)}&sender_type=neq.system&order=created_at.desc&limit=1&select=created_at`))?.[0];
